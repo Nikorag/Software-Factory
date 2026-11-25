@@ -2,7 +2,7 @@
 
 Updates: `software-factory update` (add `--check` to only look). Releases are git tags named `v<major>.<minor>.<patch>`; the installer and `update` follow the newest one.
 
-## Unreleased
+## 0.2.0
 
 - **Manual mode and the Board**: choose tickets from a board of your Linear tickets (search by number, key or title) instead of labelling them; the mode is set per profile and can be overridden per project.
 - Tickets of projects that are not fully onboarded are skipped, and each project shows an onboarding checklist.
