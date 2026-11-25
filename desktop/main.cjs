@@ -10,6 +10,9 @@ const ROOT = process.env.FACTORY_ROOT || path.join(os.homedir(), ".software-fact
 const ICON = path.join(__dirname, "icon.png");
 const SMOKE = process.env.FACTORY_DESKTOP_SMOKE === "1";
 
+app.setName("Software Factory"); // before ready: menus, the About panel and window titles use this
+app.setAboutPanelOptions({ applicationName: "Software Factory", applicationVersion: require("../package.json").version, copyright: "Runs on your machine. It never merges: you do." });
+
 const readProfiles = () => {
   try { return JSON.parse(fs.readFileSync(path.join(ROOT, "profiles.json"), "utf8")).profiles; } catch { return [{ name: "default", home: ROOT, port: 4780 }]; }
 };

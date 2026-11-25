@@ -9,3 +9,5 @@
 **The desktop app.** `software-factory` starts every profile's service as a detached background process and opens an Electron window onto the active profile, then returns, so the terminal is free. The window is deliberately thin: it only loads the loopback dashboard (`contextIsolation`, `sandbox`, no Node in the page, navigation limited to the registered profile origins, no permissions granted). The factory does not depend on it: closing the window leaves the services working, and `software-factory shutdown` stops them. It is launched by a command rather than packaged as a `.dmg`, so there is nothing to sign or notarise.
 
 *Why a separate `shutdown` command?* `stop` already exists and means emergency stop (terminate running agents, pause).
+
+**Name and icon.** Run from `node_modules`, Electron shows as "Electron" with its own icon in the Dock and menu bar, because both come from the app bundle. `src/service/branding.ts` gives the local copy the name "Software Factory" and the factory icon (Info.plist, a generated .icns, an ad-hoc re-signature, originals kept and restored on failure). It runs once at launch and only on macOS.

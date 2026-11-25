@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../config/load.js";
 import { type Profile } from "../config/profiles.js";
 import { serveCommand } from "./launchd.js";
+import { brandElectron } from "./branding.js";
 
 export const urlOf = (p: Profile, path = "/") => `http://127.0.0.1:${p.port}${path}`;
 
@@ -67,6 +68,7 @@ export function openDesktop(p: Profile, root: string): boolean {
   const d = desktopEntry();
   if (!d) return false;
   // The app can start the background services itself (its "Start all profiles" menu item): hand it the exact command that works here.
+  brandElectron(d.electron, join(dirname(d.main), "icon.png")); // the Dock and menu bar say "Software Factory" with its icon, not "Electron" (no-op after the first time)
   const startCmd = [...serveCommand(PACKAGE_ROOT).slice(0, -1), "start", "--no-window"];
   const env: NodeJS.ProcessEnv = { ...process.env, FACTORY_ROOT: root, FACTORY_START_JSON: JSON.stringify(startCmd) };
   delete env.ELECTRON_RUN_AS_NODE;
