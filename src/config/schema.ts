@@ -85,7 +85,37 @@ export const WorkflowsConfig = z.object({
 });
 export type WorkflowsConfig = z.infer<typeof WorkflowsConfig>;
 
+// Linear names are configuration, never hardcoded. They are resolved to ids per team at runtime.
+export const LinearConfig = z.object({
+  apiKeyEnv: z.string().default("LINEAR_API_KEY"),
+  statuses: z
+    .object({
+      readyForSpecification: z.string().default("Ready for specification"), // pickup status
+      specificationReview: z.string().default("Specification review"),
+      readyForDevelopment: z.string().default("Ready for development"),
+      inProgress: z.string().default("In progress"),
+      readyForReview: z.string().default("Ready for review"),
+      changesRequested: z.string().default("Changes requested"),
+      merging: z.string().default("Merging"),
+      done: z.string().default("Done"),
+      blocked: z.string().default("Blocked"),
+    })
+    .prefault({}),
+  labels: z
+    .object({
+      enabled: z.string().default("factory:enabled"),
+      autonomous: z.string().default("factory:autonomous"),
+      bugfix: z.string().default("factory:bugfix"),
+      feature: z.string().default("factory:feature"),
+      maintenance: z.string().default("factory:maintenance"),
+      blocked: z.string().default("factory:blocked"),
+    })
+    .prefault({}),
+});
+export type LinearConfig = z.infer<typeof LinearConfig>;
+
 export const LoadedConfig = z.object({
+  linear: LinearConfig,
   factory: FactoryConfig,
   models: ModelsConfig,
   projects: ProjectsConfig,

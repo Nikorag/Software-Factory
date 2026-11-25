@@ -1,0 +1,20 @@
+# Linear names are resolved to ids per team at runtime (`pnpm factory linear:check` reports any that are missing).
+# The API key comes from the environment variable named below. Never put it in this file.
+apiKeyEnv: LINEAR_API_KEY
+statuses:
+  readyForSpecification: Ready for specification   # pickup status
+  specificationReview: Specification review
+  readyForDevelopment: Ready for development
+  inProgress: In progress
+  readyForReview: Ready for review
+  changesRequested: Changes requested
+  merging: Merging
+  done: Done
+  blocked: Blocked
+labels:
+  enabled: factory:enabled
+  autonomous: factory:autonomous
+  bugfix: factory:bugfix
+  feature: factory:feature
+  maintenance: factory:maintenance
+  blocked: factory:blocked

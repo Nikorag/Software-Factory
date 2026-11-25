@@ -8,6 +8,13 @@
       "when": 1795609975652,
       "tag": "0000_adorable_hercules",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1795610918537,
+      "tag": "0001_dear_eddie_brock",
+      "breakpoints": true
     }
   ]
 }

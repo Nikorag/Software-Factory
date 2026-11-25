@@ -25,7 +25,13 @@ export type StageResult =
 export type StageHandler = (ctx: StageContext) => Promise<StageResult>;
 export type HandlerRegistry = Partial<Record<StageName, StageHandler>>;
 
+/** Called synchronously (inside the stage-change transaction where one exists) so side-effect records are atomic with it. */
+export interface EngineObserver {
+  onStage(job: JobRow, stage: StageName, detail?: { reason?: string }): void;
+}
+
 export interface EngineOptions {
+  observer?: EngineObserver;
   db: FactoryDb;
   logger: Logger;
   config: Pick<LoadedConfig, "factory" | "workflows">;
@@ -42,7 +48,7 @@ const HELD_STAGES = new Set<StageName>(["BLOCKED", "FAILED", "CANCELLED", "PAUSE
 
 export class Engine {
   readonly owner: string;
-  private readonly o: Required<Omit<EngineOptions, "owner">>;
+  private readonly o: Required<Omit<EngineOptions, "owner" | "observer">> & { observer?: EngineObserver };
 
   constructor(opts: EngineOptions) {
     this.owner = opts.owner ?? `factory-${process.pid}-${randomUUID().slice(0, 8)}`;
@@ -77,6 +83,8 @@ export class Engine {
   /** Runs a claimed job stage by stage until it completes, holds, is rescheduled, or loses its lease. */
   async runJob(jobId: string): Promise<void> {
     const { db } = this.o;
+    const claimed = getJob(db, jobId);
+    if (claimed) this.notify(claimed, claimed.stage as StageName); // re-assert external status after retry/recovery (observer dedupes)
     for (;;) {
       const job = getJob(db, jobId);
       if (!job || job.status !== "running" || job.leaseOwner !== this.owner) return;
@@ -212,12 +220,23 @@ export class Engine {
     return false; // rescheduled; scheduler will reclaim after backoff
   }
 
+  private notify(job: JobRow, stage: StageName, reason?: string): void {
+    try {
+      const fresh = getJob(this.o.db, job.id) ?? job;
+      this.o.observer?.onStage(fresh, stage, { reason });
+    } catch (e) {
+      this.o.logger.error({ jobId: job.id, err: String(e) }, "observer failed"); // never let reporting break orchestration
+    }
+  }
+
   private setStage(job: JobRow, stage: StageName, extra: Partial<typeof jobs.$inferInsert> = {}): void {
     this.o.db.update(jobs).set({ stage, status: "running", updatedAt: this.o.now(), notBefore: null, lastError: null, ...extra }).where(eq(jobs.id, job.id)).run();
+    this.notify(job, stage);
   }
 
   private complete(job: JobRow): void {
     this.o.db.update(jobs).set({ stage: "COMPLETED", status: statusForStage("COMPLETED"), leaseOwner: null, leaseExpiresAt: null, updatedAt: this.o.now() }).where(eq(jobs.id, job.id)).run();
+    this.notify(job, "COMPLETED");
   }
 
   /** Move a job into a held/terminal stage, remembering where it was so it can be resumed. */
@@ -228,6 +247,7 @@ export class Engine {
     db.transaction(() => {
       db.update(jobs).set({ stage, status: statusForStage(stage), heldFromStage: from, lastError: reason, leaseOwner: null, leaseExpiresAt: null, cancelRequested: false, updatedAt: this.o.now() }).where(eq(jobs.id, job.id)).run();
       db.insert(decisions).values({ jobId: job.id, kind: `hold.${stage}`, decision: `${from} -> ${stage}`, rationale: reason, actor: "factory" }).run();
+      this.notify(job, stage, reason);
     });
     this.o.logger.warn({ jobId: job.id, from, stage, reason }, "job held");
   }

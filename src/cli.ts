@@ -9,12 +9,20 @@ import { cancelJob, listJobs, retryJob } from "./core/jobs.js";
 import * as control from "./core/control.js";
 import { runSimulation } from "./core/simulation.js";
 import { syncProjects, validateProjects } from "./repo/registry.js";
+import { createLinearClient, type LinearClient } from "./linear/client.js";
+import { discoverIssues } from "./linear/discovery.js";
+import { flushOutbox } from "./linear/outbox.js";
 
 const openFactoryDb = () => {
   const config = loadConfig();
   return { config, handle: openDb(join(config.factory.dataDir, "database", "factory.sqlite")) };
 };
 const ACTOR = "cli";
+const linearClient = (config: ReturnType<typeof loadConfig>): LinearClient => {
+  const key = process.env[config.linear.apiKeyEnv];
+  if (!key) throw new Error(`${config.linear.apiKeyEnv} is not set`);
+  return createLinearClient({ apiKey: key });
+};
 
 const program = new Command("factory").description("Local-first autonomous software factory");
 
@@ -78,6 +86,57 @@ program
       for (const f of r.findings) console.log(`    ${f.severity.padEnd(5)} ${f.code}: ${f.message}`);
     }
     process.exitCode = reports.every((r) => r.ok) ? 0 : 1;
+    handle.close();
+  });
+
+program
+  .command("linear:check")
+  .description("Read-only: verify the Linear key and that every configured status and label exists for each bound team")
+  .action(async () => {
+    const config = loadConfig();
+    const client = linearClient(config);
+    console.log(`✓ authenticated as ${(await client.viewer()).name}`);
+    const teams = await client.teams();
+    const keys = [...new Set(config.projects.projects.flatMap((p) => (p.linear ? [p.linear.teamKey] : [])))];
+    if (keys.length === 0) {
+      console.log("! no projects are bound to a Linear team (set `linear.teamKey` in config/projects.yaml). Teams visible to this key:");
+      for (const t of teams) console.log(`    ${t.key}  ${t.name}`);
+    }
+    let missing = 0;
+    for (const key of keys) {
+      const team = teams.find((t) => t.key === key);
+      if (!team) { console.log(`✗ team ${key} not found or not visible to this key`); missing++; continue; }
+      const states = (await client.workflowStates(team.id)).map((s) => s.name.toLowerCase());
+      const labels = (await client.labels(team.id)).map((l) => l.name.toLowerCase());
+      for (const n of Object.values(config.linear.statuses)) if (!states.includes(n.toLowerCase())) { console.log(`✗ ${key}: status "${n}" missing`); missing++; }
+      for (const n of Object.values(config.linear.labels)) if (!labels.includes(n.toLowerCase())) { console.log(`✗ ${key}: label "${n}" missing`); missing++; }
+      console.log(`${missing ? "!" : "✓"} team ${key} checked`);
+    }
+    process.exitCode = missing ? 1 : 0;
+  });
+
+program
+  .command("linear:discover")
+  .description("Poll Linear once and create jobs for eligible issues")
+  .option("--dry-run", "report what would be created without writing jobs' Linear updates")
+  .action(async (opts: { dryRun?: boolean }) => {
+    const { config, handle } = openFactoryDb();
+    syncProjects(handle.db, config.projects.projects);
+    const logger = createLogger({ level: "warn" });
+    const r = await discoverIssues({ db: handle.db, client: linearClient(config), linear: config.linear, projects: config.projects.projects, logger, dryRun: opts.dryRun || config.factory.dryRun });
+    for (const e of r.enqueued) console.log(`+ ${e.key} -> ${e.projectId} (${e.workflow}${e.autonomous ? ", autonomous" : ""})`);
+    for (const s of r.skipped) console.log(`- ${s.key}: ${s.reasons.join("; ")}`);
+    for (const e of r.errors) console.log(`! ${e.projectId}: ${e.error}`);
+    handle.close();
+  });
+
+program
+  .command("linear:flush")
+  .description("Send pending Linear writes (status changes, labels, comments)")
+  .action(async () => {
+    const { config, handle } = openFactoryDb();
+    if (config.factory.dryRun) { console.log("dry-run: not sending"); handle.close(); return; }
+    console.log(await flushOutbox({ db: handle.db, client: linearClient(config), linear: config.linear, logger: createLogger({ level: "warn" }) }));
     handle.close();
   });
 

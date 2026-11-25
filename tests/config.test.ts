@@ -42,3 +42,20 @@ describe("loadConfig", () => {
     expect(() => loadConfig(dir({ "models.yaml": MODELS, "projects.yaml": p }))).toThrow(/duplicate/);
   });
 });
+
+describe("linear config", () => {
+  it("fills every status and label default when linear.yaml is absent", () => {
+    const c = loadConfig(dir({ "models.yaml": MODELS }));
+    expect(c.linear.statuses.readyForSpecification).toBe("Ready for specification");
+    expect(c.linear.labels.enabled).toBe("factory:enabled");
+    expect(c.linear.apiKeyEnv).toBe("LINEAR_API_KEY");
+  });
+  it("lets individual names be overridden without losing the rest", () => {
+    const c = loadConfig(dir({ "models.yaml": MODELS, "linear.yaml": "statuses: { done: Shipped }" }));
+    expect(c.linear.statuses.done).toBe("Shipped");
+    expect(c.linear.statuses.blocked).toBe("Blocked");
+  });
+  it("rejects an embedded api key", () => {
+    expect(() => loadConfig(dir({ "models.yaml": MODELS, "linear.yaml": "apiKey: lin_api_x" }))).toThrow(/secret/);
+  });
+});

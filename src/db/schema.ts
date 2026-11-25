@@ -28,6 +28,7 @@ export const jobs = sqliteTable(
     notBefore: ts("not_before"), // retry backoff: not claimable before this time
     leaseOwner: text("lease_owner"), // process that holds the job
     leaseExpiresAt: ts("lease_expires_at"),
+    autonomous: integer("autonomous", { mode: "boolean" }).notNull().default(false), // issue label AND project autonomy at pickup
     dryRun: integer("dry_run", { mode: "boolean" }).notNull().default(false),
     prUrl: text("pr_url"),
     lastError: text("last_error"),
@@ -104,3 +105,23 @@ export const factoryState = sqliteTable("factory_state", {
   reason: text("reason"),
   updatedAt: ts("updated_at").notNull().default(now),
 });
+
+// Durable queue of writes to Linear. Rows are inserted in the same transaction as the stage change that caused them.
+export const linearOutbox = sqliteTable(
+  "linear_outbox",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    jobId: text("job_id").notNull().references(() => jobs.id),
+    issueId: text("issue_id").notNull(),
+    kind: text("kind", { enum: ["set_state", "add_label", "remove_label", "comment", "link_pr"] }).notNull(),
+    payloadJson: text("payload_json").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status", { enum: ["pending", "done", "failed"] }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    nextAttemptAt: ts("next_attempt_at"),
+    createdAt: ts("created_at").notNull().default(now),
+    doneAt: ts("done_at"),
+  },
+  (t) => [uniqueIndex("linear_outbox_idem").on(t.idempotencyKey), index("linear_outbox_status_idx").on(t.status)],
+);

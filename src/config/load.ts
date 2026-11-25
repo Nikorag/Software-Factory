@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
-import { FactoryConfig, ModelsConfig, ProjectsConfig, WorkflowsConfig, type LoadedConfig } from "./schema.js";
+import { FactoryConfig, LinearConfig, ModelsConfig, ProjectsConfig, WorkflowsConfig, type LoadedConfig } from "./schema.js";
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -51,11 +51,12 @@ export function loadConfig(configDir = process.env.FACTORY_CONFIG_DIR ?? "config
   const models = readYaml(dir, "models.yaml", ModelsConfig, true);
   const projects = readYaml(dir, "projects.yaml", ProjectsConfig, false);
   const workflows = readYaml(dir, "workflows.yaml", WorkflowsConfig, false);
+  const linear = readYaml(dir, "linear.yaml", LinearConfig, false);
 
   const ids = new Set<string>();
   for (const p of projects.projects) {
     if (ids.has(p.id)) throw new ConfigError(`projects.yaml: duplicate project id "${p.id}"`);
     ids.add(p.id);
   }
-  return { factory: { ...factory, dataDir: expandHome(factory.dataDir) }, models, projects, workflows };
+  return { linear, factory: { ...factory, dataDir: expandHome(factory.dataDir) }, models, projects, workflows };
 }

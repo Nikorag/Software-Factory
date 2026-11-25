@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { totalmem } from "node:os";
 import type { LoadedConfig } from "../config/schema.js";
+import { createLinearClient, type LinearClient } from "../linear/client.js";
 
 const run = promisify(execFile);
 
@@ -46,6 +47,18 @@ export async function checkLocalModels(baseUrl: string, fetchImpl: typeof fetch 
   }
 }
 
+/** Read-only: asks Linear who the key belongs to. Reports the account name, never the key. */
+export async function checkLinear(config: LoadedConfig, clientOverride?: LinearClient): Promise<CheckResult> {
+  const key = process.env[config.linear.apiKeyEnv];
+  if (!clientOverride && !key) return { name: "linear", status: "warn", detail: `${config.linear.apiKeyEnv} not set` };
+  try {
+    const me = await (clientOverride ?? createLinearClient({ apiKey: key!, maxRetries: 1 })).viewer();
+    return { name: "linear", status: "ok", detail: `authenticated as ${me.name}` };
+  } catch (e) {
+    return { name: "linear", status: "fail", detail: (e as Error).message };
+  }
+}
+
 export async function runDoctor(config: LoadedConfig, fetchImpl: typeof fetch = fetch): Promise<CheckResult[]> {
   const memGb = Math.round(totalmem() / 1024 ** 3);
   const results: CheckResult[] = [
@@ -59,8 +72,6 @@ export async function runDoctor(config: LoadedConfig, fetchImpl: typeof fetch = 
     await tool("specify (SpecKit)", "specify", ["version"], false),
     ...(await checkLocalModels(config.models.local.baseUrl, fetchImpl)),
   ];
-  if (!process.env.LINEAR_API_KEY) {
-    results.push({ name: "LINEAR_API_KEY", status: "warn", detail: "not set (needed from Milestone 4)" });
-  }
+  results.push(await checkLinear(config));
   return results;
 }
