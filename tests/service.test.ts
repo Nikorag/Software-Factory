@@ -147,6 +147,11 @@ describe("single-instance lock", () => {
 });
 
 describe("secrets", () => {
+  it("never touches the real keychain when FACTORY_NO_KEYCHAIN is set (how the test suite stays isolated)", () => {
+    forgetSecrets();
+    expect(process.env.FACTORY_NO_KEYCHAIN).toBe("1");
+    expect(resolveSecret({ envName: "SURELY_UNSET_VAR", keychainService: "software-factory-linear" }, { env: {} })).toBeUndefined();
+  });
   it("prefers the environment, falls back to the keychain, caches it, and never throws when absent", () => {
     forgetSecrets();
     const run = vi.fn((_f: string, _a: string[]) => "kc-secret\n");

@@ -15,6 +15,7 @@ export function resolveSecret(src: SecretSource, deps: { env?: NodeJS.ProcessEnv
   if (fromEnv) return fromEnv;
   if (!src.keychainService || process.platform !== "darwin") return undefined;
   const account = src.keychainAccount ?? userInfo().username;
+  if (!deps.run && process.env.FACTORY_NO_KEYCHAIN) return undefined; // the test suite must never read the developer's real keychain
   const key = `${src.keychainService}\0${account}`;
   const hit = cache.get(key);
   if (hit) return hit;
