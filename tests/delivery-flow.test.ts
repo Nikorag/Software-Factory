@@ -65,11 +65,12 @@ describe.skipIf(!sandboxAvailable())("PR-only delivery: push, open the PR, watch
 
   it("STRUCTURAL GUARANTEE: there is no merge capability anywhere in the GitHub client or delivery code", () => {
     const src = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
-    for (const f of ["src/github/client.ts", "src/delivery/handlers.ts", "src/repo/push.ts"]) {
+    for (const f of ["src/github/client.ts", "src/bitbucket/client.ts", "src/host/index.ts", "src/delivery/handlers.ts", "src/repo/push.ts"]) {
       const code = src(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
       expect(code, f).not.toMatch(/["']merge["']/);                 // `gh pr merge`
       expect(code, f).not.toMatch(/pulls\/\S*\/merge|enablePullRequestAutoMerge|mergePullRequest|--auto|--squash|--rebase/);
       expect(code, f).not.toMatch(/\bmergePr\b|\bmerge\s*\(/);
+      expect(code, f).not.toMatch(/pullrequests\S*\/merge|\/merge["'`]|close_source_branch:\s*true/);   // Bitbucket: no merge endpoint, and never ask it to delete the source branch
     }
     const iface = src("src/github/client.ts").slice(src("src/github/client.ts").indexOf("export interface GitHubClient"), src("src/github/client.ts").indexOf("export class GitHubError"));
     expect(iface).not.toMatch(/merge/i);

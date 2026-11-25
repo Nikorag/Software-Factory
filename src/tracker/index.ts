@@ -8,8 +8,8 @@ import { resolveSecret, saveSecret } from "../service/secrets.js";
 export const trackerName = (c: Pick<LoadedConfig, "factory">) => (c.factory.tracker === "jira" ? "Jira" : "Linear");
 
 /** The profile's secrets for Jira, in its own keychain service: the OAuth client secret and the rotating refresh token. */
-export const keychainStore = (service: string): SecretStore => ({
-  get: (account) => resolveSecret({ envName: `SOFTWARE_FACTORY_JIRA_${account.toUpperCase().replace(/-/g, "_")}`, keychainService: service, keychainAccount: account }),
+export const keychainStore = (service: string, envPrefix = "SOFTWARE_FACTORY_JIRA_"): SecretStore => ({
+  get: (account) => resolveSecret({ envName: `${envPrefix}${account.toUpperCase().replace(/-/g, "_")}`, keychainService: service, keychainAccount: account }),
   set: (account, value) => saveSecret({ keychainService: service, keychainAccount: account }, value),
 });
 

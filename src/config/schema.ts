@@ -94,6 +94,10 @@ export const ProjectConfig = z.object({
   autonomy: AutonomyLevel.default("supervised"),
   // Bind to a Linear team, optionally narrowed to one Linear project (by name or id). One repo per Linear project.
   linear: z.object({ teamKey: z.string(), projectName: z.string().optional(), projectId: z.string().optional() }).optional(),
+  // Where this repository is hosted. Each project chooses: a "home" project can be on GitHub and a "work" project on Bitbucket.
+  host: z.enum(["github", "bitbucket"]).default("github"),
+  // Used when host is "bitbucket": workspace/slug, and which stored credential (Settings > Integrations) to use.
+  bitbucket: z.object({ repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional(), credential: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default("default") }).prefault({}),
   // GitHub account that owns/accesses this repo. gh is invoked as this account per call; the global gh login is never switched.
   github: z
     .object({
@@ -109,8 +113,8 @@ export const ProjectConfig = z.object({
 });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;
 /** What projects.yaml may contain: `repository` can be omitted when `github.repo` is given (factory-managed clone). */
-export const ProjectInput = ProjectConfig.extend({ repository: z.string().optional() }).refine((p) => p.repository || p.github.repo, {
-  message: "set `repository` (existing checkout) or `github.repo` (factory-managed clone)",
+export const ProjectInput = ProjectConfig.extend({ repository: z.string().optional() }).refine((p) => p.repository || (p.host === "bitbucket" ? p.bitbucket.repo : p.github.repo), {
+  message: "set `repository` (existing checkout) or the host's repo (`github.repo` / `bitbucket.repo`) for a factory-managed clone",
 });
 export const ProjectsFile = z.object({ projects: z.array(ProjectInput).default([]) });
 export const ProjectsConfig = z.object({ projects: z.array(ProjectConfig).default([]) });
@@ -186,6 +190,20 @@ export const JiraConfig = z.object({
 });
 export type JiraConfig = z.infer<typeof JiraConfig>;
 
+/**
+ * Bitbucket Cloud credentials, by name. The TOKEN is never here (it is in the keychain, one entry per credential name); this only says what
+ * kind of token it is. `access-token`: a repository, project or workspace access token (Bearer; git user x-token-auth). `api-token`: an
+ * Atlassian account API token with Bitbucket scopes (Basic auth with your account email; git user x-bitbucket-api-token-auth).
+ * A project picks one by name (`bitbucket.credential`), so a token scoped to one repository can serve just that project.
+ */
+export const BitbucketCredential = z.object({ kind: z.enum(["access-token", "api-token"]), email: z.string().email().optional() })
+  .refine((c) => c.kind !== "api-token" || Boolean(c.email), { message: "an API token needs the Atlassian account email it belongs to" });
+export const BitbucketConfig = z.object({
+  keychainService: z.string().default("software-factory-bitbucket"),
+  credentials: z.record(z.string().regex(/^[a-z0-9][a-z0-9-]*$/), BitbucketCredential).default({}),
+});
+export type BitbucketConfig = z.infer<typeof BitbucketConfig>;
+
 /** What the rest of the factory sees as "the tracker's names": for Jira, the mapped names (unmapped = ""). */
 export function effectiveTrackerNames(jira: JiraConfig): LinearConfig {
   return LinearConfig.parse({
@@ -198,6 +216,7 @@ export function effectiveTrackerNames(jira: JiraConfig): LinearConfig {
 export const LoadedConfig = z.object({
   linear: LinearConfig, // for a Jira profile: the mapped Jira names (see JiraConfig)
   jira: JiraConfig,
+  bitbucket: BitbucketConfig,
   factory: FactoryConfig,
   models: ModelsConfig,
   projects: ProjectsConfig,

@@ -12,16 +12,17 @@ import { Switch } from "@/components/ui/switch";
 import { api, send } from "@/lib/api";
 import { usePoll } from "@/hooks/usePoll";
 import type { GhAccounts } from "@/lib/types";
-import type { Project, TeamAudit } from "@/lib/types";
+import type { BitbucketCredential, Project, TeamAudit } from "@/lib/types";
 import { TASKS, type GlobalSettings, type Routes, type RouteCfg, type TaskId } from "@/lib/tasks";
 import { ModelPicker } from "./ModelPicker";
 import { startAction, TaskOutput } from "./TaskRunner";
 
 const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-export interface Form { pickup: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
-const blank = (): Form => ({ pickup: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", team: "", lproject: "", enabled: true, commands: {} });
+export interface Form { host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
+const blank = (): Form => ({ host: "github", bbRepo: "", bbCred: "default", pickup: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", team: "", lproject: "", enabled: true, commands: {} });
 const fromProject = (p: Project): Form => ({
+  host: p.host ?? "github", bbRepo: p.bitbucketRepo ?? "", bbCred: p.bitbucketCredential ?? "default",
   pickup: p.overrides?.pickupMode ?? "", conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
   id: p.id, name: p.name, source: p.managed ? "github" : "path", repo: p.githubRepo ?? "", path: p.managed ? "" : p.repository, account: p.githubAccount ?? "", branch: p.defaultBranch, autonomy: p.autonomy,
   team: p.linear?.teamKey ?? "", lproject: p.linear?.projectName ?? "", enabled: p.enabled, commands: Object.fromEntries(CMDS.map((k) => [k, p.commands[k] ?? ""])),
@@ -45,6 +46,8 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
   useEffect(() => { onDirty?.(dirty); }, [dirty, onDirty]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => { setSaved(false); setF((x) => ({ ...x, [k]: v })); };
   const { data: gh } = usePoll(() => api<GhAccounts>("/api/setup/github"), 120000);
+  const { data: creds } = usePoll(() => api<{ credentials: BitbucketCredential[] }>("/api/bitbucket/credentials"), 60000);
+  const [access, setAccess] = useState<string | null>(null);
   const team = teams.find((t) => t.key === f.team);
   const id = project?.id ?? (f.id || slug(f.name));
 
@@ -53,7 +56,10 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
     const commands = Object.fromEntries(CMDS.filter((k) => f.commands[k]?.trim()).map((k) => [k, f.commands[k]!.trim()]));
     const r = await send("PUT", `/api/settings/projects/${encodeURIComponent(id)}`, {
       name: f.name.trim(), defaultBranch: f.branch.trim() || "main", enabled: f.enabled, autonomy: f.autonomy, commands,
-      ...(f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
+      host: f.host,
+      ...(f.host === "bitbucket"
+        ? { bitbucket: { repo: f.bbRepo.trim() || undefined, credential: f.bbCred }, ...(f.source === "path" ? { repository: f.path.trim() } : {}) }
+        : f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
       overrides: { pickupMode: f.pickup || undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models },
       ...(f.team ? { linear: { teamKey: f.team, projectName: f.lproject || undefined } } : {}),
     });
@@ -107,16 +113,36 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
       </Section>
       <Separator />
       <Section title="Repository">
+        <div className="grid gap-1.5"><Label>Hosted on</Label>
+          <Select value={f.host} onValueChange={(v) => set("host", v as Form["host"])}><SelectTrigger aria-label="host" className="w-56"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="github">GitHub</SelectItem><SelectItem value="bitbucket">Bitbucket</SelectItem></SelectContent></Select></div>
         <Select value={f.source} onValueChange={(v) => set("source", v as Form["source"])}><SelectTrigger aria-label="repository source"><SelectValue /></SelectTrigger>
-          <SelectContent><SelectItem value="github">GitHub: the factory keeps its own clone (recommended)</SelectItem><SelectItem value="path">An existing checkout on this machine</SelectItem></SelectContent></Select>
-        {f.source === "github" ? <Input aria-label="GitHub repo" value={f.repo} onChange={(e) => set("repo", e.target.value)} placeholder="owner/name" /> : <Input aria-label="checkout path" value={f.path} onChange={(e) => set("path", e.target.value)} placeholder="~/projects/my-app" />}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="grid gap-1.5"><Label htmlFor="pe-acct">GitHub account (gh)</Label>
-            {gh?.accounts.length ? <Select value={f.account || "__profile"} onValueChange={(v) => set("account", v === "__profile" ? "" : v)}><SelectTrigger id="pe-acct" aria-label="GitHub account"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="__profile">{gh.defaultAccount ? `profile default (${gh.defaultAccount})` : "gh's active login"}</SelectItem>{gh.accounts.map((a) => <SelectItem key={a.login} value={a.login}>{a.login}</SelectItem>)}</SelectContent></Select>
-              : <Input id="pe-acct" value={f.account} onChange={(e) => set("account", e.target.value)} placeholder="optional" />}</div>
-          <div className="grid gap-1.5"><Label htmlFor="pe-branch">Default branch</Label><Input id="pe-branch" value={f.branch} onChange={(e) => set("branch", e.target.value)} /></div>
-        </div>
+          <SelectContent><SelectItem value="github">{f.host === "bitbucket" ? "Bitbucket" : "GitHub"}: the factory keeps its own clone (recommended)</SelectItem><SelectItem value="path">An existing checkout on this machine</SelectItem></SelectContent></Select>
+        {f.host === "bitbucket" ? (
+          <>
+            {f.source === "path" ? <Input aria-label="checkout path" value={f.path} onChange={(e) => set("path", e.target.value)} placeholder="~/projects/my-app" /> : null}
+            <Input aria-label="Bitbucket repo" value={f.bbRepo} onChange={(e) => set("bbRepo", e.target.value)} placeholder="workspace/repository-slug" />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5"><Label htmlFor="pe-cred">Credential</Label>
+                {creds?.credentials.length ? <Select value={f.bbCred} onValueChange={(v) => set("bbCred", v)}><SelectTrigger id="pe-cred" aria-label="Bitbucket credential"><SelectValue /></SelectTrigger>
+                  <SelectContent>{creds.credentials.map((c) => <SelectItem key={c.name} value={c.name}>{c.name} ({c.kind === "api-token" ? "API token" : "access token"})</SelectItem>)}</SelectContent></Select>
+                  : <p className="text-xs text-loop">No credentials yet: add one in Settings → Integrations → Bitbucket.</p>}</div>
+              <div className="grid gap-1.5"><Label htmlFor="pe-branch">Default branch</Label><Input id="pe-branch" value={f.branch} onChange={(e) => set("branch", e.target.value)} /></div>
+            </div>
+            {project ? <div className="flex flex-wrap items-center gap-2"><Button type="button" size="sm" variant="outline" disabled={!f.bbRepo || dirty} onClick={async () => { setAccess("Checking…"); const r = await send<{ name: string; mainBranch: string | null }>("POST", `/api/bitbucket/credentials/${encodeURIComponent(f.bbCred)}/test`, { repo: f.bbRepo }); setAccess(r.ok ? `✓ ${r.data.name} is reachable${r.data.mainBranch ? ` (default branch ${r.data.mainBranch})` : ""}` : `✗ ${r.error}`); }}>Test access</Button>{access ? <span className="text-xs">{access}</span> : null}</div> : null}
+          </>
+        ) : (
+          <>
+            {f.source === "github" ? <Input aria-label="GitHub repo" value={f.repo} onChange={(e) => set("repo", e.target.value)} placeholder="owner/name" /> : <Input aria-label="checkout path" value={f.path} onChange={(e) => set("path", e.target.value)} placeholder="~/projects/my-app" />}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5"><Label htmlFor="pe-acct">GitHub account (gh)</Label>
+                {gh?.accounts.length ? <Select value={f.account || "__profile"} onValueChange={(v) => set("account", v === "__profile" ? "" : v)}><SelectTrigger id="pe-acct" aria-label="GitHub account"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="__profile">{gh.defaultAccount ? `profile default (${gh.defaultAccount})` : "gh's active login"}</SelectItem>{gh.accounts.map((a) => <SelectItem key={a.login} value={a.login}>{a.login}</SelectItem>)}</SelectContent></Select>
+                  : <Input id="pe-acct" value={f.account} onChange={(e) => set("account", e.target.value)} placeholder="optional" />}</div>
+              <div className="grid gap-1.5"><Label htmlFor="pe-branch">Default branch</Label><Input id="pe-branch" value={f.branch} onChange={(e) => set("branch", e.target.value)} /></div>
+            </div>
+          </>
+        )}
       </Section>
       <Separator />
       <Section title={tracker === "jira" ? "Jira" : "Linear"} hint={tracker === "jira" ? "Tickets of this Jira project (and, if you choose one, this component) belong to this repository." : undefined}>

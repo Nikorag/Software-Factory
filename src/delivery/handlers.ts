@@ -4,6 +4,7 @@ import type { StageHandler, StageResult } from "../core/engine.js";
 import { artifacts, jobs, stageExecutions } from "../db/schema.js";
 import { createStageKit, type StageKitDeps } from "../app/stage-kit.js";
 import type { ProjectConfig } from "../config/schema.js";
+import type { Hosts } from "../host/index.js";
 import { GitHubError, type CheckInfo, type GitHubClient, type PrInfo } from "../github/client.js";
 import { enqueueOutbox } from "../linear/outbox.js";
 import { checkBranchProtection, createGhApi, parseRemote } from "../repo/inspect.js";
@@ -17,6 +18,8 @@ export const DEFAULT_TIMING: DeliveryTiming = { ciPollMs: 30_000, ciMaxMs: 60 * 
 export interface DeliveryDeps extends StageKitDeps {
   dataDir: string;
   github: (project: ProjectConfig) => GitHubClient;
+  /** Per-project host (GitHub or Bitbucket): repo slug, git credentials and branch protection. Absent = GitHub (as before). */
+  hosts?: Hosts;
   push?: typeof pushBranch;
   timing?: Partial<DeliveryTiming>;
   now?: () => Date;
@@ -24,6 +27,12 @@ export interface DeliveryDeps extends StageKitDeps {
 
 /** owner/name for gh: from config for managed clones, else from the checkout's origin remote. */
 export async function repoSlug(project: ProjectConfig, git: GitFn = realGit): Promise<string> {
+  if (project.host === "bitbucket") {
+    if (project.bitbucket.repo) return project.bitbucket.repo;
+    const bb = parseRemote(await git(project.repository, ["remote", "get-url", "origin"])).bitbucket;
+    if (!bb) throw new Error(`cannot determine the Bitbucket repository for ${project.id} from its origin remote`);
+    return `${bb.owner}/${bb.repo}`;
+  }
   if (project.github.repo) return project.github.repo;
   const url = await git(project.repository, ["remote", "get-url", "origin"]);
   const gh = parseRemote(url).github;
@@ -69,7 +78,7 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
       const repo = await repoSlug(project, git);
       const gh = d.github(project);
       if ((await git(p.cwd, ["status", "--porcelain"])).length) return { kind: "needs_attention", reason: "refusing to push: the worktree has uncommitted changes" };
-      await push(p.cwd, p.info.branch, { defaultBranch: project.defaultBranch, account: project.github.account, git });
+      await push(p.cwd, p.info.branch, { defaultBranch: project.defaultBranch, account: project.github.account, env: d.hosts && project.host === "bitbucket" ? await d.hosts.gitAuth(project) : undefined, git });
       const reportRow = d.db.select().from(artifacts).where(and(eq(artifacts.jobId, ctx.job.id), eq(artifacts.kind, "completion-report"))).orderBy(asc(artifacts.id)).all().at(-1);
       let report = "";
       try { report = reportRow ? readFileSync(reportRow.path, "utf8") : ""; } catch { /* the PR is still worth raising */ }
@@ -161,7 +170,7 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
       if (pr.state === "CLOSED") return { kind: "fail", reason: `The pull request was closed without merging (${pr.url}).` };
       if (pr.mergeable === "CONFLICTING") return { kind: "needs_attention", reason: `The pull request has merge conflicts with ${pr.baseRefName} (${pr.url}). A human must rebase or resolve them; the factory does not rewrite history.` };
       const [owner, name] = repo.split("/") as [string, string];
-      const protection = await checkBranchProtection({ owner, repo: name }, project.defaultBranch, createGhApi(project.github.account));
+      const protection = d.hosts && project.host === "bitbucket" ? await d.hosts.protection(project, repo) : await checkBranchProtection({ owner, repo: name }, project.defaultBranch, createGhApi(project.github.account));
       const notes = [
         pr.reviewDecision ? `review: ${pr.reviewDecision}` : "no review decision yet",
         `mergeable: ${pr.mergeable}/${pr.mergeStateStatus}`,

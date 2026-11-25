@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
-import { effectiveTrackerNames, FactoryConfig, JiraConfig, LinearConfig, ModelsConfig, ProjectsConfig, ProjectsFile, WorkflowsConfig, type LoadedConfig } from "./schema.js";
+import { BitbucketConfig, effectiveTrackerNames, FactoryConfig, JiraConfig, LinearConfig, ModelsConfig, ProjectsConfig, ProjectsFile, WorkflowsConfig, type LoadedConfig } from "./schema.js";
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -80,6 +80,7 @@ export function loadConfig(configDir = defaultConfigDir()): LoadedConfig {
   });
   const workflows = readYaml(dir, "workflows.yaml", WorkflowsConfig, false);
   const jira = readYaml(dir, "jira.yaml", JiraConfig, false);
+  const bitbucket = readYaml(dir, "bitbucket.yaml", BitbucketConfig, false);
   const linear = factory.tracker === "jira" ? effectiveTrackerNames(jira) : readYaml(dir, "linear.yaml", LinearConfig, false);
 
   const ids = new Set<string>();
@@ -99,5 +100,5 @@ export function loadConfig(configDir = defaultConfigDir()): LoadedConfig {
       bindings.set(key, p.id);
     }
   }
-  return { linear, jira, factory: { ...factory, dataDir: expandHome(factory.dataDir) }, models, projects, workflows, configDir: dir };
+  return { linear, jira, bitbucket, factory: { ...factory, dataDir: expandHome(factory.dataDir) }, models, projects, workflows, configDir: dir };
 }

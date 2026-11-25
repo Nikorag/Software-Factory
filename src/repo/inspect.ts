@@ -21,7 +21,7 @@ export interface RepoReport {
   clean: boolean | null;
   currentBranch: string | null;
   defaultBranch: string | null;
-  remote: { url: string; github: { owner: string; repo: string } | null } | null;
+  remote: { url: string; github: { owner: string; repo: string } | null; bitbucket?: { owner: string; repo: string } | null } | null;
   hasClaudeMd: boolean;
   hasSpecKit: boolean; // Spec Kit is on the default branch (as pushed to origin): what jobs will actually start from
   onboardingBranchPushed?: boolean; // the factory/onboard-speckit branch exists on origin: its pull request is waiting to be merged
@@ -50,10 +50,11 @@ export const createGhApi = (account?: string): GhApi => async (path) => {
 };
 
 /** Strips credentials from URLs and extracts the GitHub owner/repo. */
-export function parseRemote(raw: string): { url: string; github: { owner: string; repo: string } | null } {
+export function parseRemote(raw: string): { url: string; github: { owner: string; repo: string } | null; bitbucket: { owner: string; repo: string } | null } {
   const url = raw.replace(/^(https?:\/\/)[^@/]+@/, "$1");
   const m = /^(?:https?:\/\/github\.com\/|git@github\.com(?:-[\w.-]+)?:|ssh:\/\/git@github\.com(?:-[\w.-]+)?\/)([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(url);
-  return { url, github: m ? { owner: m[1]!, repo: m[2]! } : null };
+  const b = /^(?:https?:\/\/bitbucket\.org\/|git@bitbucket\.org(?:-[\w.-]+)?:|ssh:\/\/git@bitbucket\.org(?:-[\w.-]+)?\/)([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(url);
+  return { url, github: m ? { owner: m[1]!, repo: m[2]! } : null, bitbucket: b ? { owner: b[1]!, repo: b[2]! } : null };
 }
 
 function detectBuild(dir: string): { systems: string[]; commands: RepoReport["detectedCommands"] } {
@@ -100,9 +101,9 @@ export async function checkBranchProtection(remote: { owner: string; repo: strin
   return { status: "unknown", reason: `GitHub API returned ${res.status || "no response"} (private repo on a free plan, or insufficient access)` };
 }
 
-export async function inspectRepository(project: ProjectConfig, deps: { git?: GitFn; gh?: GhApi } = {}): Promise<RepoReport> {
+export async function inspectRepository(project: ProjectConfig, deps: { git?: GitFn; gh?: GhApi; /** how to read branch protection for a Bitbucket project */ bitbucketProtection?: (slug: string) => Promise<Protection> } = {}): Promise<RepoReport> {
   const git = deps.git ?? realGit;
-  const gh = deps.gh ?? createGhApi(project.github.account);
+  const gh = deps.gh ?? createGhApi(project.github.account); // (only called for GitHub projects)
   const path = expandHome(project.repository);
   const findings: Finding[] = [];
   const add = (severity: Severity, code: string, message: string) => findings.push({ severity, code, message });
@@ -136,7 +137,7 @@ export async function inspectRepository(project: ProjectConfig, deps: { git?: Gi
   const remoteRaw = await git(root, ["remote", "get-url", "origin"]).catch(() => null);
   if (remoteRaw) report.remote = parseRemote(remoteRaw);
   if (!report.remote) add("error", "no-remote", "No 'origin' remote: pull requests cannot be created");
-  else if (!report.remote.github) add("error", "not-github", "Origin is not a GitHub repository");
+  else if (project.host === "bitbucket" ? !report.remote.bitbucket : !report.remote.github) add("error", project.host === "bitbucket" ? "not-bitbucket" : "not-github", `Origin is not a ${project.host === "bitbucket" ? "Bitbucket" : "GitHub"} repository`);
 
   report.hasClaudeMd = existsSync(join(root, "CLAUDE.md"));
   // Judged on origin's default branch, not the working tree: a stale local checkout once made a fully onboarded repository look un-onboarded.
@@ -159,13 +160,23 @@ export async function inspectRepository(project: ProjectConfig, deps: { git?: Gi
   }
 
   const wfDir = join(root, ".github", "workflows");
-  report.ciWorkflows = existsSync(wfDir) ? readdirSync(wfDir).filter((f) => /\.ya?ml$/.test(f)) : [];
-  if (report.ciWorkflows.length === 0) add("warn", "no-ci", "No GitHub Actions workflows found: no CI signal before merging");
+  if (project.host === "bitbucket") {
+    report.ciWorkflows = existsSync(join(root, "bitbucket-pipelines.yml")) ? ["bitbucket-pipelines.yml"] : [];
+    if (report.ciWorkflows.length === 0) add("warn", "no-ci", "No bitbucket-pipelines.yml found: no CI signal before merging");
+  } else {
+    report.ciWorkflows = existsSync(wfDir) ? readdirSync(wfDir).filter((f) => /\.ya?ml$/.test(f)) : [];
+    if (report.ciWorkflows.length === 0) add("warn", "no-ci", "No GitHub Actions workflows found: no CI signal before merging");
+  }
 
-  if (project.github.account && report.remote?.github && report.remote.github.owner.toLowerCase() !== project.github.account.toLowerCase()) {
+  if (project.host !== "bitbucket" && project.github.account && report.remote?.github && report.remote.github.owner.toLowerCase() !== project.github.account.toLowerCase()) {
     add("info", "owner-differs-from-account", `Repository owner "${report.remote.github.owner}" differs from gh account "${project.github.account}" (fine for organisation repos)`);
   }
-  report.branchProtection = await checkBranchProtection(report.remote?.github ?? null, project.defaultBranch, gh);
+  if (project.host === "bitbucket") {
+    const bb = report.remote?.bitbucket;
+    report.branchProtection = !bb ? { status: "unknown", reason: "no Bitbucket remote" } : deps.bitbucketProtection ? await deps.bitbucketProtection(`${bb.owner}/${bb.repo}`).catch((e: Error) => ({ status: "unknown" as const, reason: e.message })) : { status: "unknown", reason: "Bitbucket protection was not checked" };
+  } else {
+    report.branchProtection = await checkBranchProtection(report.remote?.github ?? null, project.defaultBranch, gh);
+  }
   const bp = report.branchProtection;
   if (project.autonomy === "full") {
     if (bp.status === "unprotected") add("error", "no-branch-protection", "Full autonomy requires branch protection on the default branch");

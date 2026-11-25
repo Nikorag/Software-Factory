@@ -27,7 +27,9 @@ export const ProjectSettings = z.object({
   enabled: z.boolean().default(true),
   autonomy: ProjectInput.shape.autonomy,
   linear: z.object({ teamKey: z.string().min(1), projectName: z.string().optional() }).optional(),
+  host: z.enum(["github", "bitbucket"]).default("github"),
   github: z.object({ account: z.string().optional(), repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional() }).default({}),
+  bitbucket: z.object({ repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional(), credential: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).optional() }).default({}),
   overrides: ProjectOverrides.optional(),
   commands: z.object({ install: z.string().max(500).optional(), build: z.string().max(500).optional(), test: z.string().max(500).optional(), lint: z.string().max(500).optional(), typecheck: z.string().max(500).optional() }).default({}),
 });
@@ -69,11 +71,11 @@ function commit(dir: string, doc: Document): LoadedConfig {
 
 export function upsertProject(input: unknown, dir = seedHomeConfig()): LoadedConfig {
   const p = ProjectSettings.parse(input);
-  if (!p.repository && !p.github.repo) throw new ConfigError("set a GitHub repo (owner/name) for a factory-managed clone, or the path of an existing checkout");
+  if (!p.repository && !(p.host === "bitbucket" ? p.bitbucket.repo : p.github.repo)) throw new ConfigError(`set a ${p.host === "bitbucket" ? "Bitbucket" : "GitHub"} repo (${p.host === "bitbucket" ? "workspace/slug" : "owner/name"}) for a factory-managed clone, or the path of an existing checkout`);
   const doc = readDoc(dir);
   const list = doc.get("projects", true) as { items: { toJSON(): { id?: string } }[]; set: (i: number, v: unknown) => void; add: (v: unknown) => void };
   if (isSeq(list)) list.flow = false; // an empty `projects: []` is flow style: a project list should read as a normal block list
-  const node = doc.createNode(clean({ ...p, linear: p.linear && clean(p.linear), github: clean(p.github), commands: clean(p.commands), overrides: deepClean(p.overrides) }));
+  const node = doc.createNode(clean({ ...p, linear: p.linear && clean(p.linear), host: p.host === "bitbucket" ? "bitbucket" : undefined, github: clean(p.github), bitbucket: clean(p.bitbucket), commands: clean(p.commands), overrides: deepClean(p.overrides) }));
   (node as YAMLMap).flow = false;
   const i = list.items.findIndex((x) => x.toJSON().id === p.id);
   if (i >= 0) list.set(i, node); else list.add(node);
@@ -190,4 +192,26 @@ export function applyTracker(live: LoadedConfig, fresh: LoadedConfig): void {
   Object.assign(live.linear.labels, fresh.linear.labels);
   live.linear.keychainService = fresh.linear.keychainService;
   live.linear.apiKeyEnv = fresh.linear.apiKeyEnv;
+}
+
+// ---- Bitbucket credentials (the token itself is in the keychain; this file only says what kind it is) ----
+export const BitbucketCredentialInput = z.object({
+  kind: z.enum(["access-token", "api-token"]),
+  email: z.string().email().optional(),
+  token: z.string().min(8).max(500).optional(), // omitted when only changing the kind or email
+}).refine((c) => c.kind !== "api-token" || Boolean(c.email), { message: "an API token needs the Atlassian account email it belongs to" });
+
+export function setBitbucketCredential(name: string, meta: { kind: "access-token" | "api-token"; email?: string }, dir = seedHomeConfig()): LoadedConfig {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new ConfigError("a credential name is lowercase letters, numbers and hyphens");
+  editYaml(dir, "bitbucket.yaml", (d) => { d.setIn(["credentials", name], d.createNode(meta.email ? { kind: meta.kind, email: meta.email } : { kind: meta.kind })); });
+  return loadConfig(dir);
+}
+export function removeBitbucketCredential(name: string, dir = seedHomeConfig()): LoadedConfig {
+  editYaml(dir, "bitbucket.yaml", (d) => { d.deleteIn(["credentials", name]); });
+  return loadConfig(dir);
+}
+/** Apply to the running config (the host dispatcher reads `config.bitbucket` live). */
+export function applyBitbucket(live: LoadedConfig, fresh: LoadedConfig): void {
+  live.bitbucket.credentials = fresh.bitbucket.credentials;
+  live.bitbucket.keychainService = fresh.bitbucket.keychainService;
 }

@@ -17,6 +17,7 @@ import { registerSettingsRoutes } from "./settings-routes.js";
 import { onboardingOf, type CheckRecord } from "../repo/readiness.js";
 import type { RepoReport } from "../repo/inspect.js";
 import { registerBoardRoutes } from "./board-routes.js";
+import { registerBitbucketRoutes } from "./bitbucket-routes.js";
 import { registerJiraRoutes } from "./jira-routes.js";
 import { registerProfileRoutes } from "./profile-routes.js";
 
@@ -30,6 +31,7 @@ export interface ApiDeps {
   dataDir?: string;
   /** Settings UI + setup wizard. Absent in tests that do not exercise them. */
   profiles?: import("./profile-routes.js").ProfileDeps;
+  bitbucket?: Omit<import("./bitbucket-routes.js").BitbucketRouteDeps, "config">;
   jira?: Omit<import("./jira-routes.js").JiraRouteDeps, "db" | "config">;
   updates?: { status(): Promise<import("../service/versions.js").UpdateStatus> };
   settings?: Omit<import("./settings-routes.js").SettingsDeps, "db" | "config">;
@@ -136,7 +138,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
         const row = rows.find((r) => r.id === p.id);
         const report = row?.validationJson ? (JSON.parse(row.validationJson) as { ok?: boolean; findings?: { severity: string; code: string; message: string }[]; branchProtection?: { status: string } }) : null;
         return {
-          id: p.id, name: p.name, enabled: p.enabled, autonomy: p.autonomy, repository: p.repository, managed: p.managed, defaultBranch: p.defaultBranch, githubAccount: p.github.account ?? null, overrides: p.overrides ?? null,
+          id: p.id, name: p.name, enabled: p.enabled, autonomy: p.autonomy, repository: p.repository, managed: p.managed, defaultBranch: p.defaultBranch, githubAccount: p.github.account ?? null, host: p.host, bitbucketRepo: p.bitbucket.repo ?? null, bitbucketCredential: p.bitbucket.credential, overrides: p.overrides ?? null,
           linear: p.linear ?? null, githubRepo: p.github.repo ?? null, commands: p.commands,
           onboarding: onboardingOf(p, row?.validationJson ? (JSON.parse(row.validationJson) as RepoReport) : null, row?.checkJson ? (JSON.parse(row.checkJson) as CheckRecord) : null),
           validation: report ? { ok: report.ok ?? false, at: ms(row?.lastValidatedAt), protection: report.branchProtection?.status ?? "unknown", findings: (report.findings ?? []).filter((f) => f.severity !== "info").map((f) => `${f.severity}: ${f.message}`) } : null,
@@ -179,6 +181,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
   });
   if (d.settings && d.config) registerBoardRoutes(app, { db, config: d.config, linear: d.settings.linear }, requireToken);
+  if (d.bitbucket && d.config) registerBitbucketRoutes(app, { ...d.bitbucket, config: d.config }, requireToken);
   if (d.jira && d.config) registerJiraRoutes(app, { ...d.jira, db, config: d.config }, requireToken);
   if (d.profiles) registerProfileRoutes(app, d.profiles, requireToken);
   if (d.settings && d.config) registerSettingsRoutes(app, { ...d.settings, db, config: d.config }, requireToken);

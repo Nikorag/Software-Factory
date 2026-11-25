@@ -22,7 +22,7 @@ import { flushOutbox } from "./linear/outbox.js";
 import { createContext } from "./app/context.js";
 import { onboardProject, raiseOnboardingPr } from "./speckit/onboard.js";
 import { checkProject } from "./repo/check.js";
-import { createGhClient } from "./github/client.js";
+import { createHosts } from "./host/index.js";
 import { startService } from "./service/main.js";
 import { loadOrCreateToken } from "./server/app.js";
 import { applyUpdate, planUpdate } from "./service/update.js";
@@ -106,7 +106,7 @@ program
     const selected = config.projects.projects.filter((p) => p.enabled && (!id || p.id === id));
     let failed = 0;
     for (const p of selected) {
-      const r = await ensureClone(p);
+      const r = await ensureClone(p, { hosts: createHosts(config) });
       if (r.status === "error") failed++;
       console.log(`${r.status === "error" ? "✗" : "✓"} ${p.id.padEnd(18)} ${r.status}${"path" in r ? `  ${r.path}` : ""}${"reason" in r ? `  (${r.reason})` : ""}${"error" in r ? `  ${r.error}` : ""}`);
     }
@@ -122,7 +122,7 @@ program
     const selected = config.projects.projects.filter((p) => !id || p.id === id);
     if (selected.length === 0) { console.error(id ? `no such project: ${id}` : "no projects configured in config/projects.yaml"); process.exitCode = 1; handle.close(); return; }
     syncProjects(handle.db, config.projects.projects);
-    const reports = await validateProjects(handle.db, selected);
+    const reports = await validateProjects(handle.db, selected, { hosts: createHosts(config) });
     for (const r of reports) {
       if (opts.json) { console.log(JSON.stringify(r, null, 2)); continue; }
       console.log(`${r.ok ? "✓" : "✗"} ${r.projectId}  ${r.path}  (default: ${r.defaultBranch ?? "?"}, build: ${r.buildSystems.join(",") || "none"}, protection: ${r.branchProtection.status})`);
@@ -225,10 +225,10 @@ program
     const project = config.projects.projects.find((p) => p.id === id);
     if (!project) { console.error(`no such project: ${id}`); process.exitCode = 1; return; }
     const ctx = createContext(config);
-    const r = await onboardProject(project, { runner: ctx.runner, dataDir: config.factory.dataDir });
+    const r = await onboardProject(project, { runner: ctx.runner, dataDir: config.factory.dataDir, hosts: ctx.hosts });
     console.log(r.status === "already-initialised" ? `${id}: Spec Kit is already set up` : `${id}: created branch ${r.branch} (${r.commits.join(", ")})\n  review: git -C ${r.worktree} log -p ${project.defaultBranch}..HEAD`);
     if (opts.pr) {
-      const { pr, reused } = await raiseOnboardingPr(project, { github: createGhClient({ account: project.github.account }), worktree: r.worktree });
+      const { pr, reused } = await raiseOnboardingPr(project, { github: ctx.hosts.pr(project), hosts: ctx.hosts, worktree: r.worktree });
       console.log(`${reused ? "PR already open" : "PR raised"}: ${pr.url}  (not merged: a human reviews and merges it)`);
     }
     ctx.handle.close();
@@ -243,8 +243,9 @@ program
     const config = loadConfig();
     const project = config.projects.projects.find((p) => p.id === id);
     if (!project) { console.error(`no such project: ${id}`); process.exitCode = 1; return; }
-    if (project.managed) { const c = await ensureClone(project); if (c.status === "error") { console.error(c.error); process.exitCode = 1; return; } }
+    if (project.managed) { const c = await ensureClone(project, { hosts: createHosts(config) }); if (c.status === "error") { console.error(c.error); process.exitCode = 1; return; } }
     const report = await checkProject(project, {
+      hosts: createHosts(config),
       dataDir: config.factory.dataDir, sandbox: config.factory.sandbox, timeoutMs: config.factory.commandTimeoutSeconds * 1000, skipInstall: !opts.install, keep: opts.keep,
       onResult: (r) => console.log(`${r.ok ? "✓" : "✗"} ${r.kind.padEnd(9)} ${Math.round(r.durationMs / 1000)}s${r.sandboxed ? "" : " (UNSANDBOXED)"}  ${r.command}${r.ok ? "" : `\n${r.tail.slice(-1800).split("\n").map((l) => `    ${l}`).join("\n")}`}`),
     });
