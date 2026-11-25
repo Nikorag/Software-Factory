@@ -97,13 +97,14 @@ export function applyProjects(live: LoadedConfig, fresh: LoadedConfig): void {
 // ---- global workflow settings (concurrency, fix-cycle limit, models per task) ----
 const Route = z.object({ provider: z.enum(["anthropic", "local"]), model: z.string().min(1).max(100) });
 export const GlobalSettings = z.object({
+  githubAccount: z.string().regex(/^[A-Za-z0-9-]{1,39}$/).or(z.literal("")).optional(), // "" = none
   maxConcurrentJobs: z.number().int().min(1).max(8),
   maxRemediationAttempts: z.number().int().min(0).max(10),
   routes: z.object({ classification: Route, specification: Route, implementation: Route, independent_review: Route, final_review: Route }),
 });
 export type GlobalSettings = z.infer<typeof GlobalSettings>;
 
-export const globalSettingsOf = (c: LoadedConfig): GlobalSettings => ({ maxConcurrentJobs: c.factory.maxConcurrentJobs, maxRemediationAttempts: c.factory.maxRemediationAttempts, routes: c.models.routes });
+export const globalSettingsOf = (c: LoadedConfig): GlobalSettings => ({ githubAccount: c.factory.githubAccount ?? "", maxConcurrentJobs: c.factory.maxConcurrentJobs, maxRemediationAttempts: c.factory.maxRemediationAttempts, routes: c.models.routes });
 
 /** Writes factory.yaml and models.yaml (comments preserved) only if the resulting config loads; both files or neither. */
 export function updateGlobalSettings(input: unknown, dir = seedHomeConfig()): LoadedConfig {
@@ -113,6 +114,7 @@ export function updateGlobalSettings(input: unknown, dir = seedHomeConfig()): Lo
   if (!isMap(factory.contents)) factory.contents = factory.createNode({}) as never;
   factory.set("maxConcurrentJobs", g.maxConcurrentJobs);
   factory.set("maxRemediationAttempts", g.maxRemediationAttempts);
+  if (g.githubAccount) factory.set("githubAccount", g.githubAccount); else if (g.githubAccount === "") factory.delete("githubAccount");
   for (const [task, route] of Object.entries(g.routes)) {
     const node = models.createNode(route) as YAMLMap; node.flow = true;
     models.setIn(["routes", task], node);
@@ -131,5 +133,7 @@ export function updateGlobalSettings(input: unknown, dir = seedHomeConfig()): Lo
 export function applyGlobal(live: LoadedConfig, fresh: LoadedConfig): void {
   live.factory.maxConcurrentJobs = fresh.factory.maxConcurrentJobs;
   live.factory.maxRemediationAttempts = fresh.factory.maxRemediationAttempts;
+  live.factory.githubAccount = fresh.factory.githubAccount;
+  applyProjects(live, fresh); // projects that follow the profile's default GitHub account pick up the change
   Object.assign(live.models.routes, fresh.models.routes);
 }

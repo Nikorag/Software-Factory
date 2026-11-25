@@ -8,7 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { send } from "@/lib/api";
+import { api, send } from "@/lib/api";
+import { usePoll } from "@/hooks/usePoll";
+import type { GhAccounts } from "@/lib/types";
 import type { Project, TeamAudit } from "@/lib/types";
 import { TASKS, type GlobalSettings, type Routes, type RouteCfg, type TaskId } from "@/lib/tasks";
 import { ModelPicker } from "./ModelPicker";
@@ -41,6 +43,7 @@ export function ProjectEditor({ project, teams, globals, onSaved, onRemoved, onD
   const dirty = !same(f, initial);
   useEffect(() => { onDirty?.(dirty); }, [dirty, onDirty]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => { setSaved(false); setF((x) => ({ ...x, [k]: v })); };
+  const { data: gh } = usePoll(() => api<GhAccounts>("/api/setup/github"), 120000);
   const team = teams.find((t) => t.key === f.team);
   const id = project?.id ?? (f.id || slug(f.name));
 
@@ -91,7 +94,10 @@ export function ProjectEditor({ project, teams, globals, onSaved, onRemoved, onD
           <SelectContent><SelectItem value="github">GitHub: the factory keeps its own clone (recommended)</SelectItem><SelectItem value="path">An existing checkout on this machine</SelectItem></SelectContent></Select>
         {f.source === "github" ? <Input aria-label="GitHub repo" value={f.repo} onChange={(e) => set("repo", e.target.value)} placeholder="owner/name" /> : <Input aria-label="checkout path" value={f.path} onChange={(e) => set("path", e.target.value)} placeholder="~/projects/my-app" />}
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="grid gap-1.5"><Label htmlFor="pe-acct">GitHub account (gh)</Label><Input id="pe-acct" value={f.account} onChange={(e) => set("account", e.target.value)} placeholder="optional" /></div>
+          <div className="grid gap-1.5"><Label htmlFor="pe-acct">GitHub account (gh)</Label>
+            {gh?.accounts.length ? <Select value={f.account || "__profile"} onValueChange={(v) => set("account", v === "__profile" ? "" : v)}><SelectTrigger id="pe-acct" aria-label="GitHub account"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="__profile">{gh.defaultAccount ? `profile default (${gh.defaultAccount})` : "gh's active login"}</SelectItem>{gh.accounts.map((a) => <SelectItem key={a.login} value={a.login}>{a.login}</SelectItem>)}</SelectContent></Select>
+              : <Input id="pe-acct" value={f.account} onChange={(e) => set("account", e.target.value)} placeholder="optional" />}</div>
           <div className="grid gap-1.5"><Label htmlFor="pe-branch">Default branch</Label><Input id="pe-branch" value={f.branch} onChange={(e) => set("branch", e.target.value)} /></div>
         </div>
       </Section>

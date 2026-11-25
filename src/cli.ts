@@ -24,6 +24,8 @@ import { resolveSecret } from "./service/secrets.js";
 import { startService } from "./service/main.js";
 import { loadOrCreateToken } from "./server/app.js";
 import { applyUpdate, planUpdate } from "./service/update.js";
+import { activateProfile, addProfile, DEFAULT_PROFILE, factoryRoot, getProfile, listProfiles, ProfileError, removeProfile } from "./config/profiles.js";
+import { desktopEntry, isUp, openDesktop, pidOf, startService as launchService, stopService, urlOf } from "./service/launch.js";
 import { agentStatus, installAgent, uninstallAgent } from "./service/launchd.js";
 
 const openFactoryDb = () => {
@@ -37,6 +39,7 @@ const linearClient = (config: ReturnType<typeof loadConfig>): LinearClient => {
   return createLinearClient({ apiKey: key });
 };
 
+const NOT_PER_PROFILE = new Set(["start", "shutdown", "status", "profile", "list", "add", "remove", "update"]);
 const program = new Command("factory").description("Local-first autonomous software factory").version(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version as string, "-v, --version");
 
 program
@@ -267,9 +270,70 @@ program
   });
 
 program
+  .option("-p, --profile <name>", "which profile to work with (default: the default profile; see `software-factory profile list`)")
+  .hook("preAction", (_cmd, action) => {
+    const name = program.opts<{ profile?: string }>().profile ?? process.env.FACTORY_PROFILE;
+    if (name && !NOT_PER_PROFILE.has(action.name())) activateProfile(name);
+  });
+
+program
+  .command("start", { isDefault: true })
+  .description("Start every profile's factory in the background and open the app window. Returns immediately: the terminal is free. (This is what running `software-factory` alone does.)")
+  .option("--no-window", "start the services only")
+  .option("--browser", "open the dashboard in your browser instead of the app window")
+  .action(async (opts: { window: boolean; browser?: boolean }) => {
+    const root = factoryRoot();
+    const chosen = getProfile(program.opts<{ profile?: string }>().profile ?? DEFAULT_PROFILE, root);
+    for (const p of listProfiles(root)) {
+      const r = await launchService(p, root);
+      console.log(`${r.error ? "✗" : "✓"} ${p.name.padEnd(12)} ${r.error ?? (r.started ? `started  ${urlOf(p)}` : `already running  ${urlOf(p)}`)}`);
+    }
+    if (!opts.window) return;
+    const first = listProfiles(root).length === 1 && !(await fetch(urlOf(chosen, "/api/setup")).then((r) => r.json()).then((j: { projectCount?: number }) => (j.projectCount ?? 0) > 0).catch(() => false));
+    const hash = first ? "#/setup" : "";
+    if (!opts.browser && process.platform === "darwin" && openDesktop(chosen, root)) { console.log("Opened the Software Factory window. It keeps running in the background; `software-factory shutdown` stops it."); return; }
+    if (!desktopEntry() && !opts.browser) console.log("(The desktop app is not installed, so opening your browser instead.)");
+    if (process.platform === "darwin") execFileSync("open", [urlOf(chosen, `/${hash}`)]);
+    else console.log(`Open ${urlOf(chosen, `/${hash}`)}`);
+  });
+
+program
+  .command("shutdown")
+  .description("Shut down the background factory of every profile (or one with --profile). Running agents are aborted and their jobs re-queued untouched.")
+  .action(async () => {
+    const only = program.opts<{ profile?: string }>().profile;
+    for (const p of listProfiles().filter((x) => !only || x.name === only)) console.log(`${p.name.padEnd(12)} ${await stopService(p)}`);
+  });
+
+program
+  .command("status")
+  .description("Is each profile's factory running, and what is it doing?")
+  .action(async () => {
+    for (const p of listProfiles()) {
+      const up = await isUp(p);
+      const o = up ? ((await fetch(urlOf(p, "/api/overview")).then((r) => r.json()).catch(() => null)) as { counts?: { byStatus?: Record<string, number> } } | null) : null;
+      const c = o?.counts?.byStatus ?? {};
+      console.log(`${up ? "●" : "○"} ${p.name.padEnd(12)} ${up ? `running (pid ${pidOf(p) ?? "?"})  ${urlOf(p)}  jobs: ${c.running ?? 0} running, ${c.queued ?? 0} queued, ${c.waiting ?? 0} waiting` : "stopped"}`);
+    }
+  });
+
+const profile = program.command("profile").description("Separate, isolated setups (e.g. home and work): each has its own projects, Linear, GitHub account, data and port");
+profile.command("list").description("List profiles").action(() => { for (const p of listProfiles()) console.log(`${p.name.padEnd(12)} port ${p.port}  ${p.home}`); });
+profile.command("add <name>").description("Create a profile").action((name: string) => {
+  try { const p = addProfile(name); console.log(`created "${p.name}" (port ${p.port}). Run \`software-factory start\` and switch to it in the app; its setup wizard will ask for its own Linear key and projects.`); }
+  catch (e) { if (e instanceof ProfileError) { console.error(e.message); process.exitCode = 1; } else throw e; }
+});
+profile.command("remove <name>").description("Forget a profile (its data stays on disk)").action(async (name: string) => {
+  try {
+    const p = getProfile(name);
+    if (await isUp(p)) { console.error(`"${name}" is running: stop it first (software-factory shutdown --profile ${name})`); process.exitCode = 1; return; }
+    removeProfile(name); console.log(`removed "${name}". Its data is still in ${p.home} (delete it yourself if you want it gone).`);
+  } catch (e) { if (e instanceof ProfileError) { console.error(e.message); process.exitCode = 1; } else throw e; }
+});
+
+program
   .command("serve")
-  .alias("start") // `start` also opens the dashboard
-  .description("Run the factory: scheduler (polls Linear, runs jobs) and the dashboard/API on loopback. `start` = `serve --open`")
+  .description("Run ONE profile's factory in the foreground (for debugging; `start` runs them all in the background)")
   .option("--no-scheduler", "dashboard and API only; do not poll Linear or run jobs")
   .option("--dry-run", "discover and plan only: skip every mutating stage")
   .option("--open", "open the dashboard in your browser (the setup wizard on first run)")
@@ -279,7 +343,7 @@ program
     const svc = await startService(config, { scheduler: opts.scheduler });
     const url = `http://127.0.0.1:${svc.port}/${config.projects.projects.length === 0 ? "#/setup" : ""}`;
     console.log(`factory running on ${url}`);
-    if ((opts.open || process.argv[2] === "start") && process.platform === "darwin") execFileSync("open", [url]);
+    if (opts.open && process.platform === "darwin") execFileSync("open", [url]);
     if (config.factory.dryRun) console.log("DRY RUN: nothing will be changed in repositories, Linear or GitHub");
     const shutdown = async () => { await svc.stop(); process.exit(0); };
     process.on("SIGINT", shutdown);
@@ -303,8 +367,8 @@ program
     try {
       const o = (await (await fetch(`http://127.0.0.1:${config.factory.server.port}/api/overview`, { signal: AbortSignal.timeout(2000) })).json()) as { counts: { byStatus: Record<string, number> } };
       const running = o.counts.byStatus.running ?? 0;
-      console.log(`The factory is running and still has the old code. Restart it to use the update (${running ? `${running} job(s) are running right now: a restart redoes the stage in progress, so wait for a quiet moment` : "no jobs are running, so it is safe now"}).`);
-    } catch { console.log("Start it with `software-factory start`."); }
+      console.log(`The factory is running and still has the old code. Restart it (software-factory shutdown, then software-factory) to use the update (${running ? `${running} job(s) are running right now: a restart redoes the stage in progress, so wait for a quiet moment` : "no jobs are running, so it is safe now"}).`);
+    } catch { console.log("Start it with `software-factory`."); }
   });
 
 program

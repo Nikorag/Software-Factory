@@ -21,6 +21,8 @@ import { resolveSecret, saveSecret } from "./secrets.js";
 import { TaskManager } from "./tasks.js";
 import { UpdateChecker } from "./versions.js";
 import { pruneAgentLogs } from "./retention.js";
+import { addProfile, DEFAULT_PROFILE, factoryRoot, listProfiles, removeProfile } from "../config/profiles.js";
+import { isUp, startService as launchService } from "./launch.js";
 
 const run = promisify(execFile);
 
@@ -63,7 +65,10 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     tasks: new TaskManager(), actions: createProjectActions(ctx), linear: () => ctx.linear(), linearKeyPresent: () => Boolean(resolveSecret(keySrc)),
     saveLinearKey: async (key: string) => { const me = await createLinearClient({ apiKey: key }).viewer(); saveSecret(keySrc, key); return { name: me.name }; },
   };
-  const app = buildServer({ db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, updates: new UpdateChecker() });
+  const app = buildServer({ db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, updates: new UpdateChecker(), profiles: {
+    current: process.env.FACTORY_PROFILE ?? DEFAULT_PROFILE, list: () => listProfiles(), add: (n) => addProfile(n), remove: (n) => removeProfile(n),
+    start: (p) => launchService(p, factoryRoot()), isUp: (p) => isUp(p),
+  } });
   try {
     await app.listen({ host: config.factory.server.host, port });
   } catch (e) { lock.release(); throw e; }

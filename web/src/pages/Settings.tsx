@@ -9,6 +9,7 @@ import { Checks, LinearSetup } from "@/components/Integrations";
 import { ProjectEditor } from "@/components/ProjectEditor";
 import { api } from "@/lib/api";
 import { WorkflowSettings } from "@/pages/WorkflowSettings";
+import { ProfilesSettings } from "@/pages/ProfilesSettings";
 import type { GlobalSettings } from "@/lib/tasks";
 import type { Project, SetupInfo, TeamAudit } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
@@ -66,13 +67,14 @@ export function Settings() {
   usePoll(async () => { if (!info?.linear.keyPresent) return null; const r = await api<{ teams: TeamAudit[] }>("/api/setup/linear"); setTeams(r.teams); return r; }, 300000, [info?.linear.keyPresent]);
   return (
     <Tabs defaultValue="projects">
-      <TabsList><TabsTrigger value="projects">Projects</TabsTrigger><TabsTrigger value="workflow">Workflow</TabsTrigger><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="system">System</TabsTrigger></TabsList>
+      <TabsList><TabsTrigger value="projects">Projects</TabsTrigger><TabsTrigger value="workflow">Workflow</TabsTrigger><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="profiles">Profiles</TabsTrigger><TabsTrigger value="system">System</TabsTrigger></TabsList>
       <TabsContent value="projects"><ProjectsPane projects={data?.projects ?? []} teams={teams} globals={globals} reload={() => { void reload(); void reloadInfo(); }} /></TabsContent>
       <TabsContent value="workflow"><WorkflowSettings value={globals} onSaved={() => void reloadGlobals()} /></TabsContent>
       <TabsContent value="integrations" className="grid gap-4">
         <Card><CardHeader><CardTitle className="text-sm">Status</CardTitle></CardHeader><CardContent><Checks /></CardContent></Card>
         <Card><CardHeader><CardTitle className="text-sm">Linear</CardTitle></CardHeader><CardContent><LinearSetup info={info} onKey={() => void reloadInfo()} onTeams={setTeams} /></CardContent></Card>
       </TabsContent>
+      <TabsContent value="profiles"><ProfilesSettings /></TabsContent>
       <TabsContent value="system"><Card><CardContent className="grid gap-1 text-sm">
         <div>Your settings are stored in <span className="font-mono text-xs">{info?.configDir ?? info?.homeConfigDir}</span></div>
         <div className="text-muted-foreground">{info?.usingDefaults ? "Using the shipped defaults until you change a setting." : "These are your own files: you can also edit projects.yaml by hand."}</div>

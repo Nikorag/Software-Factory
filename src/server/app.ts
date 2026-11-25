@@ -12,7 +12,7 @@ import { registerApiRoutes, type ApiDeps } from "./routes.js";
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 // The dashboard is the built React app (pnpm web:build -> web/dist). Only index.html and files directly under assets/ are ever served.
 const DASHBOARD_DIR = fileURLToPath(new URL("../../web/dist/", import.meta.url));
-const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".woff2": "font/woff2" };
+const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2" };
 const SAFE_NAME = /^[\w.-]+$/;
 
 export interface ServerDeps extends Partial<Omit<ApiDeps, "db" | "logger">> {

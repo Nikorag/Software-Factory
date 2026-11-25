@@ -31,7 +31,9 @@ function assertNoSecrets(value: unknown, file: string, path = ""): void {
 }
 
 function readYaml<T extends z.ZodType>(dir: string, name: string, schema: T, required: boolean): z.infer<T> {
-  const file = join(dir, name);
+  let file = join(dir, name);
+  // A user's own config dir only needs the files they changed: anything else comes from the shipped defaults.
+  if (!existsSync(file) && existsSync(join(BUNDLED_CONFIG_DIR, name)) && resolve(dir) === resolve(homeConfigDir())) file = join(BUNDLED_CONFIG_DIR, name);
   if (!existsSync(file)) {
     if (required) throw new ConfigError(`Missing required config file: ${file}`);
     return schema.parse({});
@@ -56,7 +58,8 @@ export const homeConfigDir = () => join(factoryHome(), "config");
 /** FACTORY_CONFIG_DIR, else the user's config in the home dir once it exists (the wizard/settings create it), else the shipped defaults. */
 export function defaultConfigDir(): string {
   if (process.env.FACTORY_CONFIG_DIR) return process.env.FACTORY_CONFIG_DIR;
-  return existsSync(join(homeConfigDir(), "models.yaml")) ? homeConfigDir() : BUNDLED_CONFIG_DIR;
+  const home = homeConfigDir();
+  return ["factory.yaml", "projects.yaml", "linear.yaml", "models.yaml"].some((f) => existsSync(join(home, f))) ? home : BUNDLED_CONFIG_DIR;
 }
 
 export function loadConfig(configDir = defaultConfigDir()): LoadedConfig {
@@ -70,6 +73,7 @@ export function loadConfig(configDir = defaultConfigDir()): LoadedConfig {
   const projects = ProjectsConfig.parse({
     projects: projectsFile.projects.map((p) => ({
       ...p,
+      github: { ...p.github, account: p.github.account ?? factory.githubAccount },
       managed: !p.repository,
       repository: p.repository ? expandHome(p.repository) : join(dataDir, "projects", p.id),
     })),

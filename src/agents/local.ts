@@ -38,9 +38,9 @@ export function extractJson(text: string): unknown {
 }
 
 /**
- * Client for an OpenAI-compatible chat endpoint (Bionic is LM Studio-derived; its server is UNVERIFIED until
- * `factory doctor` reaches it). Strictly sequential: one request at a time, because 32 GB of unified memory
- * cannot be shared with parallel local inference. Read-only by construction: it has no tools.
+ * Client for an OpenAI-compatible chat endpoint (LM Studio, llama.cpp, Ollama...).
+ * `factory doctor` checks that it is reachable. Strictly sequential: one request at a time, because local
+ * inference cannot share unified memory in parallel. Read-only by construction: it has no tools.
  */
 export class LocalModelClient implements Agent {
   readonly provider = "local" as const;

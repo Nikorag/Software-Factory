@@ -86,7 +86,8 @@ export function buildPlist(o: Pick<InstallOptions, "repoRoot" | "configDir" | "d
   const repoRoot = o.repoRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
   return renderPlist({
     programArguments: serveCommand(repoRoot), workingDirectory: repoRoot,
-    env: { PATH: servicePath(), HOME: o.home ?? homedir(), FACTORY_CONFIG_DIR: o.configDir ?? join(repoRoot, "config") },
+    // FACTORY_CONFIG_DIR only when asked for: by default the service reads the user's own config (~/.software-factory/config), like the CLI does
+    env: { PATH: servicePath(), HOME: o.home ?? homedir(), ...(o.configDir ? { FACTORY_CONFIG_DIR: o.configDir } : {}) },
     stdoutPath: join(o.dataDir, "logs", "launchd.out.log"), stderrPath: join(o.dataDir, "logs", "launchd.err.log"),
   });
 }

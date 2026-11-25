@@ -2,12 +2,15 @@
 
 ## Running it
 ```sh
-pnpm factory serve                 # scheduler + dashboard/API on 127.0.0.1:4780 (foreground)
-pnpm factory serve --no-scheduler  # dashboard and API only: polls nothing, runs nothing, spends no Claude quota
-pnpm factory serve --dry-run       # discover and plan only; every mutating stage is skipped and recorded
-pnpm factory dashboard --open      # opens the dashboard with the control token in the #fragment
-pnpm factory work                  # one-off: run claimable jobs once in the foreground (no polling)
+software-factory                    # start every profile's factory in the background and open the app (frees your terminal)
+software-factory status             # what is running
+software-factory shutdown           # stop them (all profiles, or --profile <name>)
+software-factory serve              # ONE profile in the foreground, for debugging
+software-factory serve --no-scheduler  # dashboard and API only: polls nothing, runs nothing, spends no Claude quota
+software-factory serve --dry-run    # discover and plan only; every mutating stage is skipped and recorded
+software-factory work               # one-off: run claimable jobs once in the foreground (no polling)
 ```
+Background services write their output to `<home>/logs/service.out`. A profile's home is `~/.software-factory` (the default profile) or `~/.software-factory/profiles/<name>`.
 Only one service runs per data directory (`<dataDir>/factory.lock`; a stale lock from a crash is taken over). `SIGINT`/`SIGTERM` shut down gracefully: loops stop, running agents are told to stand down, and their jobs are **re-queued exactly where they were** (no attempt spent), so the next start resumes them.
 
 ## What the service does
@@ -19,7 +22,7 @@ Pause and emergency stop are honoured by all three (write-back keeps flushing wh
 
 ## Dashboard (http://127.0.0.1:4780)
 Overview (state, counts, running/queued/finished jobs, this machine's memory/disk/load, scheduler and Linear backlog, dependency health), Jobs (filter by status/project), Job detail (20-stage progression with the held stage marked, full stage history, decisions, agent runs with a log viewer, artefacts, worktree, Linear write-back status, PR link), Projects (autonomy, Linear binding, which commands exist, validation, branch protection), Health. Everything shown is read from the persisted database and log files.
-**Security model.** Loopback peers only; the `Host` header must be `127.0.0.1:<port>`/`localhost:<port>` (defeats DNS rebinding); a cross-site `Origin` is refused; **every mutating call needs the bearer token** in `<dataDir>/control-token` (mode 600). `pnpm factory dashboard` prints a URL carrying the token in the `#fragment`, which the browser never sends to the server and the page removes from the address bar. Reading needs no token. The page has a strict CSP (no inline script/style, no third-party origins), and everything derived from tickets, agents or logs is rendered as text only (tested with hostile data).
+**Security model.** Loopback peers only; the `Host` header must be `127.0.0.1:<port>`/`localhost:<port>` (defeats DNS rebinding); a cross-site `Origin` is refused. A change is accepted from the dashboard's own page (same origin, no token to paste) or with the bearer token in `<home>/control-token` (mode 600) for the CLI and scripts: see ADR 0007 for the trade-off. The page has a strict CSP (no inline script/style, no third-party origins), and everything derived from tickets, agents or logs is rendered as text only (tested with hostile data).
 
 ## Emergency stop and pause
 - **Pause** (`pnpm factory pause` or the button): nothing new starts; running jobs finish their current stage and hold.
@@ -29,10 +32,10 @@ Every control action is recorded in `decisions` with its actor.
 
 ## LaunchAgent (start at login, restart on crash)
 ```sh
-pnpm factory launchd:install          # writes ~/Library/LaunchAgents/com.software-factory.agent.plist
-pnpm factory launchd:install --load   # ...and starts it now
-pnpm factory launchd:status
-pnpm factory launchd:uninstall
+software-factory launchd:install          # writes ~/Library/LaunchAgents/com.software-factory.agent.plist
+software-factory launchd:install --load   # ...and starts it now
+software-factory launchd:status
+software-factory launchd:uninstall
 ```
 **Installing means it starts automatically at every login** (`RunAtLoad`) and then polls Linear and runs jobs by itself; keep it uninstalled until you are ready for that. It restarts only after a crash (a clean exit is not restarted), runs at low priority, logs to `<dataDir>/logs/launchd.*.log`, and contains **no secrets**: the Linear key is read from the macOS keychain (`security add-generic-password -a "$USER" -s software-factory-linear -w`; the service name is `linear.keychainService`), GitHub and Claude use their own stored logins. The first keychain read from the service may show a prompt: choose "Always Allow".
 

@@ -29,11 +29,11 @@ Jobs are leased (`leaseOwner`/`leaseExpiresAt`, renewed by a heartbeat). `recove
 CLI: `factory jobs | job:cancel | job:retry | pause | resume | stop | clear-stop | simulate [--dry-run]`.
 
 ## Where things happen (as built)
-- The job worktree is created idempotently by the first stage that needs files (`REQUIREMENTS_ANALYSIS`), not at `IMPLEMENTATION_PREPARATION`, because specifications are committed on the job branch. `IMPLEMENTATION_PREPARATION` (Milestone 7) will verify cleanliness, install dependencies and run baseline checks.
+- The job worktree is created idempotently by the first stage that needs files (`REQUIREMENTS_ANALYSIS`), not at `IMPLEMENTATION_PREPARATION`, because specifications are committed on the job branch. `IMPLEMENTATION_PREPARATION` will verify cleanliness, install dependencies and run baseline checks.
 - Handlers: every stage from `DISCOVERED` to `LINEAR_COMPLETION` (specification: M6, implementation: M7, delivery: M8). Every stage now has a handler. A stage without one would block with "no handler registered".
 - `pnpm factory work` runs claimable jobs once with real agents. Production code never uses the simulated handlers.
 
-## Implementation stages (Milestone 7)
+## Implementation stages
 | Stage | What happens |
 |---|---|
 | `IMPLEMENTATION_PREPARATION` | Requires a configured `commands.test` (else blocks: the factory will not implement or merge unverified work). Re-validates the spec. Optionally runs `commands.install` (the only step with network). Runs the project's checks as a **baseline** on the untouched default branch; if they already fail, blocks, because failures could not be attributed to the change. |
@@ -42,10 +42,10 @@ CLI: `factory jobs | job:cancel | job:retry | pause | resume | stop | clear-stop
 | `LOCAL_MODEL_REVIEW` | Independent code review of the code-only diff by the `independent_review` route (Haiku). Security-sensitive changes (paths like auth/crypto/exec/sql, dependency manifests, workflows, or risky calls) also get a Claude `security-reviewer` pass. **Critical security findings stop for a human, never remediated**; high ones are remediated. |
 | `CLAUDE_REVIEW` | Claude reviews the change and gives a verdict, with evidence, on each earlier finding (recorded as `code-review.verdict` decisions). |
 | `REMEDIATION` | The implementer resumes its session with the latest blocking findings. It must reject invalid findings with evidence (recorded). The factory commits, re-scans for secrets, and the workflow re-runs `AUTOMATED_TESTING`, so a fix that breaks the build is caught by a real run. |
-| `FINAL_VALIDATION` | Deterministic gates, independent of any reviewer: all checks re-run; clean tree; no protected-path changes; no secrets in history; no conflict markers; **no skipped/disabled tests and no deleted test files**; every task ticked; then the `final-reviewer` must show, for every FR/SC criterion, the code and a test that would fail without it. On success the factory writes an **evidence report** (checks, criteria with evidence, commits, rejected findings and reasons) to `<dataDir>/reports/<jobId>.md`, recorded as a `completion-report` artefact for the PR description (Milestone 8). |
+| `FINAL_VALIDATION` | Deterministic gates, independent of any reviewer: all checks re-run; clean tree; no protected-path changes; no secrets in history; no conflict markers; **no skipped/disabled tests and no deleted test files**; every task ticked; then the `final-reviewer` must show, for every FR/SC criterion, the code and a test that would fail without it. On success the factory writes an **evidence report** (checks, criteria with evidence, commits, rejected findings and reasons) to `<dataDir>/reports/<jobId>.md`, recorded as a `completion-report` artefact for the PR description. |
 Remediation is capped at `maxRemediationAttempts` (3) across all of these. Dry-run jobs skip implementation and the stages that depend on it.
 
-## Delivery stages (Milestone 8): PR-only by decision
+## Delivery stages: PR-only by decision
 **The factory raises pull requests and never merges them.** This is configuration (`mergeMode: pr-only`, the only value the schema accepts) *and* structure: `GitHubClient` has no merge method, `src/delivery` contains no merge call, and a test asserts it. A human merges.
 | Stage | What happens |
 |---|---|

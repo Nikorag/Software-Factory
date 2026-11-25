@@ -75,7 +75,7 @@ describe("inspectRepository", () => {
       expect(r.branchProtection.status).toBe("unavailable");
       expect(codes(r)).toContain("protection-unavailable");
       expect(codes(r)).not.toContain("no-branch-protection");
-      expect(r.ok).toBe(true); // a warning, but the project must not auto-merge (enforced in Milestone 8)
+      expect(r.ok).toBe(true); // a warning, but the project must not auto-merge (enforced by the delivery stages)
     });
     it("does not require protection for supervised projects", async () => {
       const r = await inspectRepository(proj(withGithub()), { gh: gh(404) });

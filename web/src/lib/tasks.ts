@@ -1,7 +1,7 @@
 export type TaskId = "classification" | "specification" | "implementation" | "independent_review" | "final_review";
 export interface RouteCfg { provider: "anthropic" | "local"; model: string }
 export type Routes = Record<TaskId, RouteCfg>;
-export interface GlobalSettings { maxConcurrentJobs: number; maxRemediationAttempts: number; routes: Routes }
+export interface GlobalSettings { githubAccount?: string; maxConcurrentJobs: number; maxRemediationAttempts: number; routes: Routes }
 
 /** The five model choices the factory makes, and the workflow steps each one drives (as drawn on the job's flow chart). */
 export const TASKS: { id: TaskId; label: string; steps: string; local: boolean }[] = [

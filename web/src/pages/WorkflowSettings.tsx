@@ -5,7 +5,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ModelPicker } from "@/components/ModelPicker";
-import { send } from "@/lib/api";
+import { api, send } from "@/lib/api";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { GhAccounts } from "@/lib/types";
+import { usePoll } from "@/hooks/usePoll";
 import { TASKS, type GlobalSettings } from "@/lib/tasks";
 
 /** A number box you can clear and retype: it only commits a value once something valid is typed, clamps to the range, and restores on blur if left empty. */
@@ -24,12 +27,20 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
   const [g, setG] = useState<GlobalSettings | null>(value);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const { data: gh } = usePoll(() => api<GhAccounts>("/api/setup/github"), 60000);
   useEffect(() => { if (value) setG(value); }, [value]);
   if (!g || !value) return null;
   const dirty = JSON.stringify(g) !== JSON.stringify(value);
   const save = async () => { setErr(null); const r = await send("PUT", "/api/settings/global", g); if (r.ok) { setSaved(true); onSaved(); } else setErr(r.error); };
   return (
     <div className="grid gap-4">
+      <Card><CardHeader><CardTitle className="text-sm">GitHub account</CardTitle><CardDescription>The <code>gh</code> login this profile uses to clone, push branches and open pull requests. A project can name a different one. Your machine's own active gh login is never switched.</CardDescription></CardHeader>
+        <CardContent className="grid gap-1.5">
+          <Select value={g.githubAccount || "__none"} onValueChange={(v) => { setSaved(false); setG({ ...g, githubAccount: v === "__none" ? "" : v }); }}>
+            <SelectTrigger className="w-72" aria-label="GitHub account"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="__none">gh's active login (don't pin)</SelectItem>{(gh?.accounts ?? []).map((a) => <SelectItem key={a.login} value={a.login}>{a.login}{a.active ? " (active)" : ""}</SelectItem>)}</SelectContent></Select>
+          {gh && gh.accounts.length === 0 ? <p className="text-xs text-loop">gh has no logins yet: run <code>gh auth login</code>.</p> : <p className="text-xs text-muted-foreground">Logged in on this machine: {(gh?.accounts ?? []).map((a) => a.login).join(", ") || "…"}. Add another with <code>gh auth login</code>.</p>}
+        </CardContent></Card>
       <Card><CardHeader><CardTitle className="text-sm">Limits</CardTitle><CardDescription>Defaults for every project.</CardDescription></CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="grid gap-1.5"><Label htmlFor="wf-conc">Concurrent jobs</Label>

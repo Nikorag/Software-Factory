@@ -14,6 +14,7 @@ import type { Scheduler } from "../service/scheduler.js";
 import { counts, systemInfo, type HealthChecker } from "../service/metrics.js";
 import { readConversation } from "../agents/transcript.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
+import { registerProfileRoutes } from "./profile-routes.js";
 
 export interface ApiDeps {
   db: FactoryDb;
@@ -24,6 +25,7 @@ export interface ApiDeps {
   health?: HealthChecker;
   dataDir?: string;
   /** Settings UI + setup wizard. Absent in tests that do not exercise them. */
+  profiles?: import("./profile-routes.js").ProfileDeps;
   updates?: { status(): Promise<import("../service/versions.js").UpdateStatus> };
   settings?: Omit<import("./settings-routes.js").SettingsDeps, "db" | "config">;
 }
@@ -170,5 +172,6 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     try { return { ok: true, job: jobRow(retryJob(db, req.params.id, actor)) }; }
     catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
   });
+  if (d.profiles) registerProfileRoutes(app, d.profiles, requireToken);
   if (d.settings && d.config) registerSettingsRoutes(app, { ...d.settings, db, config: d.config }, requireToken);
 }

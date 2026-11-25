@@ -87,6 +87,9 @@ describe("dashboard API security", () => {
     expect(js && css).toBeTruthy(); // the built React app: needs `pnpm web:build`
     expect((await get(s.app, js!)).headers["content-type"]).toContain("text/javascript");
     expect((await get(s.app, css!)).headers["content-type"]).toContain("text/css");
+    const icon = /href="(\/assets\/[\w.-]+\.png)"/.exec(html)?.[1];
+    expect(icon).toBeTruthy();
+    expect((await get(s.app, icon!)).headers["content-type"]).toBe("image/png"); // the favicon
     expect((await get(s.app, "/etc/passwd")).statusCode).toBe(404);
     expect((await get(s.app, "/assets/..%2F..%2Fpackage.json")).statusCode).toBe(404);
     expect((await get(s.app, "/assets/.hidden")).statusCode).toBe(404);

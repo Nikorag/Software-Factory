@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { ArrowUpCircle, OctagonAlert, Pause, Play, ShieldOff, X } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -6,7 +6,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api, post } from "@/lib/api";
-import type { Overview, UpdateInfo } from "@/lib/types";
+import type { Overview, ProfileInfo, UpdateInfo } from "@/lib/types";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePoll } from "@/hooks/usePoll";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,8 @@ const NAV = [["/", "Overview"], ["/jobs", "Jobs"], ["/health", "Health"], ["/set
 export function Shell() {
   const { data: o, error, reload } = usePoll(() => api<Overview>("/api/overview"), 3000);
   const [msg, setMsg] = useState<string | null>(null);
+  const { data: prof } = usePoll(() => api<{ current: string; profiles: ProfileInfo[] }>("/api/profiles"), 8000);
+  useEffect(() => { if (prof) document.title = prof.profiles.length > 1 ? `Software Factory — ${prof.current}` : "Software Factory"; }, [prof]);
   const { data: upd } = usePoll(() => api<UpdateInfo>("/api/update"), 30 * 60_000);
   const [hidden, setHidden] = useState<string | null>(() => { try { return localStorage.getItem("dismissed-update"); } catch { return null; } });
   const showUpdate = upd?.available && upd.latest && hidden !== upd.latest;
@@ -25,6 +28,12 @@ export function Shell() {
     <div className="mx-auto flex min-h-screen w-full max-w-7xl min-w-0 flex-col gap-4 px-4 py-5">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold tracking-tight">Software Factory</h1>
+        {prof && prof.profiles.length > 1 ? (
+          <Select value={prof.current} onValueChange={(name) => { const p = prof.profiles.find((x) => x.name === name); if (p && !p.current) window.location.href = p.url; }}>
+            <SelectTrigger size="sm" className="h-8 w-auto gap-2" aria-label="profile"><SelectValue /></SelectTrigger>
+            <SelectContent>{prof.profiles.map((p) => <SelectItem key={p.name} value={p.name} disabled={!p.running && !p.current}>{p.name}{p.running ? "" : " (stopped)"}</SelectItem>)}</SelectContent>
+          </Select>
+        ) : null}
         {o ? <Badge variant="outline" className={cn("font-semibold", stop ? "border-destructive/50 text-destructive" : paused ? "border-loop/50 text-loop" : "border-ok/50 text-ok")}>{stop ? "EMERGENCY STOP" : paused ? "PAUSED" : "RUNNING"}</Badge> : <Badge variant="outline">…</Badge>}
         {o ? <Badge variant="secondary">{o.mergeMode === "pr-only" ? "PR-only: never merges" : o.mergeMode}{o.dryRun ? " · DRY RUN" : ""}</Badge> : null}
         <span className="flex-1" />

@@ -9,8 +9,8 @@
 #   2. downloads the factory into  $FACTORY_HOME/app        (default ~/.software-factory/app)
 #   3. installs its dependencies and builds the dashboard
 #   4. adds a `software-factory` command to  $FACTORY_BIN   (default ~/.local/bin)
-# It does NOT start anything, install a login item, or ask for any credentials: run `software-factory start` and the
-# dashboard walks you through the rest. Read this file first if you like: `curl -fsSL <url> | less`.
+# It does NOT start anything, install a login item, or ask for any credentials: run `software-factory` and the app opens
+# and walks you through the rest. Read this file first if you like: `curl -fsSL <url> | less`.
 #
 # Options:  --check     only check the machine's requirements, change nothing
 #           --dry-run   print what would happen and change nothing
@@ -99,7 +99,7 @@ main() {
   fi
 
   # 3. dependencies and dashboard
-  say "installing dependencies (this takes a minute)"
+  say "installing dependencies (a few minutes: this includes the Electron runtime for the app window)"
   if [ "$DRY" = 1 ]; then run pnpm --dir "$APP" install --frozen-lockfile; else (cd "$APP" && pnpm install --frozen-lockfile --silent); fi
   say "building the dashboard"
   if [ "$DRY" = 1 ]; then run pnpm --dir "$APP" web:build; else (cd "$APP" && pnpm web:build >/dev/null); fi
@@ -123,8 +123,10 @@ LAUNCHER
   cat <<DONE
 
 Next:
-  software-factory start      # starts the factory and opens the dashboard's setup wizard
-It is safe to stop with Ctrl-C at any time. Nothing runs at login unless you later choose 'software-factory launchd:install'.
+  software-factory            # starts the factory in the background, opens the app, and gives you your terminal back
+  software-factory shutdown   # stops it (closing the window does not: the factory keeps working)
+  software-factory --help     # everything else
+Nothing runs at login unless you later choose 'software-factory launchd:install'.
 Your settings and data live in $HOME_DIR ; uninstall = delete $APP and $BIN/software-factory.
 DONE
 }

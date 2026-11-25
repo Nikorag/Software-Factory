@@ -1,12 +1,18 @@
 # Setup
 
-Prerequisites verified by `pnpm factory doctor`: Node ≥ 22, pnpm, git, gh (authenticated), claude (logged in).
+The installer checks all of this for you and says how to fix anything missing (`bash install.sh --check`). `software-factory doctor` re-checks it at any time.
 
-| Need | Command |
+| Need | Install |
 |---|---|
-| pnpm | `npm install -g pnpm` |
-| SpecKit CLI (Milestone 6) | `uv tool install specify-cli` (per https://github.com/github/spec-kit; re-verify at integration time) |
-| Linear (Milestone 4) | `export LINEAR_API_KEY=...` |
-| Local model | Optional and off by default (Claude Haiku does classification and review). Only if you route a task to `provider: local`: start Bionic's API server, load a model, and set the route's model id in `config/models.yaml` |
+| macOS | Project commands run inside `sandbox-exec`; there is no Linux or Windows support yet |
+| git | `xcode-select --install` |
+| Node.js 22+ | `brew install node` |
+| Claude Code, signed in | `curl -fsSL https://claude.ai/install.sh | bash`, then run `claude` and `/login` with your subscription (no API key) |
+| GitHub CLI, signed in | `brew install gh`, then `gh auth login` (once per GitHub account you want to use) |
+| uv (provides Python for Spec Kit) | `brew install uv` |
+| Spec Kit | `uv tool install specify-cli` ([github/spec-kit](https://github.com/github/spec-kit)) |
+| Linear API key | Linear → Settings → Account → Security & access → Personal API keys. The setup wizard stores it in your macOS keychain |
 
-Bionic is LM Studio-derived and ships an `lms` CLI at `~/.lmstudio/bin/lms` (`lms server status`, `lms ls`). Its API is not yet verified; run `doctor` after starting it.
+## Optional: a local model
+
+Off by default: Claude Haiku does classification and review. Only if you route a task to `provider: local` (Settings → Workflow): start any OpenAI-compatible server (LM Studio, llama.cpp, Ollama), load a model, set the route's model id, and run `software-factory doctor` to verify it.

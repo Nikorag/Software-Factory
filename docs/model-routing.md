@@ -17,10 +17,10 @@ Model names: `default` lets Claude Code choose; an alias (`haiku`, `sonnet`, `op
 `specification` and `implementation` must be `anthropic` (config validation enforces it).
 
 ## Local model rules (only if you route to `local`)
-- **Strictly sequential**: one request at a time (a FIFO queue in the client), because 32 GB of unified memory cannot host parallel local inference. Queued requests can be cancelled.
+- **Strictly sequential**: one request at a time (a FIFO queue in the client), because a local model cannot share unified memory with parallel requests. Queued requests can be cancelled.
 - Structured output: requests a strict `json_schema` `response_format`; if the server rejects it, falls back to instructing JSON in the prompt; invalid JSON is re-asked up to twice, then `invalid_output`. `<think>…</think>` blocks are stripped.
 - Failures are classified: `transient` (unreachable, 5xx, 429), `timeout`, `cancelled`, `invalid_output`, `error`.
-- **Unverified**: Bionic's API server has not been reachable yet (server off, Qwen downloads incomplete), so the adapter is tested against a simulated OpenAI-shaped server only. Start Bionic's server and run `pnpm factory doctor` to verify the endpoint and model ids.
+- **Verification**: the adapter is tested against a simulated OpenAI-shaped server. Run `software-factory doctor` with your server running to verify the endpoint and model ids.
 
 ## Claude Code rules
 See `docs/integrations.md`.

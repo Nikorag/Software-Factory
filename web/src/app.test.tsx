@@ -301,4 +301,43 @@ describe("settings and setup", () => {
     expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
     expect([...container.querySelectorAll("*")].some((e) => [...e.attributes].some((a) => /^on/i.test(a.name)))).toBe(false);
   });
+  const profilesBody = { current: "home", profiles: [
+    { name: "home", port: 4780, url: "http://127.0.0.1:4780/", current: true, running: true },
+    { name: "work", port: 4781, url: "http://127.0.0.1:4781/", current: false, running: true },
+    { name: "old", port: 4782, url: "http://127.0.0.1:4782/", current: false, running: false } ] };
+  it("shows a profile switcher only when there is more than one profile, and names the window after it", async () => {
+    routes = { "/api/overview": overview(), "/api/profiles": { current: "default", profiles: [{ name: "default", port: 4780, url: "http://127.0.0.1:4780/", current: true, running: true }] } };
+    app("/");
+    await screen.findByText("RUNNING");
+    expect(screen.queryByRole("combobox", { name: "profile" })).toBeNull();
+    cleanup();
+    routes = { "/api/overview": overview(), "/api/profiles": profilesBody };
+    app("/");
+    expect(await screen.findByRole("combobox", { name: "profile" })).toHaveTextContent("home");
+    await waitFor(() => expect(document.title).toBe("Software Factory — home"));
+  });
+  it("creates a profile from Settings and says what happens next", async () => {
+    routes = { "/api/overview": overview(), "/api/profiles": profilesBody, "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings, "/api/profiles ": {} };
+    routes["/api/profiles"] = profilesBody;
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Profiles" }));
+    expect(await screen.findByText("port 4781")).toBeInTheDocument();
+    expect(screen.getByText("○ stopped")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Name"), "Client A");
+    await userEvent.click(screen.getByRole("button", { name: /Create profile/ }));
+    await waitFor(() => expect(calls.find((c) => c.method === "POST" && c.url === "/api/profiles")).toBeTruthy());
+    expect(JSON.parse(calls.find((c) => c.method === "POST")!.body!)).toEqual({ name: "client a" });
+  });
+  it("picks this profile's GitHub account from the accounts gh is logged in to", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings,
+      "/api/setup/github": { accounts: [{ login: "Nikorag", active: true }, { login: "jamiebartlett-kps", active: false }], defaultAccount: null }, "/api/settings/global ": {} };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Workflow" }));
+    expect(await screen.findByText(/Logged in on this machine: Nikorag, jamiebartlett-kps/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("combobox", { name: "GitHub account" }));
+    await userEvent.click(await screen.findByRole("option", { name: "jamiebartlett-kps" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toBeTruthy());
+    expect(JSON.parse(calls.find((c) => c.method === "PUT")!.body!).githubAccount).toBe("jamiebartlett-kps");
+  });
 });

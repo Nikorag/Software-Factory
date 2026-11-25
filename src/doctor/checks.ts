@@ -45,7 +45,7 @@ export async function checkLocalModels(baseUrl: string, fetchImpl: typeof fetch 
     const ids = (body.data ?? []).map((m) => m.id);
     return [{ name: "local models", status: ids.length ? "ok" : "warn", detail: ids.length ? ids.join(", ") : "server up but no models listed" }];
   } catch {
-    return [{ name: "local models", status: "fail", detail: `no server reachable at ${baseUrl} (start the Bionic API server)` }];
+    return [{ name: "local models", status: "fail", detail: `no server reachable at ${baseUrl} (start your local model server)` }];
   }
 }
 

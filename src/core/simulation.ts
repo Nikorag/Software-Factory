@@ -8,7 +8,7 @@ import { enqueue } from "./jobs.js";
 
 /**
  * SIMULATION ONLY. Handlers that succeed instantly so the state machine can be exercised end to end.
- * Never wired into `serve`; real handlers arrive in later milestones.
+ * Never wired into `serve`: the real handlers do the work.
  */
 export const simulatedHandlers = (): HandlerRegistry =>
   Object.fromEntries(STAGES.filter((s) => s !== "COMPLETED").map((s) => [s, async () => ({ kind: "ok" as const, output: { simulated: true } })]));

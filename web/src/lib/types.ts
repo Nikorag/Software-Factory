@@ -37,3 +37,5 @@ export interface SetupInfo { configDir: string | null; homeConfigDir: string; us
 export interface TeamAudit { key: string; name: string; projects: string[]; audit: { ok: boolean; statuses: { name: string; required: boolean }[]; labels: { name: string; required: boolean }[] } }
 export interface TaskState { id: string; label: string; status: "running" | "ok" | "failed"; lines: string[] }
 export interface UpdateInfo { current: string | null; latest: string | null; available: boolean; checkedAt: number | null }
+export interface ProfileInfo { name: string; port: number; url: string; current: boolean; running: boolean }
+export interface GhAccounts { accounts: { login: string; active: boolean }[]; defaultAccount: string | null }

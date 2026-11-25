@@ -1,51 +1,185 @@
-# Software Factory
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Software Factory logo" width="140" />
+</p>
 
-A local-first, standalone TypeScript orchestrator that turns Linear tickets into merged GitHub pull requests,
-using Claude Code as the engineering agent, GitHub SpecKit for specifications, and a local model (via Bionic)
-for independent review. See [ARCHITECTURE.md](ARCHITECTURE.md).
+<h1 align="center">Software Factory</h1>
 
-**Status: Milestones 1–9 complete.** Config, logging, SQLite schema, doctor, loopback service skeleton, and the
-durable job engine (state machine, retries, remediation cap, cancellation, crash recovery, dry-run, pause and
-emergency stop), plus the project registry, read-only repository validation and isolated git worktrees, Linear discovery with a durable write-back outbox, the Claude Code and local-model adapters with enforced permission profiles, and the Spec Kit specification pipeline (ticket → reviewed, validated spec). Autonomous implementation (sandboxed checks, independent and Claude reviews, remediation loop, evidence report) is built. PR-only delivery (push, open the PR, watch CI, wait for a human to merge; the factory never merges) is built. The service (scheduler that polls Linear and runs jobs), the local dashboard with token-gated controls, an emergency stop that terminates agents immediately, health and resource monitoring, and a LaunchAgent are built: see docs/operations.md.
-Try `pnpm factory simulate` (in-memory, no side effects).
+<p align="center">
+  <b>Turn Linear tickets into reviewed GitHub pull requests, on your own Mac, with Claude Code.</b><br />
+  Spec-first, sandboxed, independently reviewed, and it never merges: you do.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Nikorag/Software-Factory/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Nikorag/Software-Factory?sort=semver&color=4f46e5" /></a>
+  <a href="https://github.com/Nikorag/Software-Factory/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Nikorag/Software-Factory/ci.yml?branch=main&label=CI" /></a>
+  <a href="LICENSE"><img alt="License: ISC" src="https://img.shields.io/badge/license-ISC-blue" /></a>
+  <img alt="Platform: macOS" src="https://img.shields.io/badge/platform-macOS-lightgrey" />
+  <img alt="Node 22+" src="https://img.shields.io/badge/node-%E2%89%A522-339933" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178c6" />
+</p>
+
+---
+
+## What it does
+
+You label a ticket in Linear. Software Factory picks it up and does the work an engineer would, then hands you a pull request to review:
+
+1. **Understands the ticket.** Claude reads the ticket and the code and asks you, in Linear, only if what you want is genuinely unclear.
+2. **Writes a specification** with [GitHub Spec Kit](https://github.com/github/spec-kit): requirements, clarifications, a plan and tasks. A second, different model reviews it independently.
+3. **Implements it** in an isolated git worktree. Every build, lint and test run happens inside a macOS sandbox with no network.
+4. **Reviews its own work twice** (a cheap independent model, then Claude), with a fix loop that is capped, then re-runs every check from scratch.
+5. **Opens a pull request** with an evidence report, watches CI, and tells Linear what happened.
+6. **Waits for you to merge.** It has no merge capability at all. This is enforced in code and covered by a test.
+
+It runs locally: your code, your Claude subscription, your GitHub and Linear accounts. There is no hosted service and no API key to manage.
+
+## Features
+
+- **Live pipeline flow chart** for every job, showing the running step, the fix loops that were actually taken, timings and attempts.
+- **Watch Claude work.** Open the full back-and-forth of any agent run (prompt, messages, tool calls and their output), live while it runs.
+- **Human in the loop.** When it needs you, it stops and tells you why. Answer in the dashboard and the job resumes with your answer.
+- **Profiles.** Run a "home" and a "work" factory side by side, each with its own projects, Linear workspace, GitHub account and data.
+- **Settings UI and setup wizard.** Connect your tools, add projects, set their test commands, pick models per workflow step, and set concurrency and fix-cycle limits, globally or per project. No config files to edit.
+- **Independent review.** A different model reviews the work than the one that wrote it.
+- **Safe by construction.** See [Safety](#safety).
+- **Desktop app.** A window onto the dashboard; the factory itself runs in the background and frees your terminal.
+
+## Requirements
+
+- **macOS.** Project commands run inside `sandbox-exec`; the factory refuses to run them unconfined. Linux and Windows are not supported yet.
+- [Claude Code](https://docs.claude.com/claude-code), signed in with your Claude subscription (no API key).
+- [GitHub CLI](https://cli.github.com) (`gh`), signed in. Several accounts are fine.
+- [Spec Kit](https://github.com/github/spec-kit) (`uv tool install specify-cli`).
+- git, Node.js 22 or newer, and Python via [uv](https://docs.astral.sh/uv/).
+- A [Linear](https://linear.app) account and a personal API key.
+
+You do not need to check this by hand: the installer verifies every item and tells you exactly how to fix anything that is missing.
 
 ## Install
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Nikorag/Software-Factory/main/install.sh | bash
-software-factory start      # starts the factory and opens the setup wizard in your browser
 ```
 
-macOS only (project commands run inside `sandbox-exec`). Needs git and Node 22+; the installer adds pnpm if missing. It needs no sudo, asks for no credentials, installs no login item, and prints everything it will do first (`bash install.sh --dry-run`). Read it before piping it: `curl -fsSL <url> | less`.
+The installer first checks your machine and **stops before changing anything** if a requirement is missing, printing the command to fix each one. Then it downloads the latest release into `~/.software-factory/app`, installs dependencies and builds the dashboard. It needs no `sudo`, asks for no credentials and installs no login item.
 
-The setup wizard checks Claude Code, GitHub (`gh`), Spec Kit and the sandbox, connects Linear (your key is verified, then stored in the macOS keychain), and adds your first project. **Settings** in the dashboard adds and edits projects, their test commands, and runs the clone, validate, check and Spec Kit onboarding steps. Your own settings live in `~/.software-factory/config`; the shipped defaults in `config/` are generic. Delivery is pull-request only: the factory never merges.
+Read it before you run it: `curl -fsSL <url> | less`. Preview it with `bash install.sh --dry-run`, or only check your machine with `bash install.sh --check`.
 
-The dashboard needs no token: changes are accepted from the dashboard's own page (same origin) and, for the CLI and scripts, with the bearer token in `~/.software-factory/control-token`. See [ADR 0007](docs/adr/0007-tokenless-dashboard.md) for the trade-off.
-
-## Quick start (from a checkout)
+## Quick start
 
 ```sh
-npm install -g pnpm          # if pnpm is missing
+software-factory
+```
+
+That starts the factory in the background, opens the app window and gives you your terminal back. On first run the **setup wizard**:
+
+1. checks Claude Code, GitHub, Spec Kit and the sandbox, and shows the fix for anything that is red;
+2. connects Linear (your key is verified, then stored in your macOS keychain, never in a file) and offers to create the statuses and labels it needs;
+3. adds your first project: a GitHub repository, its Linear project, and the commands that run its tests.
+
+Then, in Linear, label a ticket **`factory:enabled`** and move it to **Ready for specification**. Open the app and watch it go.
+
+The factory keeps working after you close the window. Stop it with `software-factory shutdown`.
+
+## How a ticket flows
+
+| Stage | What happens | Goes wrong? |
+|---|---|---|
+| **Discover & check** | Picks up labelled tickets and re-reads them live | Stops if the label or status changed |
+| **Requirements** | Claude analyses the ticket against the code | Asks you in Linear if it is unclear |
+| **Specification** | Spec Kit writes spec, plan and tasks; an independent model reviews; deterministic checks validate | Blocking findings go to a fix step |
+| **Implementation** | Claude implements in a sandboxed worktree and verifies through the sandbox | A committed secret or protected-file change stops it for you |
+| **Checks & reviews** | Build, typecheck, lint, test; independent review; Claude review; final gates | Findings send the *same* Claude session back to fix, then everything re-runs |
+| **Delivery** | Pushes a `factory/<ticket>` branch (never forced), opens the PR, watches CI | A failing GitHub Actions check goes back to a fix; an external check is reported to you |
+| **Your merge** | Waits for you | It never merges |
+
+Fix cycles (spec fixes, review fixes, CI fixes) share one cap, default 3. After that the job stops for you instead of looping.
+
+## Profiles
+
+Each profile is its own factory: its own projects, Linear workspace and key, GitHub account, data and port. They run at the same time and share nothing.
+
+```sh
+software-factory profile add work     # a new, empty profile
+software-factory                      # starts every profile
+```
+
+Switch profiles from the menu in the app (or the dropdown in the dashboard). Each profile sets a default GitHub account (Settings → Workflow), which any of its projects can override.
+
+## Configuration
+
+Everything is in **Settings** in the app:
+
+- **Projects**: repository, Linear binding, autonomy, and the install/build/typecheck/lint/test commands. Run *Clone*, *Validate*, *Run checks* and *Onboard Spec Kit* right from the editor.
+- **Workflow**: concurrent jobs, the fix-cycle limit, and which model handles each part of the workflow (triage, specification, implementation, independent review, Claude review). Any project can override these.
+- **Integrations**: live status of every tool, and your Linear connection.
+- **Profiles**: add and manage them.
+
+Your settings live in `~/.software-factory/config/` as plain YAML, edited with comments preserved, so you can also edit them by hand. See [docs/configuration.md](docs/configuration.md).
+
+## Command line
+
+| Command | |
+|---|---|
+| `software-factory` | Start everything in the background and open the app |
+| `software-factory shutdown` | Stop the background factory (all profiles, or `--profile <name>`) |
+| `software-factory status` | What is running, and what it is doing |
+| `software-factory profile list\|add\|remove` | Manage profiles |
+| `software-factory update [--check]` | Update to the newest release |
+| `software-factory doctor` | Check your tools and configuration |
+| `software-factory jobs` | List jobs |
+| `software-factory job:retry <id>` / `job:cancel <id>` | Retry or cancel a job |
+| `software-factory pause` / `resume` / `stop` | Pause new work, resume, or emergency-stop (terminates running agents) |
+| `software-factory serve` | Run one profile in the foreground (for debugging) |
+
+Everything else: `software-factory --help`.
+
+## Safety
+
+The factory runs AI-written code, so it is built to be boringly cautious. In short (details in [SECURITY.md](SECURITY.md)):
+
+- **It can only raise pull requests.** The GitHub client has no merge method, asserted by a test. It only pushes `factory/*` branches and never forces.
+- **Project code is sandboxed.** Install, build, test and lint run under macOS `sandbox-exec`: no network (except dependency install), writes confined to the worktree, no access to your credentials.
+- **Agents are fenced in.** Each role gets only the tools it needs, scoped to its worktree. Secrets never reach them, and the factory re-checks every diff afterwards for protected files (`.git`, `.env`, keys, CI workflows, agent instructions) and for secrets anywhere in branch history.
+- **Everything is durable.** State is in SQLite; stages are idempotent. Stop it or crash it at any point and it resumes safely.
+- **The dashboard is local.** It binds to `127.0.0.1` only, checks Host and Origin, serves a strict content-security policy, and renders all ticket and agent text as inert text. See [ADR 0007](docs/adr/0007-tokenless-dashboard.md) for the one trade-off: other processes on your machine can use it, so run it on a machine you alone use.
+- **An emergency stop** terminates running agents immediately.
+
+## Updating and uninstalling
+
+```sh
+software-factory update --check   # is there a newer release?
+software-factory update           # install it (your settings and data are untouched)
+software-factory shutdown && software-factory   # restart to use it
+```
+
+The app shows a notice when a newer release exists. To uninstall, run `software-factory shutdown`, then delete `~/.software-factory/app` and `~/.local/bin/software-factory`. Your data stays in `~/.software-factory` until you delete it.
+
+## Development
+
+```sh
+git clone https://github.com/Nikorag/Software-Factory.git && cd Software-Factory
 pnpm install
-pnpm factory doctor          # audit environment and integrations
-pnpm factory config:check    # validate config/*.yaml
-pnpm factory project:sync       # clone factory-managed repos (idempotent)
-pnpm factory project:validate   # inspect enrolled repos (read-only)
-pnpm factory linear:check       # verify LINEAR_API_KEY and configured statuses/labels (read-only)
-pnpm factory project:onboard <id>   # add Spec Kit + constitution on a local review branch
-pnpm factory project:check <id> # prove a project's test commands work (sandboxed, throwaway worktree)
-pnpm factory work               # run claimable jobs once (real agents, uses your subscription)
-pnpm factory serve           # scheduler + dashboard on 127.0.0.1:4780 (add --no-scheduler for dashboard only)
-pnpm factory dashboard --open  # open the dashboard (carries the control token)
-pnpm web:build              # build the dashboard (web/dist); required once before `serve`, and after UI changes
-pnpm web:dev                # dashboard dev server on :5173, proxying the API of a running `serve`
+pnpm web:build              # build the dashboard (web/dist)
+pnpm factory serve          # run the default profile in the foreground
+pnpm web:dev                # dashboard dev server on :5173, proxying a running `serve`
 pnpm typecheck && pnpm lint && pnpm test
 ```
 
-Runtime data (database, logs, workspaces) lives in `~/.software-factory` (`dataDir` in `config/factory.yaml`).
-Secrets are environment variables only (`LINEAR_API_KEY`); config files containing secret-like keys are rejected.
+| Path | |
+|---|---|
+| `src/` | The factory: engine, agents, Linear, GitHub, Spec Kit, sandbox, service, API (TypeScript) |
+| `web/` | The dashboard: React, Tailwind and [shadcn/ui](https://ui.shadcn.com), built with Vite |
+| `desktop/` | The Electron app window |
+| `config/` | Shipped, generic defaults (your own settings live in `~/.software-factory/config`) |
+| `docs/` | Guides and architecture decision records |
 
-## Layout
+`pnpm factory simulate` runs the whole pipeline in memory with no side effects. See [ARCHITECTURE.md](ARCHITECTURE.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
-`src/config` schema + loader · `src/db` Drizzle schema, migrations in `drizzle/` · `src/logging` pino with redaction ·
-`src/doctor` environment checks · `src/server` Fastify (loopback only) · `web/` React + shadcn/ui dashboard · `docs/` guides and ADRs.
+## Documentation
+
+[Setup](docs/setup.md) · [Configuration](docs/configuration.md) · [Workflows](docs/workflows.md) · [Model routing](docs/model-routing.md) · [Integrations](docs/integrations.md) · [Operations](docs/operations.md) · [Troubleshooting](docs/troubleshooting.md) · [Decisions](docs/adr)
+
+## License
+
+[ISC](LICENSE)

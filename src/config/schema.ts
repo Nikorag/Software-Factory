@@ -12,6 +12,8 @@ export const FactoryConfig = z.object({
     })
     .default({ host: "127.0.0.1", port: 4780 }),
   logLevel: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
+  // The gh login this profile uses unless a project names its own. Lets e.g. a "home" and a "work" profile use different GitHub accounts.
+  githubAccount: z.string().regex(/^[A-Za-z0-9-]{1,39}$/).optional(),
   dryRun: z.boolean().default(false),
   maxRemediationAttempts: z.number().int().min(0).max(10).default(3),
   // Delivery is PR-only by decision: the factory opens pull requests and never merges them. `auto` does not exist yet.
@@ -43,8 +45,7 @@ export const ModelsConfig = z
   .object({
   local: z
     .object({
-      // Bionic is LM Studio-derived but its API is unverified; the adapter assumes
-      // an OpenAI-compatible server and `doctor` probes it before use.
+      // Any OpenAI-compatible server (LM Studio, llama.cpp, Ollama...). `doctor` probes it before use.
       baseUrl: z.string().url().default("http://127.0.0.1:1234/v1"),
       requestTimeoutSeconds: z.number().int().min(1).default(300),
       maxConcurrentRequests: z.literal(1).default(1), // unified-memory constraint

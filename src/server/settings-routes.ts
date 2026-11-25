@@ -9,6 +9,7 @@ import { applySetup } from "../linear/setup.js";
 import type { LinearClient } from "../linear/client.js";
 import { createLinearClient } from "../linear/client.js";
 import { syncProjects } from "../repo/registry.js";
+import { listGhAccounts, type GhAccount } from "../github/accounts.js";
 import { ACTIONS, type ActionKind, type ProjectActions } from "../service/actions.js";
 import type { TaskManager } from "../service/tasks.js";
 
@@ -21,6 +22,7 @@ export interface SettingsDeps {
   /** Validates against Linear first, then stores the key (keychain). Returns who it authenticated as. */
   saveLinearKey: (key: string) => Promise<{ name: string }>;
   linearKeyPresent: () => boolean;
+  githubAccounts?: () => Promise<GhAccount[]>;
 }
 
 /** Edits go to the user's own config dir (seeded from the shipped defaults on first write), never to the shipped defaults. */
@@ -66,6 +68,9 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
       return { ok: r.failed.length === 0, created: r.created, failed: r.failed };
     } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
   });
+
+  /** Which GitHub accounts gh is logged in to (logins only, never tokens), and this profile's default. */
+  app.get("/api/setup/github", async () => ({ accounts: await (d.githubAccounts ?? listGhAccounts)(), defaultAccount: d.config.factory.githubAccount ?? null }));
 
   // ---- workflow settings: concurrency, fix-cycle limit, models per task ----
   app.get("/api/settings/global", async () => globalSettingsOf(d.config));

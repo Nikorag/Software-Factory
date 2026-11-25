@@ -4,7 +4,7 @@ import type { LinearClient } from "./client.js";
 type StatusKey = keyof LinearConfig["statuses"];
 type LabelKey = keyof LinearConfig["labels"];
 
-/** What the factory writes today. Anything else in config is reserved for later milestones or only refines behaviour. */
+/** What the factory writes today. Anything else in config only refines behaviour. */
 export const REQUIRED_STATUSES: StatusKey[] = ["readyForSpecification", "specificationReview", "inProgress", "readyForReview", "done", "blocked"]; // "Merging" is unused: the factory never merges
 export const REQUIRED_LABELS: LabelKey[] = ["enabled", "blocked"];
 

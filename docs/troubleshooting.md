@@ -1,7 +1,7 @@
 # Troubleshooting
-- `doctor` reports "no server reachable" for local models: only happens if a route uses `provider: local`. Either start Bionic's API server (and set the route's model id) or route that task to `anthropic`/`haiku`.
+- `doctor` reports "no server reachable" for local models: only happens if a route uses `provider: local`. Either start your local model server (and set the route's model id) or route that task to `anthropic`/`haiku`.
 - `typescript-eslint does not support TS 7`: TypeScript is pinned to 5.9.x on purpose.
-- `pnpm doctor` is a pnpm builtin; use `pnpm factory doctor`.
+- `pnpm doctor` is a pnpm builtin; use `software-factory doctor`.
 - **`npm ci` fails with EPERM on `~/.npm`** (or a tool says "operation not permitted"): the sandbox denied a write. Installs may write package caches; other commands may write only the worktree and temp dirs. Run `pnpm factory project:check <id>` and read `<dataDir>/logs/check/<id>/<step>.log`. If a legitimate tool needs another directory, add it to `factory.sandbox.writeAllow`/`readAllow`.
 - **`tsx` fails with `listen EPERM …pipe`:** fixed (Unix sockets in temp dirs are allowed); update to the latest factory.
 - **"another factory service is already running":** a service holds `<dataDir>/factory.lock`. Stop it (`launchctl bootout …` or `kill <pid>`); a lock from a crashed process is taken over automatically.

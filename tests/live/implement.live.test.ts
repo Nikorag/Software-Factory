@@ -70,7 +70,7 @@ describe.skipIf(!process.env.FACTORY_LIVE)("autonomous implementation (live)", (
 
     const ok = hist.filter((h) => h.outcome === "succeeded").map((h) => h.stage);
     expect(ok).toEqual(expect.arrayContaining(["IMPLEMENTATION_PREPARATION", "IMPLEMENTATION", "AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW", "CLAUDE_REVIEW", "FINAL_VALIDATION"]));
-    expect(job.stage).toBe("BLOCKED"); // stops at PULL_REQUEST_CREATION (Milestone 8)
+    expect(job.stage).toBe("BLOCKED"); // stops at PULL_REQUEST_CREATION (the PR step needs a GitHub remote)
     expect(job.heldFromStage).toBe("PULL_REQUEST_CREATION");
 
     // The result is real: run the project's own tests, unsandboxed, in the worktree.
