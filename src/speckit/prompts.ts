@@ -38,6 +38,7 @@ export function skillPrompt(step: string, featureDir: string, extra = ""): strin
 export const analysisPrompt = (ticket: string) => [
   "Decide whether this ticket can be built as written. Read the relevant code first.", ticket,
   "Answer per the JSON schema. Use `needs_clarification` only for ambiguity in WHAT is wanted that the ticket, code and conventions cannot resolve; design choices (API shape, naming, data representation) are not questions: list them under `risks`, the specification writer decides them.",
+  "If answers from the human follow the ticket, each is paired with the questions it answers: treat those questions as resolved by it, and never ask them again. Ask only about something those answers still leave open.",
 ].join("\n\n");
 
 export const classificationPrompt = (ticket: string) => [ticket, "Classify this ticket per the JSON schema."].join("\n\n");
