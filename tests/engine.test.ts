@@ -18,7 +18,7 @@ const config = (over: Record<string, unknown> = {}) => ({
   workflows: WorkflowsConfig.parse({ defaults: { timeoutSeconds: 5, maxRetries: 2 } }),
 });
 const engine = (handlers: HandlerRegistry, cfg = config(), extra = {}) =>
-  new Engine({ db: h.db, logger: pino({ level: "silent" }), config: cfg, handlers, backoffBaseMs: 0, heartbeatMs: 10, ...extra });
+  new Engine({ db: h.db, logger: pino({ level: "silent" }), config: cfg, handlers, backoffBaseMs: 0, heartbeatMs: 10, abortSettleMs: 50, ...extra }); // most hangs here ignore their signal
 const add = (dryRun = false, ext = "e1") => enqueue(h.db, { projectId: "p", externalId: ext, externalKey: ext.toUpperCase(), dryRun }).job;
 const history = (id: string) => h.db.select().from(stageExecutions).where(eq(stageExecutions.jobId, id)).all().map((r) => `${r.stage}:${r.outcome}`);
 
@@ -289,5 +289,196 @@ describe("immediate abort (stop, cancel, shutdown) reaches a running stage witho
     expect(e.abortJob("not-running", "cancel")).toBe(false);
     await run;
     expect(getJob(h.db, job.id)).toMatchObject({ stage: "CANCELLED", status: "cancelled" });
+  });
+});
+
+const decisionsOf = (id: string, kind: string) => h.db.select().from(decisions).where(eq(decisions.jobId, id)).all().filter((d) => d.kind === kind);
+
+describe("fix-cycle budgets are per phase (specification, code, CI)", () => {
+  it("a specification that used its whole budget does not eat into the code's: the first code fix is attempt 1", async () => {
+    const job = add();
+    let validations = 0, reviews = 0;
+    await engine({
+      ...simulatedHandlers(),
+      SPECIFICATION_VALIDATION: async () => (++validations <= 3 ? { kind: "remediate", reason: "spec gap" } : { kind: "ok" }),
+      LOCAL_MODEL_REVIEW: async () => (++reviews === 1 ? { kind: "remediate", reason: "bug" } : { kind: "ok" }),
+    }).tick();
+    expect(getJob(h.db, job.id)).toMatchObject({ stage: "COMPLETED", remediationAttempts: 1 });
+    const fixes = decisionsOf(job.id, "remediation").map((d) => d.decision);
+    expect(fixes).toEqual([
+      "SPECIFICATION_VALIDATION -> SPECIFICATION_REMEDIATION (attempt 1 of 3, specification phase)",
+      "SPECIFICATION_VALIDATION -> SPECIFICATION_REMEDIATION (attempt 2 of 3, specification phase)",
+      "SPECIFICATION_VALIDATION -> SPECIFICATION_REMEDIATION (attempt 3 of 3, specification phase)",
+      "LOCAL_MODEL_REVIEW -> REMEDIATION (attempt 1 of 3, code phase)",
+    ]);
+    expect(decisionsOf(job.id, "remediation.budget")[0]).toMatchObject({ decision: "fresh fix-cycle budget for the code phase", rationale: "the specification used 3" });
+  });
+  it("the specification phase is still capped on its own", async () => {
+    const job = add();
+    await engine({ ...simulatedHandlers(), SPECIFICATION_VALIDATION: async () => ({ kind: "remediate", reason: "never fixed" }) }).tick();
+    expect(getJob(h.db, job.id)).toMatchObject({ stage: "NEEDS_ATTENTION", remediationAttempts: 3 });
+    expect(getJob(h.db, job.id)!.lastError).toMatch(/^remediation attempts exhausted \(3\) in the specification phase: never fixed/);
+  });
+  it("CI gets a fresh budget after the review fixes, which is not reset again when the PR is updated", async () => {
+    const job = add();
+    let reviews = 0;
+    await engine({
+      ...simulatedHandlers(),
+      CLAUDE_REVIEW: async () => (++reviews <= 3 ? { kind: "remediate", reason: "review finding" } : { kind: "ok" }),
+      CI_VALIDATION: async () => ({ kind: "remediate", reason: "CI red" }),
+    }).tick();
+    const j = getJob(h.db, job.id)!;
+    expect(j).toMatchObject({ stage: "NEEDS_ATTENTION", remediationAttempts: 3 });
+    expect(j.lastError).toMatch(/exhausted \(3\) in the CI phase: CI red/);
+    const fixes = decisionsOf(job.id, "remediation").map((d) => d.decision);
+    expect(fixes.filter((d) => d.startsWith("CLAUDE_REVIEW"))).toHaveLength(3);
+    expect(fixes.filter((d) => d.startsWith("CI_VALIDATION"))).toEqual([
+      "CI_VALIDATION -> REMEDIATION (attempt 1 of 3, CI phase)", "CI_VALIDATION -> REMEDIATION (attempt 2 of 3, CI phase)", "CI_VALIDATION -> REMEDIATION (attempt 3 of 3, CI phase)",
+    ]);
+    expect(history(job.id).filter((x) => x === "REMEDIATION:succeeded")).toHaveLength(6);
+  });
+  it("review findings while fixing CI spend the CI budget (no endless reset)", async () => {
+    const job = add();
+    let ci = 0;
+    await engine({
+      ...simulatedHandlers(),
+      CI_VALIDATION: async () => (++ci === 1 ? { kind: "remediate", reason: "CI red" } : { kind: "ok" }),
+      LOCAL_MODEL_REVIEW: async () => (ci >= 1 ? { kind: "remediate", reason: "regression" } : { kind: "ok" }),
+    }).tick();
+    expect(getJob(h.db, job.id)!.lastError).toMatch(/exhausted \(3\) in the CI phase: regression/);
+    expect(decisionsOf(job.id, "remediation")).toHaveLength(3);
+  });
+});
+
+describe("stage timeouts never undercut the stage's own work", () => {
+  it("uses the built-in budget when the configured timeout is shorter, in every workflow", async () => {
+    const job = enqueue(h.db, { projectId: "p", externalId: "b", externalKey: "B", workflow: "bugfix" }).job;
+    const cfg = { ...config(), workflows: WorkflowsConfig.parse({ defaults: { timeoutSeconds: 1, maxRetries: 0 } }) };
+    // REMEDIATION is reached only via a finding; IMPLEMENTATION always runs. Its handler outlives the configured 1s.
+    await engine({ ...simulatedHandlers(), IMPLEMENTATION: () => new Promise((r) => setTimeout(() => r({ kind: "ok" }), 1300)) }, cfg).tick();
+    expect(getJob(h.db, job.id)!.stage).toBe("COMPLETED");
+    expect(history(job.id)).not.toContain("IMPLEMENTATION:timed_out");
+  }, 10_000);
+});
+
+describe("the engine never reclaims a job it is running", () => {
+  it("after a sleep pushes the clock past the lease, start() renews it instead of re-queueing the live job", async () => {
+    const job = add();
+    let t = 10_000_000, started = false, release: () => void = () => {};
+    const impl: StageHandler = () => new Promise((r) => { started = true; release = () => r({ kind: "ok" }); });
+    const e = engine({ ...simulatedHandlers(), IMPLEMENTATION: impl }, config({ maxConcurrentJobs: 2 }), { now: () => new Date(t), heartbeatMs: 60_000, leaseMs: 60_000 });
+    e.start();
+    while (!started) await new Promise((r) => setTimeout(r, 5));
+    t += 2 * 3600_000; // the Mac slept for two hours: the worker tick runs before any heartbeat
+    expect(e.start()).toBe(0); // nothing recovered, and the same job is not claimed a second time
+    const j = getJob(h.db, job.id)!;
+    expect(j).toMatchObject({ status: "running", leaseOwner: e.owner, stage: "IMPLEMENTATION" });
+    expect(j.leaseExpiresAt!.getTime()).toBeGreaterThan(t);
+    expect(decisionsOf(job.id, "recovery")).toHaveLength(0);
+    expect(history(job.id).at(-1)).toBe("IMPLEMENTATION:started");
+    release();
+    await e.idle();
+    expect(getJob(h.db, job.id)!.stage).toBe("COMPLETED");
+  });
+  it("still recovers another (crashed) owner's expired job", () => {
+    const job = add();
+    claimNext(h.db, "dead-process", new Date(0), 1000);
+    const e = engine({}, config(), { now: () => new Date(10_000) });
+    control.pause(h.db, "t"); // only recovery, no running
+    e.start();
+    expect(getJob(h.db, job.id)).toMatchObject({ status: "queued", leaseOwner: null });
+    expect(recoverExpired(h.db, new Date(20_000), [job.id])).toEqual([]);
+  });
+  it("recoverExpired skips excluded jobs", () => {
+    const job = add();
+    claimNext(h.db, "A", new Date(0), 1000);
+    expect(recoverExpired(h.db, new Date(5000), [job.id])).toEqual([]);
+    expect(recoverExpired(h.db, new Date(5000))).toEqual([job.id]);
+  });
+});
+
+describe("cancel then retry of a held job", () => {
+  const hold = (id: string, stage: StageName, from: StageName | null) =>
+    h.db.update(jobs).set({ stage, status: stage === "FAILED" ? "failed" : "waiting", heldFromStage: from }).where(eq(jobs.id, id)).run();
+  it("keeps the stage the job was really at, so retry resumes the work, not the hold", async () => {
+    const job = add();
+    hold(job.id, "BLOCKED", "REQUIREMENTS_ANALYSIS");
+    expect(cancelJob(h.db, job.id, "t")).toMatchObject({ stage: "CANCELLED", heldFromStage: "REQUIREMENTS_ANALYSIS" });
+    expect(retryJob(h.db, job.id, "t")).toMatchObject({ stage: "REQUIREMENTS_ANALYSIS", status: "queued" });
+    await engine(simulatedHandlers()).tick();
+    expect(getJob(h.db, job.id)!.stage).toBe("COMPLETED");
+    expect(history(job.id)[0]).toBe("REQUIREMENTS_ANALYSIS:succeeded");
+  });
+  it("a cancelled PAUSED job resumes where it paused, not from DISCOVERED", () => {
+    const job = add();
+    hold(job.id, "PAUSED", "IMPLEMENTATION");
+    cancelJob(h.db, job.id, "t");
+    expect(retryJob(h.db, job.id, "t").stage).toBe("IMPLEMENTATION");
+  });
+  it("a job queued in a held stage (left by the old behaviour) is released, not left running forever", async () => {
+    const job = add();
+    h.db.update(jobs).set({ stage: "BLOCKED", status: "queued" }).where(eq(jobs.id, job.id)).run();
+    await engine(simulatedHandlers()).tick();
+    expect(getJob(h.db, job.id)).toMatchObject({ stage: "BLOCKED", status: "waiting", leaseOwner: null });
+    expect(decisionsOf(job.id, "job.release")).toHaveLength(1);
+    expect(await engine(simulatedHandlers()).tick()).toBe(0); // and it no longer occupies a slot or gets reclaimed
+  });
+});
+
+describe("retry", () => {
+  it("unarchives an archived job, so it does not run invisibly", async () => {
+    const job = add();
+    await engine({ ...simulatedHandlers(), ELIGIBILITY_CHECK: async () => ({ kind: "fail", reason: "nope" }) }).tick();
+    h.db.update(jobs).set({ archivedAt: new Date() }).where(eq(jobs.id, job.id)).run();
+    expect(retryJob(h.db, job.id, "t").archivedAt).toBeNull();
+  });
+  it("records the error it clears and the job's lifetime fix cycles; a later exhaustion says how many retries it took", async () => {
+    const job = add();
+    const always = { ...simulatedHandlers(), AUTOMATED_TESTING: async () => ({ kind: "remediate" as const, reason: "tests fail" }) };
+    await engine(always).tick();
+    const err = getJob(h.db, job.id)!.lastError!;
+    retryJob(h.db, job.id, "you");
+    const [r1] = decisionsOf(job.id, "job.retry");
+    expect(r1).toMatchObject({ decision: "resume at AUTOMATED_TESTING (retry 1)", actor: "you" });
+    expect(r1!.rationale).toContain(err);
+    expect(r1!.rationale).toContain("Fix cycles: 3 in the phase being retried, 3 in total; manual retries: 1.");
+    await engine(always).tick();
+    expect(getJob(h.db, job.id)!.lastError).toContain("6 fix cycle(s) in total across 1 manual retry");
+    retryJob(h.db, job.id, "you");
+    expect(decisionsOf(job.id, "job.retry")[1]!.decision).toBe("resume at AUTOMATED_TESTING (retry 2)");
+    expect(decisionsOf(job.id, "job.retry")[1]!.rationale).toContain("6 in total; manual retries: 2.");
+  });
+});
+
+describe("an aborted stage is released only once its agent has stopped", () => {
+  it("cancel waits for the handler to settle before holding the job", async () => {
+    const job = add();
+    let stopped = false;
+    const slowStop: StageHandler = ({ signal }) => new Promise((r) => {
+      cancelJob(h.db, job.id, "t");
+      signal.addEventListener("abort", () => setTimeout(() => { stopped = true; r({ kind: "ok" }); }, 300)); // SIGTERM grace, post-run checks
+    });
+    const e = engine({ ...simulatedHandlers(), ELIGIBILITY_CHECK: slowStop }, config(), { abortSettleMs: 5000 });
+    const run = e.tick();
+    while (getJob(h.db, job.id)!.stage !== "CANCELLED") await new Promise((r) => setTimeout(r, 5));
+    const heldWhileRunning = !stopped;
+    await run;
+    expect(heldWhileRunning).toBe(false);
+    expect(getJob(h.db, job.id)).toMatchObject({ stage: "CANCELLED", status: "cancelled" });
+  });
+  it("a handler that has not stopped in time keeps its job from being claimed (no second agent in the worktree)", async () => {
+    const job = add();
+    let finish: () => void = () => {}, calls = 0;
+    const stuck: StageHandler = () => (++calls > 1 ? Promise.resolve({ kind: "ok" }) : new Promise((r) => { cancelJob(h.db, job.id, "t"); finish = () => r({ kind: "ok" }); })); // ignores its signal
+    const e = engine({ ...simulatedHandlers(), ELIGIBILITY_CHECK: stuck }, config(), { abortSettleMs: 30 });
+    await e.tick();
+    expect(getJob(h.db, job.id)!.stage).toBe("CANCELLED");
+    retryJob(h.db, job.id, "t");
+    expect(e.start()).toBe(0); // the old agent is still running
+    finish();
+    await new Promise((r) => setTimeout(r, 10));
+    await e.tick();
+    expect(getJob(h.db, job.id)!.stage).toBe("COMPLETED");
+    expect(calls).toBe(2);
   });
 });

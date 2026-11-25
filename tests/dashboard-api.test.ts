@@ -225,7 +225,7 @@ describe("controls", () => {
   it("EMERGENCY STOP terminates a running agent immediately and holds its job (not waiting for a heartbeat)", async () => {
     const s = setup(true);
     let started = false;
-    const hang: StageHandler = () => new Promise(() => { started = true; });
+    const hang: StageHandler = ({ signal }) => new Promise((res) => { started = true; signal.addEventListener("abort", () => res({ kind: "ok" })); }); // like a real agent: stops when aborted
     const eng = new Engine({ db: s.db, logger: pino({ level: "silent" }), config: s.config, handlers: { ...simulatedHandlers(), IMPLEMENTATION: hang }, backoffBaseMs: 0, heartbeatMs: 60_000 });
     const app = buildServer({ db: s.db, logger: pino({ level: "silent" }), config: s.config, engine: eng, dataDir: s.dataDir, port: 4780, controlToken: TOKEN });
     const j = s.job(); const run = eng.tick();
@@ -240,7 +240,7 @@ describe("controls", () => {
   it("cancel aborts a running job at once; retry resumes a held job; retrying a healthy job is refused", async () => {
     const s = setup(true);
     let started = false;
-    const eng = new Engine({ db: s.db, logger: pino({ level: "silent" }), config: s.config, handlers: { ...simulatedHandlers(), IMPLEMENTATION: () => new Promise(() => { started = true; }) }, backoffBaseMs: 0, heartbeatMs: 60_000 });
+    const eng = new Engine({ db: s.db, logger: pino({ level: "silent" }), config: s.config, handlers: { ...simulatedHandlers(), IMPLEMENTATION: ({ signal }) => new Promise((res) => { started = true; signal.addEventListener("abort", () => res({ kind: "ok" })); }) }, backoffBaseMs: 0, heartbeatMs: 60_000 });
     const app = buildServer({ db: s.db, logger: pino({ level: "silent" }), config: s.config, engine: eng, dataDir: s.dataDir, port: 4780, controlToken: TOKEN });
     const j = s.job(); const run = eng.tick();
     while (!started) await new Promise((r) => setTimeout(r, 5));

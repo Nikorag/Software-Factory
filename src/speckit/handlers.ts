@@ -1,16 +1,17 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { desc, eq, and, inArray } from "drizzle-orm";
+import { asc, eq, and, inArray } from "drizzle-orm";
 import type { z } from "zod";
 import { ConfigError } from "../config/load.js";
 import { artifacts, stageExecutions } from "../db/schema.js";
 import type { StageHandler } from "../core/engine.js";
 import { git as realGit } from "../repo/git.js";
 import { openQuestions, readSpecBundle, recordArtifacts, validateSpecArtifacts } from "./artifacts.js";
-import { analysisPrompt, analyzePrompt, classificationPrompt, remediationPrompt, reviewPrompt, skillPrompt } from "./prompts.js";
+import { analysisPrompt, analyzePrompt, classificationPrompt, HUMAN_ONLY_TASKS, remediationPrompt, reviewPrompt, skillPrompt } from "./prompts.js";
 import { Analysis, Analyze, Classification, blocking, Remediation, Review, type Finding } from "./schemas.js";
 import { commitPaths, isInitialised } from "./tools.js";
-import { createStageKit, failureToResult, type StageKitDeps } from "../app/stage-kit.js";
+import { createStageKit, failureToResult, formatAnswer, type StageKitDeps } from "../app/stage-kit.js";
+import { humanQAs } from "../core/jobs.js";
 
 export type SpecKitDeps = StageKitDeps;
 
@@ -23,6 +24,10 @@ const STEPS = [
 ] as const;
 
 export { failureToResult };
+
+const OPEN_QUESTIONS = "The specification has open questions only a human can answer:";
+const HUMAN_QUESTIONS = "human-questions";
+const ANSWER_ADVICE = "Answer on the job page (the job resumes with your answer), or answer in the ticket and then retry the job.";
 
 export function createSpecKitHandlers(d: SpecKitDeps) {
   const git = d.git ?? realGit;
@@ -49,7 +54,7 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
     const analysis = a.data!;
     if (analysis.verdict === "needs_clarification") {
       const qs = analysis.questions.length ? analysis.questions.map((q, i) => `${i + 1}. ${q}`).join("\n") : "(the analyst did not list specific questions)";
-      return { kind: "blocked", reason: `The requirements need clarification before a specification can be written:\n${qs}\n\nAnswer in the ticket, then retry the job.` };
+      return { kind: "blocked", reason: `The requirements need clarification before a specification can be written:\n${qs}\n\n${ANSWER_ADVICE}` };
     }
     return { kind: "ok", output: { analysis, classification, branch: p.info.branch } };
   };
@@ -74,7 +79,7 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
         specify: `Feature request:\n${p.ticket}`,
         clarify: "Resolve ambiguities against the ticket below.\n" + p.ticket,
         plan: `Technical context: use the repository's existing stack, conventions and CLAUDE.md. Do not add dependencies unless the specification requires them.`,
-        tasks: `Every behavioural change needs tests. Project commands - test: ${project.commands.test ?? "(detect from the repo)"}; lint: ${project.commands.lint ?? "(detect)"}; typecheck: ${project.commands.typecheck ?? "(detect)"}.`,
+        tasks: `Every behavioural change needs tests. Project commands - test: ${project.commands.test ?? "(detect from the repo)"}; lint: ${project.commands.lint ?? "(detect)"}; typecheck: ${project.commands.typecheck ?? "(detect)"}.\n\n${HUMAN_ONLY_TASKS}`,
       }[step];
       // A step can finish without producing its file (observed once live: a one-off permission denial on an in-scope Write).
       // Rerun that step once, in the same attempt, before failing the stage.
@@ -108,13 +113,42 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
     return { kind: "ok", output: { findings: r.data.findings, reviewer: r.reviewer } };
   };
 
+  const specExecutions = (jobId: string) => d.db.select().from(stageExecutions)
+    .where(and(eq(stageExecutions.jobId, jobId), inArray(stageExecutions.stage, ["SPECIFICATION_REVIEW", "SPECIFICATION_VALIDATION", "SPECIFICATION_REMEDIATION"])))
+    .orderBy(asc(stageExecutions.id)).all();
+
+  /**
+   * True when validation last held the job on the spec's open questions and a human has since resumed it (an answer or a
+   * retry) without a remediation having been run on them yet. Once one has, unresolved questions block again: no loop.
+   */
+  const resumedAfterQuestions = (jobId: string): boolean => {
+    const rows = specExecutions(jobId);
+    const block = rows.findLast((r) => r.stage === "SPECIFICATION_VALIDATION" && r.outcome === "failed" && (r.error ?? "").startsWith(OPEN_QUESTIONS));
+    return !!block && !rows.some((r) => r.id > block.id && r.stage === "SPECIFICATION_REMEDIATION" && r.outcome === "succeeded");
+  };
+
+  /** The spec's open questions as a blocking finding, carrying the human's answers to them (when given on the job). */
+  const questionsFinding = (jobId: string, questions: string[]): Finding => {
+    const answers = humanQAs(d.db, jobId).filter((a) => a.stage === "SPECIFICATION_VALIDATION");
+    const given = answers.length
+      ? `The human has answered them:\n\n${answers.map(formatAnswer).join("\n\n")}`
+      : "No answer was given on the job: the human was asked to answer in the ticket, so look for the answers in its description and comments above.";
+    return {
+      id: HUMAN_QUESTIONS, severity: "blocker", section: "Open questions requiring a human",
+      issue: `The specification lists open questions for a human:\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n\n${given}`,
+      fix: "Apply the answers throughout the specification, plan and tasks, then remove each answered question from the \"Open questions requiring a human\" section (write \"None.\" there if none remain). Keep a question only if neither the answers nor the ticket resolve it.",
+    };
+  };
+
   const specificationValidation: StageHandler = async (ctx) => {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
     const bundle = readSpecBundle(p.cwd, p.featureDir);
     const questions = openQuestions(bundle);
     if (questions.length > 0) {
-      return { kind: "blocked", reason: `The specification has open questions only a human can answer:\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n\nAnswer in the ticket, then retry the job.` };
+      // Retried after being held on these questions (answered in the ticket): let the spec-writer apply the answers first.
+      if (resumedAfterQuestions(ctx.job.id)) return { kind: "remediate", reason: "the human resumed the job: apply their answers to the open questions", output: { findings: [questionsFinding(ctx.job.id, questions)] } };
+      return { kind: "blocked", reason: `${OPEN_QUESTIONS}\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}\n\n${ANSWER_ADVICE}` };
     }
     const failed = validateSpecArtifacts(bundle).filter((c) => !c.ok);
     const findings: Finding[] = failed.map((c) => ({ id: `check:${c.id}`, severity: "major", section: c.id, issue: c.detail, fix: "Fix this in the specification artefacts." }));
@@ -134,15 +168,23 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
   const specificationRemediation: StageHandler = async (ctx) => {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
-    const latest = d.db.select().from(stageExecutions)
-      .where(and(eq(stageExecutions.jobId, ctx.job.id), eq(stageExecutions.outcome, "succeeded"), inArray(stageExecutions.stage, ["SPECIFICATION_REVIEW", "SPECIFICATION_VALIDATION"])))
-      .orderBy(desc(stageExecutions.id)).limit(1).get();
-    const findings = ((latest?.outputJson ? JSON.parse(latest.outputJson) : {}) as { details?: { findings?: Finding[] } }).details?.findings?.filter((f) => blocking(f.severity)) ?? [];
+    // Findings come only from the most recent review/validation run, and only if no remediation has handled them yet:
+    // a later (e.g. blocked) run, or a remediation since, means older findings are stale.
+    const rows = specExecutions(ctx.job.id);
+    const latest = rows.findLast((r) => r.stage !== "SPECIFICATION_REMEDIATION" && (r.outcome === "succeeded" || r.outcome === "failed"));
+    const handled = latest && rows.some((r) => r.id > latest.id && r.stage === "SPECIFICATION_REMEDIATION" && r.outcome === "succeeded");
+    const stored = latest?.outcome === "succeeded" && !handled
+      ? ((latest.outputJson ? JSON.parse(latest.outputJson) : {}) as { details?: { findings?: Finding[] } }).details?.findings ?? []
+      : [];
+    const findings = stored.filter((f) => blocking(f.severity) && f.id !== HUMAN_QUESTIONS);
+    const questions = openQuestions(readSpecBundle(p.cwd, p.featureDir));
+    const answering = questions.length > 0 && resumedAfterQuestions(ctx.job.id);
+    if (answering) findings.unshift(questionsFinding(ctx.job.id, questions));
     if (findings.length === 0) return { kind: "ok", output: { note: "no blocking findings to remediate" } };
     const r = await agent(ctx, { task: "specification", role: "spec-writer", prompt: remediationPrompt(p.featureDir, p.ticket, findings), cwd: p.cwd, schema: Remediation, baseRef: p.info.base, timeoutMs: 20 * MIN });
     if (!r.ok) return r.stop;
     for (const rej of r.data!.rejected) record(ctx.job.id, "remediation.rejected", `${rej.id}`, rej.reason);
-    await commitPaths(p.cwd, COMMIT_PATHS(p.featureDir), `spec(${p.issue.identifier}): address review findings`, git);
+    await commitPaths(p.cwd, COMMIT_PATHS(p.featureDir), `spec(${p.issue.identifier}): ${answering && findings.length === 1 ? "apply answers to open questions" : "address review findings"}`, git);
     recordArtifacts(d.db, ctx.job.id, readSpecBundle(p.cwd, p.featureDir));
     return { kind: "ok", output: { accepted: r.data!.accepted, rejected: r.data!.rejected, summary: r.data!.summary } };
   };

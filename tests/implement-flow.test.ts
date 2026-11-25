@@ -9,7 +9,7 @@ import { retryJob } from "../src/core/jobs.js";
 import { artifacts, decisions, jobs, stageExecutions } from "../src/db/schema.js";
 import { SandboxUnavailable } from "../src/exec/commands.js";
 import { sandboxAvailable } from "../src/exec/sandbox.js";
-import { defaults, GOOD_SRC, GOOD_TEST, tickTasks, write } from "./helpers/impl-agent.js";
+import { defaults, GOOD_SRC, GOOD_TEST, tickTasks, untick, write } from "./helpers/impl-agent.js";
 import { exists } from "./helpers/scripted-agent.js";
 import { sh } from "./helpers/git-fixture.js";
 import { decisionKinds, harness, impl, job, type H } from "./helpers/impl-harness.js";
@@ -50,7 +50,8 @@ describe.skipIf(!sandboxAvailable())("implementation pipeline (real engine, git,
     expect(first.bashAllow![0]).toMatch(/jobs\/.+\/factory-exec$/);
     expect(first.prompt).toContain(`${first.bashAllow![0]} test`);
     expect(first.prompt).toMatch(/refused/); expect(first.prompt).toMatch(/never delete, skip or weaken/i);
-    expect(first.prompt).toContain('untrusted-data'.slice(0, 0)); // ticket text is not passed to the implementer verbatim: it works from the spec
+    expect(first.prompt).toContain('<ticket untrusted-data="true">'); // the ticket (and any human answers) reaches the implementer, fenced as data
+    expect(first.prompt).toMatch(/\[HUMAN\]/);                       // and it is told how to defer work only a person can do
   });
   it("reviews with Haiku (read-only) and a different, default-model Claude for the final gate", async () => {
     await h.engine.tick();
@@ -130,6 +131,8 @@ describe.skipIf(!sandboxAvailable())("remediation: failing checks are fed back, 
   it("an independent (Haiku) blocker is remediated, then the review passes", async () => {
     const h = await harness();
     h.claude.b.codeReview = (n) => (n === 1 ? { verdict: "changes_required", findings: [{ id: "C1", severity: "blocker", file: "src/due.js", line: 1, issue: "wrong for equal dates", fix: "use <" }] } : { verdict: "approve", findings: [] });
+    h.claude.b.remediate = (cwd) => write(cwd, "src/due.js", GOOD_SRC + "// equal dates are not overdue\n");
+    h.claude.b.remediation = () => ({ accepted: ["C1"], rejected: [], summary: "fixed" });
     await h.engine.tick();
     expect(h.stages().slice(2, 9)).toEqual(["AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW", "REMEDIATION", "AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW", "CLAUDE_REVIEW", "FINAL_VALIDATION"]);
     expect(impl(h)[1]!.prompt).toContain("wrong for equal dates");
@@ -147,6 +150,8 @@ describe.skipIf(!sandboxAvailable())("remediation: failing checks are fed back, 
   it("stops at NEEDS_ATTENTION after three failed remediation cycles instead of looping", async () => {
     const h = await harness();
     h.claude.b.finalReview = () => ({ verdict: "changes_required", criteria: [{ id: "FR-001", met: false, evidence: "no test for the edge case" }], findings: [] });
+    h.claude.b.remediate = (cwd, _dir, n) => write(cwd, "src/due.js", `${GOOD_SRC}// attempt ${n}\n`); // real (if insufficient) fixes each cycle
+    h.claude.b.remediation = () => ({ accepted: ["criterion:FR-001"], rejected: [], summary: "tried" });
     await h.engine.tick();
     expect(job(h)).toMatchObject({ stage: "NEEDS_ATTENTION", remediationAttempts: 3 });
     expect(impl(h).filter((c) => c.resumeSessionId)).toHaveLength(3);
@@ -299,6 +304,214 @@ describe.skipIf(!sandboxAvailable())("dry run", () => {
     expect(existsSync(join(h.wt, "src/due.js"))).toBe(false);
     expect(h.stages().slice(0, 6)).toEqual(["IMPLEMENTATION_PREPARATION", "IMPLEMENTATION", "AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW", "CLAUDE_REVIEW", "FINAL_VALIDATION"]);
     expect(h.hist().slice(0, 6).every((x) => x.endsWith(":succeeded"))).toBe(true);
+  });
+});
+
+const deferredIds = (h: H) => h.ctx.handle.db.select().from(decisions).where(eq(decisions.kind, "human.deferred")).all().map((d) => d.decision);
+const implementPasses = (h: H) => impl(h).filter((c) => /speckit-implement/.test(c.prompt));
+const remediations = (h: H) => impl(h).filter((c) => !/speckit-implement/.test(c.prompt));
+/** A retry releases the job with a backoff; drive the engine the way the scheduler would. */
+const settleAll = async (h: H) => { for (let i = 0; i < 6 && !["MERGING", "NEEDS_ATTENTION", "FAILED", "BLOCKED"].includes(job(h).stage); i++) await h.engine.tick(); };
+const TO_PR = ["FINAL_VALIDATION", "PULL_REQUEST_CREATION", "CI_VALIDATION", "MERGE_VALIDATION", "MERGING"];
+
+describe.skipIf(!sandboxAvailable())("work only a human can do is deferred to the PR, never looped on (JAM-414)", () => {
+  const leaveManualTask = (h: H, tag = "") => { h.claude.b.implement = (cwd, dir) => { write(cwd, "src/due.js", GOOD_SRC); write(cwd, "test/due.test.js", GOOD_TEST); tickTasks(cwd, dir); untick(cwd, dir, "T012", tag); }; };
+
+  it("JAM-414: an implementer that keeps rejecting gate:tasks-open for a manual walkthrough no longer loops to the cap", async () => {
+    const h = await harness();
+    leaveManualTask(h);
+    h.claude.b.remediation = () => ({ accepted: [], rejected: [{ id: "gate:tasks-open", reason: "Same finding as before; out of scope for code changes." }], summary: "rejected" });
+    await h.engine.tick();
+    // Before: FINAL_VALIDATION -> REMEDIATION -> full test + review + final validation, three times, then NEEDS_ATTENTION.
+    expect(job(h)).toMatchObject({ stage: "MERGING", remediationAttempts: 1 });
+    expect(remediations(h)).toHaveLength(1);
+    expect(h.stages().slice(-10)).toEqual(["FINAL_VALIDATION", "REMEDIATION", "AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW", "CLAUDE_REVIEW", ...TO_PR]);
+    expect(decisionKinds(h)).toContain("code-review.reused");                      // nothing changed, so nothing was reviewed twice
+    expect(h.claude.calls.filter((c) => c.role === "qa-reviewer")).toHaveLength(2); // one independent + one Claude review, not four
+    expect(deferredIds(h)).toEqual(["T012"]);                                       // the dispute went to a human
+    const body = h.github.created[0]!.body;
+    expect(body).toContain("## Needs human verification");
+    expect(body).toMatch(/\*\*T012\*\* Run the manual scenario in `quickstart.md`/);
+  });
+  it("a rejection that says only a person can do it is recorded as a deferral straight away", async () => {
+    const h = await harness();
+    leaveManualTask(h);
+    h.claude.b.remediation = () => ({ accepted: [], rejected: [{ id: "gate:tasks-open", reason: "T012 is a manual quickstart walkthrough in a real terminal" }], summary: "" });
+    await h.engine.tick();
+    expect(job(h)).toMatchObject({ stage: "MERGING", remediationAttempts: 1 });
+    expect(deferredIds(h)).toEqual(["T012"]);
+    expect(h.ctx.handle.db.select().from(decisions).where(eq(decisions.kind, "remediation.rejected")).all()).toHaveLength(0);
+    expect(h.github.created[0]!.body).toContain("manual quickstart walkthrough");
+  });
+  it("an implementer that defers the task explicitly (the new outlet) goes straight on", async () => {
+    const h = await harness();
+    leaveManualTask(h);
+    h.claude.b.remediation = () => ({ accepted: [], rejected: [], deferred: [{ id: "T012", reason: "needs someone to run quickstart.md by hand" }], summary: "" });
+    await h.engine.tick();
+    expect(job(h)).toMatchObject({ stage: "MERGING", remediationAttempts: 1 });
+    expect(remediations(h)[0]!.prompt).toMatch(/defer/i);
+    expect(h.github.created[0]!.body).toContain("needs someone to run quickstart.md by hand");
+  });
+  it("a task the spec tagged [HUMAN] never blocks: no fix cycle at all, and it is listed on the PR", async () => {
+    const h = await harness();
+    leaveManualTask(h, "[HUMAN]");
+    await h.engine.tick();
+    expect(job(h)).toMatchObject({ stage: "MERGING", remediationAttempts: 0 });
+    expect(h.stages()).not.toContain("REMEDIATION");
+    expect(h.github.created[0]!.body).toMatch(/\*\*T012\*\* Run the manual scenario/);
+  });
+  it("hard gates can never be deferred: a deferral of a failing check is refused and the job still has to fix it", async () => {
+    const h = await harness();
+    h.claude.b.implement = (cwd, dir) => { write(cwd, "src/due.js", BUGGY_SRC); write(cwd, "test/due.test.js", GOOD_TEST); tickTasks(cwd, dir); };
+    let n = 0;
+    h.claude.b.remediate = (cwd) => { if (++n === 2) write(cwd, "src/due.js", GOOD_SRC); else write(cwd, "src/note.js", `export const n = ${n};\n`); };
+    h.claude.b.remediation = () => (n === 1 ? { accepted: [], rejected: [], deferred: [{ id: "check:test", reason: "a human should look" }], summary: "" } : { accepted: ["check:test"], rejected: [], summary: "fixed" });
+    await h.engine.tick();
+    expect(decisionKinds(h)).toContain("remediation.deferral-refused");
+    expect(deferredIds(h)).toEqual([]);
+    expect(job(h).remediationAttempts).toBe(2);
+    expect(job(h).stage).toBe("MERGING");
+  });
+});
+
+describe.skipIf(!sandboxAvailable())("reviewers remember earlier cycles", () => {
+  it("the re-review is told what was raised, what was rejected and why, and what changed; Claude sees the real check results", async () => {
+    const h = await harness();
+    h.claude.b.codeReview = (n) => (n === 1 ? { verdict: "changes_required", findings: [{ id: "R1", severity: "major", file: "src/due.js", line: 1, issue: "missing null check on the due date", fix: "add" }] } : { verdict: "approve", findings: [] });
+    h.claude.b.remediate = (cwd) => write(cwd, "src/due.js", GOOD_SRC + "// documented\n");
+    h.claude.b.remediation = () => ({ accepted: [], rejected: [{ id: "R1", reason: "callers validate input per FR-003" }], summary: "" });
+    await h.engine.tick();
+    const reviews = h.claude.calls.filter((c) => c.role === "qa-reviewer" && !("earlier" in ((c.jsonSchema?.properties ?? {}) as object)));
+    expect(reviews).toHaveLength(2);
+    expect(reviews[0]!.prompt).not.toContain("Earlier review rounds");
+    expect(reviews[1]!.prompt).toContain("Earlier review rounds");
+    expect(reviews[1]!.prompt).toMatch(/R1 src\/due\.js: missing null check.*REJECTED.*callers validate input per FR-003/);
+    expect(reviews[1]!.prompt).toMatch(/Code changed since the last review:[\s\S]*src\/due\.js/);
+    expect(reviews[1]!.prompt).toMatch(/only for code that changed since the last review/);
+    const claude = h.claude.calls.find((c) => c.role === "qa-reviewer" && "earlier" in ((c.jsonSchema?.properties ?? {}) as object))!;
+    expect(claude.prompt).toMatch(/- test `node --test`: passed/);
+    expect(claude.prompt).not.toMatch(/Check results:\n\(none\)/);
+    expect(h.claude.calls.find((c) => c.role === "final-reviewer")!.prompt).toContain("callers validate input per FR-003");
+  });
+  it("a reviewer that re-raises a rejected finding about unchanged code (a new id each time) is deferred to the PR, not looped on", async () => {
+    const h = await harness();
+    // Seen live on JAM-414: Haiku's "R1" was a differently-worded nitpick each cycle. Here it is the same point under a new id.
+    h.claude.b.codeReview = (n) => (n === 1
+      ? { verdict: "changes_required", findings: [{ id: "R1", severity: "major", file: "src/due.js", line: 1, issue: "isOverdue does not validate the due date string", fix: "validate" }] }
+      : { verdict: "changes_required", findings: [{ id: "R7", severity: "major", file: "src/due.js", line: 1, issue: "isOverdue does not validate the due date string format", fix: "validate" }] });
+    h.claude.b.remediate = (cwd) => write(cwd, "test/extra.test.js", 'import test from "node:test";\ntest("x", () => {});\n');
+    h.claude.b.remediation = () => ({ accepted: [], rejected: [{ id: "R1", reason: "inputs are validated by the caller (FR-003)" }, { id: "R7", reason: "inputs are validated by the caller (FR-003)" }], summary: "" });
+    await h.engine.tick();
+    expect(job(h)).toMatchObject({ stage: "MERGING", remediationAttempts: 1 });
+    expect(deferredIds(h)).toEqual(["R7"]);
+    expect(h.github.created[0]!.body).toMatch(/R7.*validate the due date string format[\s\S]*Disputed/);
+  });
+});
+
+describe.skipIf(!sandboxAvailable())("no-progress detection", () => {
+  it("the converge loop (job 9c1de607): a pass that changes nothing while converge appends nothing stops, and the gap goes to the PR", async () => {
+    const h = await harness({ passes: 14 });
+    h.claude.b.converge = () => ({ converged: false, appendedTasks: 0, summary: "drizzle/0007 migration missing: run drizzle-kit generate" });
+    h.claude.b.implementResult = () => ({ summary: "done", tasksDone: [], tasksSkipped: [{ id: "T009", reason: "cannot run drizzle-kit: only the check tool may run" }], deferred: [] });
+    await h.engine.tick();
+    expect(implementPasses(h)).toHaveLength(2); // was 14
+    const second = implementPasses(h)[1]!.prompt;
+    expect(second).toContain("pass 2");
+    expect(second).toContain("drizzle/0007 migration missing");
+    expect(second).toMatch(/appended no new tasks/);
+    expect(second).not.toMatch(/appended new tasks; do those/);
+    const converge = h.claude.calls.filter((c) => c.role === "spec-writer");
+    expect(converge[0]!.prompt).toContain("T009: cannot run drizzle-kit");      // the implementer's own blockers reach converge
+    expect(decisionKinds(h)).toContain("implementation.no-progress");
+    expect(deferredIds(h)).toEqual(["converge:gaps"]);
+    expect(h.stages().slice(-5)).toEqual(TO_PR);
+    expect(h.github.created[0]!.body).toContain("drizzle-kit generate");
+  });
+  it("gaps converge reports as human-only are deferred at once and the stage carries on", async () => {
+    const h = await harness();
+    h.claude.b.converge = () => ({ converged: false, appendedTasks: 0, summary: "only the visual check remains", deferred: [{ id: "T012", reason: "visual check in a real terminal" }] });
+    await h.engine.tick();
+    expect(implementPasses(h)).toHaveLength(1);
+    expect(deferredIds(h)).toEqual(["T012"]);
+    expect(h.stages()).toContain("FINAL_VALIDATION");
+  });
+  it("items the implementer defers while implementing are recorded and shown to converge", async () => {
+    const h = await harness();
+    h.claude.b.implementResult = () => ({ summary: "done", tasksDone: ["T001"], tasksSkipped: [], deferred: [{ id: "T012", reason: "manual scenario" }] });
+    await h.engine.tick();
+    expect(deferredIds(h)).toEqual(["T012"]);
+    expect(h.claude.calls.find((c) => c.role === "spec-writer")!.prompt).toContain("T012: manual scenario");
+  });
+  it("a remediation that changes nothing and settles nothing retries that step (telling the agent why), not a whole cycle", async () => {
+    const h = await harness();
+    h.claude.b.codeReview = (n) => (n === 1 ? { verdict: "changes_required", findings: [{ id: "C1", severity: "blocker", file: "src/due.js", line: 1, issue: "wrong for equal dates", fix: "use <" }] } : { verdict: "approve", findings: [] });
+    let n = 0;
+    h.claude.b.remediate = (cwd) => { if (++n === 2) write(cwd, "src/due.js", GOOD_SRC + "// fixed\n"); };
+    h.claude.b.remediation = () => ({ accepted: ["C1"], rejected: [], summary: "fixed" });
+    await settleAll(h);
+    expect(h.hist().filter((x) => x.startsWith("REMEDIATION"))).toEqual(["REMEDIATION:failed", "REMEDIATION:succeeded"]);
+    expect(job(h).remediationAttempts).toBe(1);
+    expect(remediations(h)[1]!.prompt).toMatch(/Earlier attempts at this step failed[\s\S]*changed nothing[\s\S]*made no commit/);
+    expect(h.stages().filter((x) => x === "AUTOMATED_TESTING")).toHaveLength(2); // one cycle, not two
+  });
+});
+
+describe.skipIf(!sandboxAvailable())("retries keep their context", () => {
+  it("a retried IMPLEMENTATION resumes the implementer's session and is told why the last attempt failed", async () => {
+    const h = await harness();
+    let n = 0;
+    h.claude.b.implement = (cwd, dir) => { if (++n > 1) defaults().implement(cwd, dir, n, undefined as never); };
+    await settleAll(h);
+    expect(implementPasses(h)).toHaveLength(2);
+    expect(implementPasses(h)[0]!.resumeSessionId).toBeUndefined();
+    expect(implementPasses(h)[1]!.resumeSessionId).toBe("sess-impl");
+    expect(implementPasses(h)[1]!.prompt).toMatch(/Earlier attempts at this step failed[\s\S]*without changing any code/);
+    expect(h.stages()).toContain("FINAL_VALIDATION");
+  });
+  it("REMEDIATION resumes the newest implementer session that has an id, even when the latest run failed without one", async () => {
+    const h = await harness();
+    h.claude.b.codeReview = (n) => (n === 1 ? { verdict: "changes_required", findings: [{ id: "C1", severity: "blocker", file: "src/due.js", line: 1, issue: "wrong", fix: "x" }] } : { verdict: "approve", findings: [] });
+    h.claude.b.remediate = (cwd) => write(cwd, "src/due.js", GOOD_SRC + "// fixed\n");
+    h.claude.b.remediation = () => ({ accepted: ["C1"], rejected: [], summary: "fixed" });
+    let failed = false;
+    h.claude.b.failure = (req) => (req.role === "implementer" && /Fix the findings/.test(req.prompt) && !failed ? ((failed = true), { failure: "transient", error: "overloaded" }) : undefined);
+    await settleAll(h);
+    const rem = remediations(h);
+    expect(rem).toHaveLength(2);
+    expect(rem[1]!.resumeSessionId).toBe("sess-impl");
+    expect(rem[1]!.prompt).toMatch(/Earlier attempts at this step failed[\s\S]*overloaded/);
+  });
+  it("a session that can no longer be resumed falls back once to a fresh session that is told where things stand", async () => {
+    const h = await harness();
+    h.claude.b.codeReview = (n) => (n === 1 ? { verdict: "changes_required", findings: [{ id: "C1", severity: "blocker", file: "src/due.js", line: 1, issue: "wrong", fix: "x" }] } : { verdict: "approve", findings: [] });
+    h.claude.b.remediate = (cwd) => write(cwd, "src/due.js", GOOD_SRC + "// fixed\n");
+    h.claude.b.remediation = () => ({ accepted: ["C1"], rejected: [], summary: "fixed" });
+    h.claude.b.failure = (req) => (req.resumeSessionId ? { failure: "error", error: "No conversation found with session ID: sess-impl" } : undefined);
+    await h.engine.tick();
+    const rem = remediations(h);
+    expect(rem.map((c) => c.resumeSessionId)).toEqual(["sess-impl", undefined]);
+    expect(rem[1]!.prompt).toMatch(/could not be resumed[\s\S]*impl\(JAM-1\): pass 1[\s\S]*Fix the findings/);
+    expect(decisionKinds(h)).toContain("session.resume-failed");
+    expect(h.hist()).not.toContain("REMEDIATION:failed");
+  });
+  it("human answers reach the implementer and the fixer, not only the spec writer", async () => {
+    const h = await harness();
+    h.ctx.handle.db.insert(decisions).values({ jobId: h.jobId, kind: "human.answer", decision: "answer", rationale: "ANSWER-42: dates are local time", actor: "human" }).run();
+    h.claude.b.codeReview = (n) => (n === 1 ? { verdict: "changes_required", findings: [{ id: "C1", severity: "blocker", file: "src/due.js", line: 1, issue: "wrong", fix: "x" }] } : { verdict: "approve", findings: [] });
+    h.claude.b.remediate = (cwd) => write(cwd, "src/due.js", GOOD_SRC + "// fixed\n");
+    h.claude.b.remediation = () => ({ accepted: ["C1"], rejected: [], summary: "fixed" });
+    await h.engine.tick();
+    expect(implementPasses(h)[0]!.prompt).toContain("ANSWER-42: dates are local time");
+    expect(remediations(h)[0]!.prompt).toContain("ANSWER-42: dates are local time");
+  });
+  it("a secret already in the branch history stops IMPLEMENTATION before any agent run is spent (job df39)", async () => {
+    const h = await harness();
+    write(h.wt, "src/cfg.js", "export const KEY = 'AKIAIOSFODNN7EXAMPLE';\n");
+    sh(h.wt, "add", "-A"); sh(h.wt, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "earlier attempt");
+    await h.engine.tick();
+    expect(job(h)).toMatchObject({ stage: "NEEDS_ATTENTION" });
+    expect(job(h).lastError).toMatch(/possible secret/);
+    expect(impl(h)).toHaveLength(0);
   });
 });
 

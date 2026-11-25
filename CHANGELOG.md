@@ -4,6 +4,16 @@ Updates: `software-factory update` (add `--check` to only look). Releases are gi
 
 ## Unreleased
 
+- **No more fix-cycle loops on work only a human can do** (ADR 0012). Tasks tagged `[HUMAN]`, and anything an agent defers (`deferred` in the implementer, remediation and converge output), are listed on the PR under "Needs human verification" instead of blocking. A finding re-raised after being rejected with nothing changed is deferred rather than cycled again; reviewers see what earlier cycles raised and decided, and a branch whose code did not change is not re-tested or re-reviewed. The implementation pass loop stops when a pass changes nothing and converge appends nothing. Retries are told why the last attempt failed and resume the implementer's session (falling back to a fresh one if it expired); the implementer now sees the ticket and human answers; a committed secret stops the job before another agent run. CI's no-checks grace window and time limit restart from each push.
+- **Engine robustness**:
+  - Fix cycles are budgeted per phase. The specification, the code reviews and CI each get `maxRemediationAttempts`, so a hard spec can no longer use up the fixes the code needs (the counter used to be shared and never reset).
+  - Stage timeouts can no longer cut a stage's own work short. Every workflow (feature, bugfix, maintenance) gets built-in per-stage timeouts derived from the agent timeouts, `commandTimeoutSeconds` and, for implementation, the configured number of passes. A shorter value in `workflows.yaml`, including an older copy in `~/.software-factory/config`, is raised to it.
+  - After the Mac sleeps, the engine no longer re-queues jobs it is still running: it renews its own leases first and only recovers jobs nobody is running.
+  - Cancelling a held job, then retrying it, resumes the real work instead of leaving a job stuck "running" in a held stage. Jobs already stuck that way are released when next claimed.
+  - Retrying an archived job unarchives it. A retry records the error it clears and the job's lifetime fix cycles, and a later "fix cycles exhausted" stop says how many cycles and retries the job has had.
+  - Cancel, emergency stop and timeouts wait (up to 15 s) for the agent to actually stop before the job is released, and the job is not run again until it has, so a quick retry cannot start a second agent in the same worktree.
+- **Answering a held job's questions works end to end.** Answering a specification's open questions now runs the spec-writer with the questions and your answer (it used to skip remediation, leave the spec unchanged and block on the same questions again, or re-send already-fixed review findings). Answering in the ticket and retrying also goes through remediation once; if the questions are still unresolved the job blocks again instead of looping. Every answer is stored with the questions it answers and the stage that asked, and agents see question → answer pairs (the requirements analyst treats them as resolved).
+
 - **Bitbucket Cloud support** as an alternative to GitHub, chosen per project, with named token credentials (access tokens or Atlassian API tokens) in the keychain. See docs/bitbucket.md.
 
 - **Jira support** (Jira Cloud, OAuth 2.0 3LO) as an alternative to Linear, chosen per profile. Statuses and labels are mapped to existing ones in Settings because Jira statuses cannot be created. See docs/jira.md.
@@ -20,6 +30,10 @@ Updates: `software-factory update` (add `--check` to only look). Releases are gi
   - Archived jobs say that retrying restores them from the archive.
   - Human answers in the timeline show the answer rather than the list of questions.
   - The Health page has a Re-check button.
+- **Logs no longer grow without bound**: successful read requests (the dashboard's and menu bar app's polling) are logged at debug, not info; changes and non-2xx responses are still logged (paths only, no query strings), and server errors keep their stack. `factory.log`, `service.out` and the LaunchAgent's `launchd.out.log`/`launchd.err.log` are rotated by size (10 MB, 3 old copies kept) when the service starts and every 10 minutes. Project command logs (`logs/commands`) now follow `logRetentionDays` like agent logs.
+- **Cheaper `/api/overview` and `/api/health`**: recent agent failures are counted in SQL over the last hour instead of loading the whole `agent_invocations` table; system info (which runs `memory_pressure`) is cached for 5 seconds.
+- **Health probes**: overlapping checks share one in-flight probe; failures are re-checked after 30 seconds (successes after 5 minutes), so fixing e.g. `gh auth login` shows up quickly; an expired result is returned at once while one refresh runs behind it; `GET /api/health?refresh=1` re-probes now.
+- **Menu bar app polls less**: every 5 s while jobs run or are queued, 10 s while idle with the window open, 30 s while idle with it closed (interruption checks: 10 s / 30 s / 60 s). The app menu reuses the tray's status instead of probing each profile again.
 
 ## 0.2.0
 
