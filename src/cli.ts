@@ -28,9 +28,11 @@ import { loadOrCreateToken } from "./server/app.js";
 import { applyUpdate, planUpdate } from "./service/update.js";
 import { activateProfile, addProfile, DEFAULT_PROFILE, factoryRoot, getProfile, listProfiles, ProfileError, removeProfile } from "./config/profiles.js";
 import { desktopEntry, isUp, openDesktop, pidOf, startService as launchService, stopService, urlOf } from "./service/launch.js";
-import { agentStatus, installAgent, isOwnAgent, refreshAgent, stopAgent, uninstallAgent } from "./service/launchd.js";
+import { agentServes, agentStatus, installAgent, refreshAgent, uninstallAgent } from "./service/launchd.js";
 import { repairNativeModules } from "./service/native.js";
 import { backupDatabase, profileDbFile, runUpdate, UpdateRefused } from "./service/update-run.js";
+import { LockHeldError } from "./service/lock.js";
+import { installCrashHandlers, shutdownController } from "./agents/children.js";
 
 const openFactoryDb = () => {
   const config = loadConfig();
@@ -288,8 +290,10 @@ program
   .action(async (opts: { window: boolean; browser?: boolean }) => {
     const root = factoryRoot();
     const chosen = getProfile(program.opts<{ profile?: string }>().profile ?? DEFAULT_PROFILE, root);
-    try { refreshAgent(); } catch { /* a LaunchAgent this version cannot read: launchd:status / launchd:install say so */ } // an older install may have written version-specific paths into it
     for (const p of listProfiles(root)) {
+      // An older install may have written version-specific paths into this profile's LaunchAgent: re-render it, then (startService)
+      // hand the profile to launchd if it has one, rather than starting an unsupervised copy.
+      try { refreshAgent({ profile: p.name }); } catch { /* a LaunchAgent this version cannot read: launchd:status / launchd:install say so */ }
       const r = await launchService(p, root);
       if (r.error) process.exitCode = 1; // the desktop app's "Start all profiles" reports a failure from this
       console.log(`${r.error ? "✗" : "✓"} ${p.name.padEnd(12)} ${r.error ?? (r.started ? `started  ${urlOf(p)}` : `already running  ${urlOf(p)}`)}`);
@@ -308,7 +312,8 @@ program
   .description("Shut down the background factory of every profile (or one with --profile). Running agents are aborted and their jobs re-queued untouched.")
   .action(async () => {
     const only = program.opts<{ profile?: string }>().profile;
-    for (const p of listProfiles().filter((x) => !only || x.name === only)) console.log(`${p.name.padEnd(12)} ${await stopService(p)}`);
+    const say = { stopped: "stopped", "not-running": "not running", killed: "did not stop in time: killed it and its agents (its jobs resume at the next start)" } as const;
+    for (const p of listProfiles().filter((x) => !only || x.name === only)) console.log(`${p.name.padEnd(12)} ${say[await stopService(p)]}`);
   });
 
 program
@@ -346,14 +351,28 @@ program
   .action(async (opts: { scheduler: boolean; dryRun?: boolean; open?: boolean }) => {
     const config = loadConfig();
     if (opts.dryRun) config.factory.dryRun = true;
-    const svc = await startService(config, { scheduler: opts.scheduler });
+    const logger = createLogger({ level: "info" });
+    // Whatever ends this process, the agents it started go with it (see src/agents/children.ts).
+    installCrashHandlers((kind, err) => logger.fatal({ err }, `${kind}: the factory service is exiting and killing its agents`));
+    let svc: Awaited<ReturnType<typeof startService>> | undefined;
+    const shutdown = shutdownController(async (reason) => { await svc?.stop(reason); });
+    process.on("SIGINT", () => void shutdown("SIGINT"));
+    process.on("SIGTERM", () => void shutdown("SIGTERM"));
+    try {
+      svc = await startService(config, { scheduler: opts.scheduler, requestShutdown: () => void shutdown("shutdown requested over the control API", false) });
+    } catch (e) {
+      // Another factory already serves this profile (e.g. `start` ran it and then the LaunchAgent was loaded). Nothing is wrong,
+      // so exit 0: a failure exit would make launchd retry every 30 seconds for as long as the other one runs.
+      if (e instanceof LockHeldError && (await fetch(`http://127.0.0.1:${config.factory.server.port}/health`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok).catch(() => false))) {
+        console.log(`${e.message}\nIt is healthy, so there is nothing to do.`);
+        process.exit(0);
+      }
+      throw e;
+    }
     const url = `http://127.0.0.1:${svc.port}/${config.projects.projects.length === 0 ? "#/setup" : ""}`;
     console.log(`factory running on ${url}`);
     if (opts.open && process.platform === "darwin") execFileSync("open", [url]);
     if (config.factory.dryRun) console.log("DRY RUN: nothing will be changed in repositories, Linear or GitHub");
-    const shutdown = async () => { await svc.stop(); process.exit(0); };
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
   });
 
 program
@@ -375,7 +394,8 @@ program
       const { restarted } = await runUpdate(plan, { wait: opts.wait, force: opts.force }, {
         profiles: () => listProfiles(root), isUp: (p) => isUp(p), stop: (p) => stopService(p), start: (p) => launchService(p, root),
         runningJobs: async (p) => { try { return ((await (await fetch(urlOf(p, "/api/overview"), { signal: AbortSignal.timeout(2000) })).json()) as { counts: { byStatus: Record<string, number> } }).counts.byStatus.running ?? 0; } catch { return 0; } },
-        agent: { loaded: () => isOwnAgent() && agentStatus().loaded, stop: () => stopAgent(), refresh: (load) => refreshAgent({ load }) },
+        // Stopping goes through stopService (bootout of this install's LaunchAgent, then the control API, then a verified signal).
+        agent: { loaded: (p) => process.platform === "darwin" && agentServes(p.home, { profile: p.name }).loaded, refresh: (p, load) => refreshAgent({ profile: p.name, load }) },
         backup: async (p, tag) => backupDatabase(profileDbFile(p), tag),
         apply: (pl) => applyUpdate(pl, { log: (l) => console.log(l) }),
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)), log: (l) => console.log(l),
@@ -399,18 +419,29 @@ program
     if (opts.open) execFileSync("open", [url]);
   });
 
+const currentProfile = () => process.env.FACTORY_PROFILE ?? DEFAULT_PROFILE;
 program
   .command("launchd:install")
-  .description("Install the LaunchAgent. NOTE: once installed it starts automatically at every login (RunAtLoad); --load also starts it now.")
+  .description("Install the LaunchAgent for this profile (--profile; one per profile). NOTE: once installed it starts automatically at every login (RunAtLoad); --load also starts it now.")
   .option("--load", "also load it now (starts the service, which polls Linear and runs jobs autonomously)")
-  .action((opts: { load?: boolean }) => {
+  .action(async (opts: { load?: boolean }) => {
     const config = loadConfig();
-    const r = installAgent({ dataDir: config.factory.dataDir, configDir: process.env.FACTORY_CONFIG_DIR ? resolve(process.env.FACTORY_CONFIG_DIR) : undefined, load: opts.load });
+    const name = currentProfile();
+    if (opts.load) {
+      // Hand over: a copy started by `start` holds the profile, so launchd's copy could not run. Stop it first and let launchd own it.
+      const p = getProfile(name);
+      const agent = agentStatus({ profile: name });
+      if ((await isUp(p)) && !(agent.loaded && agent.pid !== undefined && agent.pid === pidOf(p))) {
+        console.log(`${name}: stopping the copy started by \`software-factory start\` so launchd can run it instead (running jobs are re-queued untouched)`);
+        await stopService(p);
+      }
+    }
+    const r = installAgent({ dataDir: config.factory.dataDir, configDir: process.env.FACTORY_CONFIG_DIR ? resolve(process.env.FACTORY_CONFIG_DIR) : undefined, load: opts.load, profile: name, root: factoryRoot() });
     console.log(`wrote ${r.path}`);
-    console.log(r.loaded ? "loaded: the factory service is now running in the background and will start at every login" : "installed but not started now. It WILL start automatically at your next login. Start now: --load. Undo: pnpm factory launchd:uninstall");
+    console.log(r.loaded ? `loaded: the "${name}" factory is now running in the background and will start at every login` : `installed but not started now. It WILL start automatically at your next login. Start now: --load. Undo: software-factory launchd:uninstall${name === DEFAULT_PROFILE ? "" : ` --profile ${name}`}`);
   });
-program.command("launchd:uninstall").description("Stop and remove the LaunchAgent").action(() => console.log(uninstallAgent().removed ? "removed" : "was not installed"));
-program.command("launchd:status").description("Is the LaunchAgent installed and running?").action(() => console.log(JSON.stringify(agentStatus(), null, 2)));
+program.command("launchd:uninstall").description("Stop and remove this profile's LaunchAgent").action(() => console.log(uninstallAgent({ profile: currentProfile() }).removed ? "removed" : "was not installed"));
+program.command("launchd:status").description("Is this profile's LaunchAgent installed and running?").action(() => console.log(JSON.stringify(agentStatus({ profile: currentProfile() }), null, 2)));
 
 // A Node switch leaves the native SQLite module built for the old one: rebuild it once and start again in a fresh process.
 if (repairNativeModules() === "rebuilt") {

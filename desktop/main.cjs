@@ -2,7 +2,7 @@
 // background service (started by `software-factory start`) and keeps working when this window is closed.
 const { app, BrowserWindow, Menu, Notification, Tray, shell, dialog, session, nativeImage } = require("electron");
 const { summarise, pollPlan } = require("./tray-model.cjs");
-const { newInterruptions } = require("./notify-model.cjs");
+const { newInterruptions, unexpectedStops } = require("./notify-model.cjs");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -32,7 +32,8 @@ async function counts(p) {
 async function activeJobs(p) {
   try { const o = await (await fetch(`${urlOf(p)}api/overview`, { signal: AbortSignal.timeout(1500) })).json(); return (o.counts?.byStatus?.running ?? 0); } catch { return 0; }
 }
-const pidOf = (p) => { try { const n = Number(fs.readFileSync(path.join(p.home, "factory.lock"), "utf8").trim()); return Number.isInteger(n) && n > 0 ? n : null; } catch { return null; } };
+// Written by the service when a stop begins, removed when it starts (src/service/runstate.ts).
+const stoppedOnPurpose = (p) => fs.existsSync(path.join(p.home, "run", "stopped.json"));
 
 let win = null;
 let current = find(profileArg(process.argv));
@@ -53,6 +54,7 @@ async function show(p) {
 
 // The install's own bin/factory: a stable path that resolves Node and tsx when it runs, so it still works after `software-factory update`.
 const startCommand = () => process.env.FACTORY_START_JSON ? JSON.parse(process.env.FACTORY_START_JSON) : ["/bin/sh", path.join(__dirname, "..", "bin", "factory"), "start", "--no-window"];
+const shutdownCommand = () => process.env.FACTORY_SHUTDOWN_JSON ? JSON.parse(process.env.FACTORY_SHUTDOWN_JSON) : ["/bin/sh", path.join(__dirname, "..", "bin", "factory"), "shutdown"];
 
 /** Starts every profile. A failure (missing Node, broken install, a profile that would not start) is shown, never swallowed. */
 function startAll() {
@@ -80,11 +82,20 @@ async function stopAll() {
     detail: running ? "Stopping aborts the running agents. Their jobs are put back untouched and the stage in progress is redone at the next start." : "Nothing is running. The factory will not pick up tickets until you start it again.",
   });
   if (response !== 0) return;
-  for (const p of profs) { const pid = pidOf(p); if (pid) { try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ } } }
-  quitting = true;
-  setTimeout(() => app.quit(), 800);
+  // Through the CLI, which knows about LaunchAgents (a kill would not stick: launchd restarts it), asks each service to stop over
+  // its control API, and only ever signals a process verified to be the factory. Never a bare pid from a file.
+  const cmd = shutdownCommand();
+  const env = { ...process.env, FACTORY_ROOT: ROOT }; delete env.ELECTRON_RUN_AS_NODE;
+  if (tray && process.platform === "darwin") tray.setTitle(" stopping…");
+  let output = "";
+  const child = spawn(cmd[0], cmd.slice(1), { stdio: ["ignore", "pipe", "pipe"], env, cwd: path.join(__dirname, "..") });
+  for (const s of [child.stdout, child.stderr]) s.on("data", (d) => { output = (output + d).slice(-8000); });
+  const finish = () => { quitting = true; app.quit(); };
+  const timer = setTimeout(finish, 90_000); // the CLI gives each profile 30s, then forces it
+  const fail = (why) => { clearTimeout(timer); dialog.showErrorBox("Could not stop the factory", `${why}\n\n${output.trim().split("\n").slice(-12).join("\n")}\n\nRun \`software-factory shutdown\` in a terminal for details.`.replace(/\n{3,}/g, "\n\n")); void refreshTray(); };
+  child.on("error", (e) => fail(`${cmd[0]}: ${e.message}`));
+  child.on("exit", (code, signal) => { if (code !== 0) fail(signal ? `it was stopped (${signal})` : `it exited with code ${code}`); else { clearTimeout(timer); finish(); } });
 }
-
 
 // ---- the menu bar icon: the app stays here when its window is closed, so the factory is one click away while the engine runs ----
 /** Showing the Dock icon again after it was hidden brings back the default Electron icon, so set ours every time. */
@@ -103,6 +114,7 @@ async function refreshTray() {
   if (!tray) return;
   const profs = readProfiles();
   const status = await Promise.all(profs.map(async (p) => { const isUp = await up(p); return { name: p.name, up: isUp, ...(isUp ? await counts(p) : {}) }; }));
+  notifyStops(profs, status);
   const m = summarise(status);
   lastSummary = m;
   tray.setToolTip(m.tooltip);
@@ -154,6 +166,18 @@ async function checkInterruptions() {
       note.on("click", () => { openWindow(find(n.profile)); if (win) win.loadURL(`${urlOf(find(n.profile) ?? current)}#/jobs/${encodeURIComponent(n.jobId)}`); });
       note.show();
     }
+  }
+}
+
+// ---- a factory that stops without being asked to (a crash, a kill): `start`ed services have no supervisor, so say so ----
+const lastUp = new Map();
+function notifyStops(profs, status) {
+  if (SMOKE || quitting || !Notification.isSupported()) return;
+  const fresh = unexpectedStops(status.map((s) => ({ name: s.name, up: s.up, stoppedOnPurpose: stoppedOnPurpose(profs.find((p) => p.name === s.name)) })), lastUp);
+  for (const n of fresh) {
+    const note = new Notification({ title: n.title, body: n.body, silent: false });
+    note.on("click", () => openWindow(find(n.profile)));
+    note.show();
   }
 }
 

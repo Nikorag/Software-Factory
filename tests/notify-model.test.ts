@@ -38,3 +38,23 @@ describe("interruption notifications", () => {
     expect(newInterruptions("work", [blocked], seen, true)).toHaveLength(1);
   });
 });
+
+type S = { name: string; up: boolean; stoppedOnPurpose: boolean };
+const { unexpectedStops } = createRequire(import.meta.url)("../desktop/notify-model.cjs") as { unexpectedStops: (s: S[], wasUp: Map<string, boolean>) => { profile: string; title: string; body: string }[] };
+
+describe("unexpected-stop notifications (a `start`ed factory has no supervisor)", () => {
+  it("notifies when a factory that was up goes down without having been asked to stop", () => {
+    const was = new Map<string, boolean>();
+    expect(unexpectedStops([{ name: "home", up: true, stoppedOnPurpose: false }, { name: "work", up: true, stoppedOnPurpose: false }], was)).toEqual([]);
+    const out = unexpectedStops([{ name: "home", up: false, stoppedOnPurpose: false }, { name: "work", up: true, stoppedOnPurpose: false }], was);
+    expect(out.map((n) => n.profile)).toEqual(["home"]); expect(out[0]!.title).toContain("stopped unexpectedly");
+    expect(unexpectedStops([{ name: "home", up: false, stoppedOnPurpose: false }], was)).toEqual([]); // once, not every poll
+  });
+  it("is quiet for a requested stop, for a factory first seen stopped, and for one coming back up", () => {
+    const was = new Map<string, boolean>();
+    expect(unexpectedStops([{ name: "home", up: false, stoppedOnPurpose: false }], was)).toEqual([]); // never seen up
+    unexpectedStops([{ name: "home", up: true, stoppedOnPurpose: false }], was);
+    expect(unexpectedStops([{ name: "home", up: false, stoppedOnPurpose: true }], was)).toEqual([]); // `shutdown` / Stop the Factory
+    expect(unexpectedStops([{ name: "home", up: true, stoppedOnPurpose: false }], was)).toEqual([]);
+  });
+});

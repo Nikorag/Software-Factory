@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { describe, expect, it, vi } from "vitest";
 import { openDb } from "../src/db/client.js";
 import type { Profile } from "../src/config/profiles.js";
-import { buildPlist, installAgent, isOwnAgent, plistPath, refreshAgent, renderPlist, serveCommand } from "../src/service/launchd.js";
+import { buildPlist, installAgent, isOwnAgent, LABEL, plistPath, refreshAgent, renderPlist, serveCommand } from "../src/service/launchd.js";
 import { isAbiMismatch, nodeRecordFile, recordNode, repairNativeModules, stableNodePath } from "../src/service/native.js";
 import { backupDatabase, profileDbFile, runUpdate, UpdateRefused, type UpdateDeps } from "../src/service/update-run.js";
 import type { UpdatePlan } from "../src/service/update.js";
@@ -94,6 +94,17 @@ describe("LaunchAgent refresh", () => {
     expect(run.mock.calls.map((c) => c[1][0])).toEqual(["bootout", "bootstrap"]);
   });
 
+  it("refreshes a profile's own LaunchAgent, keeping its profile and root", () => {
+    const home = tmp();
+    installAgent({ home, repoRoot: "/app", dataDir: join(home, "profiles", "work"), profile: "work", root: home, run: () => "" });
+    const file = plistPath(home, `${LABEL}.work`);
+    writeFileSync(file, readFileSync(file, "utf8").replace(/<key>PATH<\/key>\s*<string>[^<]*<\/string>/, "<key>PATH</key>\n\t\t<string>/old</string>"));
+    expect(refreshAgent({ home, repoRoot: "/app", profile: "work", run: () => "" })).toMatchObject({ installed: true, changed: true });
+    const xml = readFileSync(file, "utf8");
+    expect(xml).toMatch(/<key>FACTORY_PROFILE<\/key>\s*<string>work<\/string>/); expect(xml).toContain(`<string>${home}</string>`);
+    expect(refreshAgent({ home, repoRoot: "/app", run: () => "" }).installed).toBe(false); // the default profile has none
+  });
+
   it("never touches a LaunchAgent that belongs to another checkout, or none at all", () => {
     const home = tmp();
     expect(refreshAgent({ home, repoRoot: "/app" }).installed).toBe(false);
@@ -177,7 +188,7 @@ describe("runUpdate: stop, back up, apply, restart", () => {
       runningJobs: async (p) => (p.name === "default" ? (jobs.length > 1 ? jobs.shift()! : jobs[0]!) : 0),
       stop: async (p) => { events.push(`stop ${p.name}`); },
       start: async (p) => { events.push(`start ${p.name}`); return { started: true }; },
-      agent: { loaded: () => !!o.agent, stop: () => { events.push("agent stop"); }, refresh: (load) => { events.push(`agent refresh load=${load}`); return { installed: !!o.agent }; } },
+      agent: { loaded: (p) => !!o.agent && p.name === "default", refresh: (p, load) => { events.push(`agent refresh ${p.name} load=${load}`); return { installed: !!o.agent && p.name === "default" }; } },
       backup: async (p, tag) => { events.push(`backup ${p.name} ${tag}`); return null; },
       apply: async () => { events.push("apply"); await o.apply?.(); },
       sleep: async () => { events.push("sleep"); },
@@ -189,14 +200,14 @@ describe("runUpdate: stop, back up, apply, restart", () => {
   it("stops everything that runs, backs up every profile, applies, then restarts exactly what ran", async () => {
     const { d, events } = world();
     expect(await runUpdate(plan, {}, d)).toEqual({ restarted: ["default", "work"] });
-    expect(events).toEqual(["stop default", "stop work", "backup default abcdef0", "backup work abcdef0", "backup idle abcdef0", "apply", "agent refresh load=false", "start default", "start work"]);
+    expect(events).toEqual(["stop default", "stop work", "backup default abcdef0", "backup work abcdef0", "backup idle abcdef0", "apply", "agent refresh default load=false", "agent refresh work load=false", "agent refresh idle load=false", "start default", "start work"]);
   });
 
-  it("hands the default profile back to the LaunchAgent (stopped with bootout, re-rendered and reloaded after)", async () => {
-    const { d, events } = world({ agent: true, up: ["default"] });
+  it("hands a profile back to its LaunchAgent (stopped through the verified stop, which boots it out; re-rendered and reloaded after)", async () => {
+    const { d, events } = world({ agent: true, up: [] }); // under launchd, even if it was not answering (e.g. waiting out its restart throttle)
     expect((await runUpdate(plan, {}, d)).restarted).toEqual(["default"]);
-    expect(events[0]).toBe("agent stop");
-    expect(events).toContain("agent refresh load=true");
+    expect(events[0]).toBe("stop default");
+    expect(events).toContain("agent refresh default load=true"); expect(events).toContain("agent refresh work load=false");
     expect(events).not.toContain("start default");
   });
 

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { fixtureConfig } from "./helpers/config.js";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
@@ -12,8 +12,9 @@ import { simulatedHandlers } from "../src/core/simulation.js";
 import { openDb } from "../src/db/client.js";
 import { jobs, projects } from "../src/db/schema.js";
 import type { DiscoveryReport } from "../src/linear/discovery.js";
-import { acquireLock, LockHeldError } from "../src/service/lock.js";
-import { agentStatus, buildPlist, installAgent, LABEL, renderPlist, uninstallAgent } from "../src/service/launchd.js";
+import { acquireLock, lockHolder, LockHeldError, readLock } from "../src/service/lock.js";
+import { commandOf, identify, startTimeOf } from "../src/service/proc.js";
+import { agentServes, agentStatus, stopAgent, buildPlist, installAgent, LABEL, labelFor, renderPlist, startAgent, uninstallAgent } from "../src/service/launchd.js";
 import { counts, HealthChecker, systemInfo } from "../src/service/metrics.js";
 import { Scheduler } from "../src/service/scheduler.js";
 import { forgetSecrets, resolveSecret } from "../src/service/secrets.js";
@@ -132,10 +133,30 @@ describe("single-instance lock", () => {
     const f = join(tmp(), "factory.lock");
     writeFileSync(f, "999999999"); // no such pid
     const l = acquireLock(f, process.pid);
-    expect(readFileSync(f, "utf8")).toBe(String(process.pid));
+    expect(readLock(f)).toEqual({ pid: process.pid, start: startTimeOf(process.pid) });
     l.release();
-    writeFileSync(f, String(process.ppid)); // our parent is alive
+    writeFileSync(f, JSON.stringify(identify(process.ppid))); // our parent is alive, with the recorded start time
     expect(() => acquireLock(f, process.pid)).toThrow(/already running/);
+    expect(lockHolder(f)).toBe(process.ppid);
+  });
+  it("never trusts a reused pid: a live process with a different start time, or (old bare-pid locks) without a factory command line", () => {
+    const f = join(tmp(), "factory.lock");
+    writeFileSync(f, JSON.stringify({ pid: process.ppid, start: "Mon Jan  1 00:00:00 2001" })); // the pid lives, but it is not the process that took the lock
+    expect(lockHolder(f)).toBeNull();
+    acquireLock(f, process.pid).release();
+    writeFileSync(f, String(process.ppid)); // an old-style lock naming a live process that is not a factory (vitest)
+    expect(lockHolder(f)).toBeNull();
+    acquireLock(f, process.pid).release();
+  });
+  it("an old-style bare-pid lock still holds while a factory service really has that pid", async () => {
+    const f = join(tmp(), "factory.lock");
+    const fake = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "/x/dist/src/cli.js", "serve"], { stdio: "ignore" });
+    try {
+      await until(() => (commandOf(fake.pid!) ?? "").includes("serve"));
+      writeFileSync(f, String(fake.pid));
+      expect(lockHolder(f)).toBe(fake.pid);
+      expect(() => acquireLock(f, process.pid)).toThrow(LockHeldError);
+    } finally { fake.kill("SIGKILL"); }
   });
   it("release never removes a lock that now belongs to someone else", () => {
     const f = join(tmp(), "factory.lock");
@@ -212,7 +233,7 @@ describe("LaunchAgent", () => {
     if (process.platform === "darwin") expect(execFileSync("/usr/bin/plutil", ["-lint", f], { encoding: "utf8" })).toContain("OK");
     expect(xml).toContain(`<string>${LABEL}</string>`);
     expect(xml).toMatch(/<key>SuccessfulExit<\/key>\s*<false\/>/); // a clean exit (launchctl bootout) is not restarted
-    expect(xml).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/); expect(xml).toContain("<string>Background</string>"); expect(xml).toMatch(/<key>Nice<\/key>\s*<integer>5<\/integer>/);
+    expect(xml).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/); expect(xml).toMatch(/<key>ProcessType<\/key>\s*<string>Standard<\/string>/); expect(xml).not.toContain("Background"); expect(xml).toMatch(/<key>ExitTimeOut<\/key>\s*<integer>\d+<\/integer>/); expect(xml).toMatch(/<key>Nice<\/key>\s*<integer>5<\/integer>/);
     expect(xml).toContain(join(process.cwd(), "bin", "factory")); expect(xml).toContain("<string>serve</string>");
     expect(xml).toContain("FACTORY_CONFIG_DIR");
     expect(xml).not.toMatch(/LINEAR_API_KEY|GH_TOKEN|ANTHROPIC|SECRET|PASSWORD|sk-ant|lin_api/i);
@@ -231,6 +252,42 @@ describe("LaunchAgent", () => {
     expect(b.loaded).toBe(true);
     const bootstrap = run.mock.calls.find((c) => c[1][0] === "bootstrap")!;
     expect(bootstrap[1][1]).toMatch(/^gui\/\d+$/); expect(bootstrap[1][2]).toBe(a.path);
+  });
+  it("one LaunchAgent per profile: its own label, file, data dir logs and FACTORY_PROFILE; the default profile keeps the original label", () => {
+    const home = tmp(); const run = vi.fn((_f: string, _a: string[]) => "");
+    expect(labelFor()).toBe(LABEL); expect(labelFor("default")).toBe(LABEL); expect(labelFor("work")).toBe(`${LABEL}.work`);
+    const def = buildPlist(opts(home));
+    expect(def).not.toContain("FACTORY_PROFILE");
+    const work = installAgent({ ...opts(home), dataDir: join(home, "profiles", "work"), profile: "work", root: home, load: true, run });
+    expect(work.path).toBe(join(home, "Library", "LaunchAgents", `${LABEL}.work.plist`));
+    const xml = readFileSync(work.path, "utf8");
+    expect(xml).toContain(`<string>${LABEL}.work</string>`);
+    expect(xml).toMatch(/<key>FACTORY_PROFILE<\/key>\s*<string>work<\/string>/); expect(xml).toMatch(new RegExp(`<key>FACTORY_ROOT</key>\\s*<string>${home}</string>`));
+    expect(xml).toContain(join(home, "profiles", "work", "logs", "launchd.out.log"));
+    expect(run.mock.calls.map((c) => c[1].join(" "))).toEqual([expect.stringMatching(new RegExp(`^bootout gui/\\d+/${LABEL}\\.work$`)), expect.stringMatching(/^bootstrap gui\/\d+ .*work\.plist$/)]);
+    expect(agentStatus({ home, profile: "work", run: () => "state = running\n" })).toMatchObject({ installed: true, loaded: true });
+    expect(agentStatus({ home, run: () => { throw new Error("nope"); } })).toMatchObject({ installed: false }); // the default profile's is not installed
+  });
+  it("an agent only counts as this install's when its log paths are under this data dir (the label is shared by every install)", () => {
+    const home = tmp(); const dataDir = join(home, "data");
+    installAgent({ ...opts(home), run: () => "" });
+    const print = (stdout: string) => () => `state = running\n\tstdout path = ${stdout}\n`;
+    expect(agentServes(dataDir, { home, run: print(join(dataDir, "logs", "launchd.out.log")) })).toEqual({ installed: true, loaded: true });
+    expect(agentServes(join(home, "other"), { home, run: print(join(dataDir, "logs", "launchd.out.log")) })).toEqual({ installed: false, loaded: false });
+    expect(agentServes(dataDir, { home, run: () => { throw new Error("not loaded"); } })).toEqual({ installed: true, loaded: false });
+  });
+  it("stopAgent boots a loaded agent out for good; startAgent loads the plist as it is on disk now", () => {
+    const run = vi.fn((_f: string, _a: string[]) => "");
+    expect(stopAgent({ profile: "work", run })).toBe(true);
+    expect(run.mock.calls[0]![1]).toEqual(["bootout", expect.stringMatching(new RegExp(`${LABEL}\\.work$`))]);
+    expect(stopAgent({ run: () => { throw new Error("not loaded"); } })).toBe(false);
+    const home = tmp();
+    const notLoaded = vi.fn((_f: string, a: string[]) => { if (a[0] === "print") throw new Error("not found"); return ""; });
+    startAgent({ home, run: notLoaded });
+    expect(notLoaded.mock.calls.at(-1)![1]).toEqual(["bootstrap", expect.stringMatching(/^gui\/\d+$/), join(home, "Library", "LaunchAgents", `${LABEL}.plist`)]);
+    const loaded = vi.fn((_f: string, _a: string[]) => "state = waiting\n");
+    startAgent({ home, run: loaded }); // loaded (with the plist as it was): unload, then load the plist as it is now
+    expect(loaded.mock.calls.map((c) => c[1][0])).toEqual(["print", "bootout", "bootstrap"]);
   });
   it("uninstall boots out and removes the file; status parses launchctl output", () => {
     const home = tmp(); installAgent({ ...opts(home), run: () => "" });

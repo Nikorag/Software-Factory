@@ -13,8 +13,11 @@ export interface UpdateDeps {
   runningJobs(p: Profile): Promise<number>;
   stop(p: Profile): Promise<unknown>;
   start(p: Profile): Promise<{ started: boolean; error?: string }>;
-  /** the LaunchAgent (it runs the default profile) */
-  agent: { loaded(): boolean; stop(): void; refresh(load: boolean): { installed: boolean } };
+  /**
+   * A profile's LaunchAgent (one per profile). There is no separate "stop": `stop(p)` is the same verified stop as `shutdown`
+   * (it boots this install's LaunchAgent out, so launchd does not restart old code mid-update).
+   */
+  agent: { loaded(p: Profile): boolean; refresh(p: Profile, load: boolean): { installed: boolean } };
   /** copies a profile's database aside; returns the backup's path, or null if it has no database yet */
   backup(p: Profile, tag: string): Promise<string | null>;
   apply(plan: UpdatePlan): Promise<void>;
@@ -50,19 +53,22 @@ export async function runUpdate(plan: UpdatePlan, o: RunUpdateOptions, d: Update
     }
   } else if (running > 0) d.log(`--force: ${running} running job(s) will be stopped and their stage redone after the update`);
 
-  const agentLoaded = d.agent.loaded();
-  if (agentLoaded || up.length) d.log(`stopping the factory (${[...new Set([...(agentLoaded ? [DEFAULT_PROFILE] : []), ...up.map((p) => p.name)])].join(", ")}) for the update…`);
-  if (agentLoaded) d.agent.stop();
-  for (const p of up) await d.stop(p);
+  const underLaunchd = new Set(profiles.filter((p) => d.agent.loaded(p)).map((p) => p.name));
+  const toStop = profiles.filter((p) => underLaunchd.has(p.name) || up.includes(p));
+  if (toStop.length) d.log(`stopping the factory (${toStop.map((p) => p.name).join(", ")}) for the update…`);
+  for (const p of toStop) await d.stop(p);
 
   const restarted: string[] = [];
   try {
     for (const p of profiles) { const f = await d.backup(p, plan.currentSha.slice(0, 7)); if (f) d.log(`backed up ${p.name}'s database to ${f}`); }
     await d.apply(plan);
   } finally {
-    // With whatever code is installed now: the new version, or the old one after a rollback.
-    try { if (d.agent.refresh(agentLoaded).installed && agentLoaded) restarted.push(DEFAULT_PROFILE); }
-    catch (e) { d.log(`could not refresh the LaunchAgent (${(e as Error).message}); reinstall it with \`software-factory launchd:install --load\``); }
+    // With whatever code is installed now: the new version, or the old one after a rollback. Every installed LaunchAgent is
+    // re-rendered; the ones that were loaded are loaded again, and launchd restarts their profiles.
+    for (const p of profiles) {
+      try { if (d.agent.refresh(p, underLaunchd.has(p.name)).installed && underLaunchd.has(p.name)) restarted.push(p.name); }
+      catch (e) { d.log(`could not refresh ${p.name}'s LaunchAgent (${(e as Error).message}); reinstall it with \`software-factory${p.name === DEFAULT_PROFILE ? "" : ` --profile ${p.name}`} launchd:install --load\``); }
+    }
     for (const p of up) {
       if (restarted.includes(p.name)) continue;
       const r = await d.start(p).catch((e: Error) => ({ started: false, error: e.message }));
