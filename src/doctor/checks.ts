@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { totalmem } from "node:os";
 import type { LoadedConfig } from "../config/schema.js";
 import { findBinary } from "../speckit/tools.js";
+import { resolveSecret } from "../service/secrets.js";
 import { createLinearClient, type LinearClient } from "../linear/client.js";
 
 const run = promisify(execFile);
@@ -83,8 +84,8 @@ export function reviewerIndependence(config: LoadedConfig): CheckResult[] {
 
 /** Read-only: asks Linear who the key belongs to. Reports the account name, never the key. */
 export async function checkLinear(config: LoadedConfig, clientOverride?: LinearClient): Promise<CheckResult> {
-  const key = process.env[config.linear.apiKeyEnv];
-  if (!clientOverride && !key) return { name: "linear", status: "warn", detail: `${config.linear.apiKeyEnv} not set` };
+  const key = resolveSecret({ envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService });
+  if (!clientOverride && !key) return { name: "linear", status: "warn", detail: `${config.linear.apiKeyEnv} not set and no keychain entry "${config.linear.keychainService}"` };
   try {
     const me = await (clientOverride ?? createLinearClient({ apiKey: key!, maxRetries: 1 })).viewer();
     return { name: "linear", status: "ok", detail: `authenticated as ${me.name}` };

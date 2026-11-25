@@ -12,6 +12,7 @@ import { createLinearClient, type LinearClient } from "../linear/client.js";
 import { createIntakeHandlers } from "../linear/handlers.js";
 import { createLinearReporter } from "../linear/reporter.js";
 import { createLogger } from "../logging/logger.js";
+import { resolveSecret } from "../service/secrets.js";
 import { gitAuthEnv } from "../repo/gh.js";
 import { syncProjects } from "../repo/registry.js";
 import { WorktreeManager } from "../repo/worktrees.js";
@@ -58,8 +59,8 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
   });
   const linear = (): LinearClient => {
     if (opts.linear) return opts.linear;
-    const key = process.env[config.linear.apiKeyEnv];
-    if (!key) throw new ConfigError(`${config.linear.apiKeyEnv} is not set`);
+    const key = resolveSecret({ envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService });
+    if (!key) throw new ConfigError(`${config.linear.apiKeyEnv} is not set and no keychain entry "${config.linear.keychainService}" was found`);
     return createLinearClient({ apiKey: key });
   };
 

@@ -1,0 +1,2 @@
+# ADR 0005: Claude Haiku for classification and independent review (not a local model)
+A local Qwen was judged too slow on this machine. Classification and independent review use Claude Haiku through the same subscription login: fast, cheap, and a *different* model from the one that wrote the work (`doctor` warns if they match). The `local` provider remains supported behind the same router; nothing uses it by default.

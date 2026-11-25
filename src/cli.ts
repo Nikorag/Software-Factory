@@ -1,10 +1,10 @@
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { join, resolve } from "node:path";
 import { Command } from "commander";
 import { loadConfig } from "./config/load.js";
 import { openDb } from "./db/client.js";
 import { runDoctor } from "./doctor/checks.js";
 import { createLogger } from "./logging/logger.js";
-import { buildServer } from "./server/app.js";
 import { cancelJob, listJobs, retryJob } from "./core/jobs.js";
 import * as control from "./core/control.js";
 import { runSimulation } from "./core/simulation.js";
@@ -19,6 +19,10 @@ import { createContext } from "./app/context.js";
 import { onboardProject, raiseOnboardingPr } from "./speckit/onboard.js";
 import { checkProject } from "./repo/check.js";
 import { createGhClient } from "./github/client.js";
+import { resolveSecret } from "./service/secrets.js";
+import { startService } from "./service/main.js";
+import { loadOrCreateToken } from "./server/app.js";
+import { agentStatus, installAgent, uninstallAgent } from "./service/launchd.js";
 
 const openFactoryDb = () => {
   const config = loadConfig();
@@ -26,8 +30,8 @@ const openFactoryDb = () => {
 };
 const ACTOR = "cli";
 const linearClient = (config: ReturnType<typeof loadConfig>): LinearClient => {
-  const key = process.env[config.linear.apiKeyEnv];
-  if (!key) throw new Error(`${config.linear.apiKeyEnv} is not set`);
+  const key = resolveSecret({ envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService });
+  if (!key) throw new Error(`${config.linear.apiKeyEnv} is not set and no keychain entry "${config.linear.keychainService}" was found`);
   return createLinearClient({ apiKey: key });
 };
 
@@ -71,9 +75,21 @@ program.command("job:cancel <id>").description("Cancel a job").action((id: strin
 program.command("job:retry <id>").description("Retry a failed or held job").action((id: string) => {
   const { handle } = openFactoryDb(); console.log(retryJob(handle.db, id, ACTOR).stage); handle.close();
 });
+/** Ask a running service to act (so `stop` terminates agents immediately). Returns false if no service answers. */
+async function viaService(config: ReturnType<typeof loadConfig>, name: string): Promise<boolean> {
+  try {
+    const token = loadOrCreateToken(config.factory.dataDir);
+    const port = config.factory.server.port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/control/${name}`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}", signal: AbortSignal.timeout(3000) });
+    return res.ok;
+  } catch { return false; }
+}
 for (const [name, fn] of [["pause", control.pause], ["resume", control.resume], ["stop", control.emergencyStop], ["clear-stop", control.clearEmergencyStop]] as const) {
-  program.command(name).description(`Control: ${name}`).action(() => {
-    const { handle } = openFactoryDb(); (fn as (d: typeof handle.db, a: string) => void)(handle.db, ACTOR); console.log(`${name}: ok`); handle.close();
+  program.command(name).description(`Control: ${name} (applied by a running service immediately; otherwise recorded for the next start)`).action(async () => {
+    const config = loadConfig();
+    if (await viaService(config, name)) { console.log(`${name}: ok (applied by the running service)`); return; }
+    const { handle } = openFactoryDb(); (fn as (d: typeof handle.db, a: string) => void)(handle.db, ACTOR);
+    console.log(`${name}: ok (no service is running: recorded; it takes effect when the service starts)`); handle.close();
   });
 }
 
@@ -250,16 +266,42 @@ program
 
 program
   .command("serve")
-  .description("Start the factory service (loopback only)")
-  .action(async () => {
+  .description("Run the factory: scheduler (polls Linear, runs jobs) and the dashboard/API on loopback")
+  .option("--no-scheduler", "dashboard and API only; do not poll Linear or run jobs")
+  .option("--dry-run", "discover and plan only: skip every mutating stage")
+  .action(async (opts: { scheduler: boolean; dryRun?: boolean }) => {
     const config = loadConfig();
-    const logger = createLogger({ level: config.factory.logLevel, file: join(config.factory.dataDir, "logs", "factory.log") });
-    const handle = openDb(join(config.factory.dataDir, "database", "factory.sqlite"));
-    const app = buildServer({ db: handle.db, logger });
-    const shutdown = async () => { await app.close(); handle.close(); process.exit(0); };
+    if (opts.dryRun) config.factory.dryRun = true;
+    const svc = await startService(config, { scheduler: opts.scheduler });
+    console.log(`factory running on http://127.0.0.1:${svc.port}  (open it with: pnpm factory dashboard --open)`);
+    if (config.factory.dryRun) console.log("DRY RUN: nothing will be changed in repositories, Linear or GitHub");
+    const shutdown = async () => { await svc.stop(); process.exit(0); };
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
-    await app.listen({ host: config.factory.server.host, port: config.factory.server.port });
   });
+
+program
+  .command("dashboard")
+  .description("Print the dashboard URL (with the control token in the #fragment, which is never sent to the server)")
+  .option("--open", "open it in the default browser")
+  .action((opts: { open?: boolean }) => {
+    const config = loadConfig();
+    const url = `http://127.0.0.1:${config.factory.server.port}/#token=${loadOrCreateToken(config.factory.dataDir)}`;
+    console.log(url);
+    if (opts.open) execFileSync("open", [url]);
+  });
+
+program
+  .command("launchd:install")
+  .description("Install the LaunchAgent. NOTE: once installed it starts automatically at every login (RunAtLoad); --load also starts it now.")
+  .option("--load", "also load it now (starts the service, which polls Linear and runs jobs autonomously)")
+  .action((opts: { load?: boolean }) => {
+    const config = loadConfig();
+    const r = installAgent({ dataDir: config.factory.dataDir, configDir: process.env.FACTORY_CONFIG_DIR ? resolve(process.env.FACTORY_CONFIG_DIR) : undefined, load: opts.load });
+    console.log(`wrote ${r.path}`);
+    console.log(r.loaded ? "loaded: the factory service is now running in the background and will start at every login" : "installed but not started now. It WILL start automatically at your next login. Start now: --load. Undo: pnpm factory launchd:uninstall");
+  });
+program.command("launchd:uninstall").description("Stop and remove the LaunchAgent").action(() => console.log(uninstallAgent().removed ? "removed" : "was not installed"));
+program.command("launchd:status").description("Is the LaunchAgent installed and running?").action(() => console.log(JSON.stringify(agentStatus(), null, 2)));
 
 await program.parseAsync();

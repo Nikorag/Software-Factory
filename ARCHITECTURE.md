@@ -1,17 +1,23 @@
 # Architecture
 
 ## Shape
-One Node.js process (the factory) owns orchestration. Claude Code, `git`, `gh`, SpecKit and the local model server
-are external processes it launches and supervises. Single SQLite file (WAL) is the durable source of truth for
-execution state; Linear remains the source of truth for tickets, GitHub for code.
+One Node.js process (`factory serve`) owns orchestration. Claude Code, `git`, `gh`, Spec Kit and (optionally) a local model server are external processes it launches and supervises. A single SQLite file (WAL) is the durable source of truth for execution state; Linear remains the source of truth for tickets and GitHub for code.
 
 ```
-Linear (poll) → scheduler → job state machine → stage handlers → adapters
-                                  │                               ├─ ClaudeCodeAdapter (CLI subprocess)
-                               SQLite (WAL)                       ├─ LocalModelAdapter (OpenAI-compatible HTTP)
-                                  │                               ├─ GitHub (gh CLI)  ├─ Git worktrees
-                            Fastify (127.0.0.1)                   └─ SpecKit (via Claude Code)
+ Linear ─poll─▶ discovery ─▶ jobs (SQLite) ◀─ worker loop ◀─ scheduler ◀─ LaunchAgent / CLI
+   ▲                              │
+   │ outbox (durable writes)      ▼
+   └───────────────────  engine: persisted state machine (20 stages + held states)
+                                  │ stage handlers
+        intake · specification (Spec Kit) · implementation · delivery (PR-only)
+                                  │
+   agents: ClaudeCodeAgent (per-role permission profiles) · LocalModelClient (optional)
+   project code: sandbox-exec (no network, worktree-only writes, no credential reads) via factory-exec
+   git: isolated worktrees, one agent per worktree, guarded push (factory/* only, never forced)
+                                  │
+ Dashboard/API (127.0.0.1, token-gated controls) ◀── reads the same SQLite ── metrics/health probes
 ```
+Layers: `src/core` (engine, jobs, control), `src/linear`, `src/repo`, `src/github`, `src/agents`, `src/speckit`, `src/implement`, `src/delivery`, `src/exec` (sandbox), `src/service` (scheduler, lock, secrets, metrics, launchd), `src/server` + `public/` (dashboard), `src/app` (composition root).
 
 ## Durability model
 - `jobs.stage` is advanced only by a transaction that also appends to `stage_executions`.
@@ -22,9 +28,7 @@ Linear (poll) → scheduler → job state machine → stage handlers → adapter
 - `decisions` records every autonomous decision with actor and rationale; `agent_invocations` records every agent run (logs on disk).
 
 ## Safety invariants (enforced in code, not prompts)
-Loopback-only HTTP (bind and per-request check); no secrets in config; log redaction; protected paths list;
-remediation cap (default 3). Later milestones enforce: no default-branch pushes, no force-push, no merge on red CI,
-one agent per worktree.
+Loopback-only HTTP with Host/Origin checks and a bearer token for controls; no secrets in config (keychain/env only); log redaction; protected paths enforced as permission denies and re-verified on every diff; project code sandboxed; no default-branch pushes, no force-push, **no merge capability at all** (PR-only); one agent per worktree; remediation capped at 3; secrets scanned across branch history; an emergency stop that terminates running agents immediately.
 
 ## Decisions
 See `docs/adr/`.

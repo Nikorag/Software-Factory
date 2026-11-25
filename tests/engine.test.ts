@@ -248,3 +248,46 @@ describe("wait (poll later without failing)", () => {
     expect(await e.tick()).toBe(1);
   });
 });
+
+describe("immediate abort (stop, cancel, shutdown) reaches a running stage without waiting for the heartbeat", () => {
+  const hang = (started: () => void): StageHandler => ({ signal }) => new Promise(() => { started(); void signal; });
+  const withHeartbeat = { heartbeatMs: 60_000 }; // so only the direct abort can explain a fast stop
+
+  it("abortActive('estop') stops the agent at once and holds the job PAUSED", async () => {
+    const job = add();
+    let started = false;
+    const e = engine({ ...simulatedHandlers(), IMPLEMENTATION: hang(() => { started = true; }) }, config(), withHeartbeat);
+    const run = e.tick();
+    while (!started) await new Promise((r) => setTimeout(r, 5));
+    expect(e.activeJobIds()).toEqual([job.id]);
+    expect(e.abortActive("estop")).toBe(1);
+    await run;
+    expect(getJob(h.db, job.id)).toMatchObject({ stage: "PAUSED", heldFromStage: "IMPLEMENTATION" });
+    expect(e.activeJobIds()).toEqual([]);
+  });
+  it("abortActive('shutdown') re-queues the job exactly where it was, spending no attempt, and it resumes after restart", async () => {
+    const job = add();
+    let started = false;
+    const e = engine({ ...simulatedHandlers(), IMPLEMENTATION: hang(() => { started = true; }) }, config(), withHeartbeat);
+    const run = e.tick();
+    while (!started) await new Promise((r) => setTimeout(r, 5));
+    e.abortActive("shutdown");
+    await run;
+    expect(getJob(h.db, job.id)).toMatchObject({ stage: "IMPLEMENTATION", status: "queued", stageAttempts: 0, leaseOwner: null, heldFromStage: null });
+    expect(history(job.id).at(-1)).toBe("IMPLEMENTATION:cancelled");
+    await engine(simulatedHandlers()).tick(); // "restart": a fresh engine finishes it
+    expect(getJob(h.db, job.id)!.stage).toBe("COMPLETED");
+  });
+  it("abortJob('cancel') aborts that one job's agent immediately", async () => {
+    const job = add();
+    let started = false;
+    const e = engine({ ...simulatedHandlers(), IMPLEMENTATION: hang(() => { started = true; }) }, config(), withHeartbeat);
+    const run = e.tick();
+    while (!started) await new Promise((r) => setTimeout(r, 5));
+    cancelJob(h.db, job.id, "t");
+    expect(e.abortJob(job.id, "cancel")).toBe(true);
+    expect(e.abortJob("not-running", "cancel")).toBe(false);
+    await run;
+    expect(getJob(h.db, job.id)).toMatchObject({ stage: "CANCELLED", status: "cancelled" });
+  });
+});

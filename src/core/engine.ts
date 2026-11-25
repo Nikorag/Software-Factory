@@ -45,16 +45,35 @@ export interface EngineOptions {
   backoffBaseMs?: number;
 }
 
-type AbortReason = "timeout" | "cancel" | "estop" | "lease-lost";
+type AbortReason = "timeout" | "cancel" | "estop" | "lease-lost" | "shutdown";
 const HELD_STAGES = new Set<StageName>(["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION", "COMPLETED"]);
 
 export class Engine {
   readonly owner: string;
+  /** Aborters for stages running right now, so a stop or shutdown reaches the agent immediately, not at the next heartbeat. */
+  private readonly active = new Map<string, (r: AbortReason) => void>();
   private readonly o: Required<Omit<EngineOptions, "owner" | "observer">> & { observer?: EngineObserver };
 
   constructor(opts: EngineOptions) {
     this.owner = opts.owner ?? `factory-${process.pid}-${randomUUID().slice(0, 8)}`;
     this.o = { now: () => new Date(), leaseMs: 60_000, heartbeatMs: 15_000, backoffBaseMs: 5_000, ...opts };
+  }
+
+  /** Ids of jobs this engine is executing right now. */
+  activeJobIds(): string[] { return [...this.active.keys()]; }
+
+  /** Abort running stages immediately. `estop` holds the jobs as PAUSED; `shutdown` re-queues them untouched for the next start. */
+  abortActive(reason: "estop" | "shutdown"): number {
+    const aborters = [...this.active.values()];
+    for (const a of aborters) a(reason);
+    return aborters.length;
+  }
+
+  /** Abort one running job (user cancel), reaching the agent immediately. Returns whether it was running here. */
+  abortJob(jobId: string, reason: "cancel"): boolean {
+    const a = this.active.get(jobId);
+    a?.(reason);
+    return Boolean(a);
   }
 
   /** One scheduler pass: recover crashed jobs, release jobs paused by a now-cleared stop, then run claimable jobs. */
@@ -131,6 +150,7 @@ export class Engine {
     const ac = new AbortController();
     let reason: AbortReason | undefined;
     const abort = (r: AbortReason) => { if (!reason) { reason = r; ac.abort(r); } };
+    this.active.set(job.id, abort);
     const timer = setTimeout(() => abort("timeout"), policy.timeoutSeconds * 1000);
     const beat = setInterval(() => {
       if (!renewLease(db, job.id, this.owner, this.o.now(), this.o.leaseMs)) return abort("lease-lost");
@@ -149,8 +169,15 @@ export class Engine {
     } finally {
       clearTimeout(timer);
       clearInterval(beat);
+      this.active.delete(job.id);
     }
 
+    if (reason === "shutdown") {
+      // The service is stopping, not the job failing: put it back exactly where it was, spending no attempt, so a restart resumes it.
+      finish("cancelled", { error: "service shutdown" });
+      this.o.db.update(jobs).set({ status: "queued", leaseOwner: null, leaseExpiresAt: null, updatedAt: this.o.now() }).where(eq(jobs.id, job.id)).run();
+      return false;
+    }
     if (reason === "lease-lost") { finish("failed", { error: "lease lost" }); return false; } // another process owns it now
     if (reason === "cancel") { finish("cancelled"); this.hold(job, "CANCELLED", "cancelled by request"); return false; }
     if (reason === "estop") { finish("cancelled", { error: "emergency stop" }); this.hold(job, "PAUSED", "emergency stop"); return false; }

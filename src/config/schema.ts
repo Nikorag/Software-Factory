@@ -118,6 +118,8 @@ export type WorkflowsConfig = z.infer<typeof WorkflowsConfig>;
 // Linear names are configuration, never hardcoded. They are resolved to ids per team at runtime.
 export const LinearConfig = z.object({
   apiKeyEnv: z.string().default("LINEAR_API_KEY"),
+  // Fallback when the env var is unset (a LaunchAgent has no shell env): a macOS keychain generic-password service name. Not a secret itself.
+  keychainService: z.string().default("software-factory-linear"),
   statuses: z
     .object({
       readyForSpecification: z.string().default("Ready for specification"), // pickup status
