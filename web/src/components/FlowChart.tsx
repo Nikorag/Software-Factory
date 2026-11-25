@@ -1,10 +1,11 @@
 import { cn } from "@/lib/utils";
 import { EDGES, H, NODES, W, type Flow, type NodeState } from "@/lib/pipeline";
 
+// Labels sit clear of the long return routes (y=262 and y=534); the last band's label goes to the free space right of its row.
 const BANDS = [
-  { t: "Understand the ticket", s: "Requirements, Spec Kit, independent spec review", y: 38 },
-  { t: "Build and verify", s: "Sandboxed implementation, checks, two reviews, final gates", y: 278 },
-  { t: "Deliver", s: "Pull request, CI, then your merge", y: 518 },
+  { t: "Understand the ticket", s: "Requirements, Spec Kit, independent spec review", x: 24, y: 40, sy: 40, anchor: "start" as const },
+  { t: "Build and verify", s: "Sandboxed implementation, checks, two reviews, final gates", x: 24, y: 290, sy: 290, anchor: "start" as const },
+  { t: "Deliver", s: "Pull request, CI, then your merge", x: 960, y: 570, sy: 588, anchor: "start" as const },
 ];
 
 function Icon({ kind, cx, cy }: { kind: NodeState; cx: number; cy: number }) {
@@ -23,7 +24,7 @@ export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: 
   const st = (id: string): NodeState => flow.state[id] ?? "idle";
   return (
     <div className="overflow-x-auto pb-1">
-      <svg viewBox="0 0 1180 640" role="img" aria-label="Pipeline flow chart" className="block h-auto w-full min-w-[1180px]">
+      <svg viewBox="0 0 1180 640" role="img" aria-label="Pipeline flow chart" width={1180} height={640} className="mx-auto block h-auto max-w-none">
         <defs>
           {([["m-off", "fill-border"], ["m-ok", "fill-ok"], ["m-run", "fill-run"], ["m-loop", "fill-loop"]] as const).map(([id, c]) => (
             <marker key={id} id={id} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" className={c} /></marker>
@@ -31,8 +32,8 @@ export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: 
         </defs>
         {BANDS.map((b) => (
           <g key={b.t}>
-            <text x={24} y={b.y} className="fill-muted-foreground text-[11px] font-semibold uppercase tracking-widest">{b.t}</text>
-            <text x={24 + 150 + b.t.length * 4} y={b.y} className="fill-muted-foreground text-xs">{b.s}</text>
+            <text x={b.x} y={b.y} textAnchor={b.anchor} className="fill-muted-foreground text-[11px] font-semibold uppercase tracking-widest">{b.t}</text>
+            {b.sy === b.y ? <text x={b.x + b.t.length * 8.2 + 16} y={b.sy} className="fill-muted-foreground text-[11px]">{b.s}</text> : <text x={b.x} y={b.sy} className="fill-muted-foreground text-[11px]">{b.s}</text>}
           </g>
         ))}
         {EDGES.map((e) => {
@@ -58,11 +59,10 @@ export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: 
               {s === "run" && <rect x={n.x} y={n.y} width={W} height={H} rx={9} fill="none" strokeWidth={2} className="anim stroke-run opacity-50 animate-[pulse-ring_1.6s_ease-out_infinite]" style={{ transformBox: "fill-box", transformOrigin: "center" }} />}
               <rect x={n.x - 4} y={n.y - 4} width={W + 8} height={H + 8} rx={12} fill="none" strokeWidth={1.5} className={cn("sel stroke-foreground [stroke-dasharray:3_3]", selected === n.id ? "opacity-100" : "opacity-0")} />
               <text x={n.x + 12} y={n.y + 22} className={cn("text-[13px] font-semibold", s === "idle" ? "fill-muted-foreground" : "fill-foreground")}>{n.label}</text>
-              <text x={n.x + 12} y={n.y + 40} className="fill-muted-foreground font-mono text-[11px]">{n.fix && s === "idle" ? "not needed so far" : n.sub}</text>
+              <text x={n.x + 12} y={n.y + 40} className={cn("text-[11px]", s === "run" || s === "wait" ? "fill-run" : "fill-muted-foreground", d ? "font-mono" : "")}>{subtitle(n, s, d)}</text>
               <Icon kind={s} cx={n.x + W - 20} cy={n.y + 17} />
-              {d ? <text x={n.x + W - 12} y={n.y + 42} textAnchor="end" className="fill-muted-foreground font-mono text-[11px]">{fmt(d)}</text> : null}
               {att > 1 || (n.fix && att >= 1) ? (
-                <g><rect x={n.x + W - 34} y={n.y - 9} width={30} height={18} rx={9} className="fill-card stroke-loop" strokeWidth={1.5} /><text x={n.x + W - 19} y={n.y + 4} textAnchor="middle" className="fill-loop text-[11px] font-semibold">×{att}</text></g>
+                <g><rect x={n.x + W - 34} y={n.y - 15} width={30} height={18} rx={9} className="fill-card stroke-loop" strokeWidth={1.5} /><text x={n.x + W - 19} y={n.y - 2} textAnchor="middle" className="fill-loop text-[11px] font-semibold">×{att}</text></g>
               ) : null}
             </g>
           );
@@ -72,6 +72,13 @@ export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: 
   );
 }
 
+/** Once a step has run, its line shows how long it took; before that, what it does. Never both, so they cannot overlap. */
+function subtitle(n: { sub: string; fix?: boolean }, s: NodeState, d: number | undefined) {
+  if (d) return s === "run" ? `running · ${fmt(d)}` : fmt(d);
+  if (s === "run") return "running now";
+  if (s === "wait") return "waiting";
+  return n.fix && s === "idle" ? "not needed so far" : n.sub;
+}
 const fmt = (ms: number) => { const s = Math.round(ms / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`; };
 
 export function FlowLegend() {

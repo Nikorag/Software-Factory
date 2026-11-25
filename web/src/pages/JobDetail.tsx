@@ -37,7 +37,7 @@ export function JobDetail() {
   const cycles = j.remediationAttempts;
 
   return (
-    <div className="grid gap-4">
+    <div className="grid min-w-0 gap-4">
       <Link to="/jobs" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" />jobs</Link>
       <Card><CardContent className="grid gap-4 md:grid-cols-[1.6fr_1fr_1fr] md:items-center">
         <div>

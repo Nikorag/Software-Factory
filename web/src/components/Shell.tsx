@@ -18,7 +18,7 @@ export function Shell() {
   const act = async (name: string) => { const err = await post(`/api/control/${name}`); setMsg(err); if (!err) void reload(); };
   const stop = o?.control.emergencyStop, paused = o?.control.paused;
   return (
-    <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-4 px-4 py-5">
+    <div className="mx-auto flex min-h-screen w-full max-w-7xl min-w-0 flex-col gap-4 px-4 py-5">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold tracking-tight">Software Factory</h1>
         {o ? <Badge variant="outline" className={cn("font-semibold", stop ? "border-destructive/50 text-destructive" : paused ? "border-loop/50 text-loop" : "border-ok/50 text-ok")}>{stop ? "EMERGENCY STOP" : paused ? "PAUSED" : "RUNNING"}</Badge> : <Badge variant="outline">…</Badge>}
@@ -46,7 +46,7 @@ export function Shell() {
       {stop ? <Alert variant="destructive" role="alert"><OctagonAlert /><AlertDescription>Emergency stop is active{o?.control.reason ? `: ${o.control.reason}` : ""}. No new work starts and running agents were terminated.</AlertDescription></Alert> : null}
       {msg ? <Alert variant="destructive" role="alert"><AlertDescription>{msg}</AlertDescription></Alert> : null}
       {error && !o ? <Alert variant="destructive"><AlertDescription>Cannot load: {error}</AlertDescription></Alert> : null}
-      <main className="flex-1"><Outlet context={{ overview: o, reload }} /></main>
+      <main className="min-w-0 flex-1"><Outlet context={{ overview: o, reload }} /></main>
     </div>
   );
 }
