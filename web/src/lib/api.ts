@@ -25,3 +25,14 @@ export async function post(path: string, body: unknown = {}): Promise<string | n
     return (e as Error).message;
   }
 }
+
+/** Like post(), for settings: any method, and the response body (or the server's error message). */
+export async function send<T = unknown>(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(path, { method, headers: { "X-Factory-UI": "1", ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    return res.ok ? { ok: true, data: data as T } : { ok: false, error: data.error || `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}

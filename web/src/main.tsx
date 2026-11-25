@@ -8,6 +8,8 @@ import { JobDetail } from "@/pages/JobDetail";
 import { Jobs } from "@/pages/Jobs";
 import { Overview } from "@/pages/Overview";
 import { Projects } from "@/pages/Projects";
+import { Settings } from "@/pages/Settings";
+import { Setup } from "@/pages/Setup";
 import "./index.css";
 
 createRoot(document.getElementById("root")!).render(
@@ -21,6 +23,8 @@ createRoot(document.getElementById("root")!).render(
             <Route path="jobs/:id" element={<JobDetail />} />
             <Route path="projects" element={<Projects />} />
             <Route path="health" element={<HealthPage />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="setup" element={<Setup />} />
           </Route>
         </Routes>
       </HashRouter>

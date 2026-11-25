@@ -5,6 +5,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { Shell } from "@/components/Shell";
 import { deriveFlow } from "@/lib/pipeline";
 import { JobDetail } from "@/pages/JobDetail";
+import { Settings } from "@/pages/Settings";
+import { Setup } from "@/pages/Setup";
 import { Overview } from "@/pages/Overview";
 import type { Execution, Job, JobDetail as D, Overview as O } from "@/lib/types";
 
@@ -31,7 +33,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const app = (path: string) => render(
-  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /></Route></Routes></MemoryRouter>,
+  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
 );
 
 describe("flow derivation (from the stage history the factory already stores)", () => {
@@ -116,5 +118,50 @@ describe("dashboard", () => {
     await userEvent.type(await screen.findByPlaceholderText(/Your answer/), "Use port 7777");
     await userEvent.click(screen.getByRole("button", { name: /Answer & resume/ }));
     await waitFor(() => expect(calls.find((c) => c.url === "/api/jobs/j1/answer")?.body).toBe(JSON.stringify({ answer: "Use port 7777" })));
+  });
+});
+
+const proj = { id: "my-app", name: "My App", enabled: true, autonomy: "supervised", repository: "/x", githubRepo: "me/my-app", defaultBranch: "main", githubAccount: null, managed: true, linear: { teamKey: "ENG", projectName: "My App" }, commands: { test: "npm test" }, validation: null, activeJobs: 0 };
+const setupInfo = { configDir: null, homeConfigDir: "~/.software-factory/config", usingDefaults: true, projectCount: 1, linear: { keyPresent: true, env: "LINEAR_API_KEY", keychainService: "svc" } };
+
+describe("settings and setup", () => {
+  it("lists projects with their test commands and warns about one with none", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj, { ...proj, id: "bare", name: "Bare", commands: {} }] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] } };
+    app("/settings");
+    expect(await screen.findByText("My App")).toBeInTheDocument();
+    expect(screen.getByText("npm test")).toBeInTheDocument();
+    expect(screen.getByText(/No test command: the factory will not implement/)).toBeInTheDocument();
+  });
+  it("adds a project: sends exactly what was typed, no token, and shows the server's validation error", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/projects/new-thing": { ok: true } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("button", { name: /Add project/ }));
+    await userEvent.type(screen.getByLabelText("Name"), "New Thing");
+    await userEvent.type(screen.getByLabelText("GitHub repo"), "me/new-thing");
+    await userEvent.type(screen.getByLabelText(/^test$/i), "npm test");
+    await userEvent.click(screen.getByRole("button", { name: "Add project" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")?.url).toBe("/api/settings/projects/new-thing"));
+    const put = calls.find((c) => c.method === "PUT")!;
+    expect(JSON.parse(put.body!)).toMatchObject({ name: "New Thing", github: { repo: "me/new-thing" }, commands: { test: "npm test" }, autonomy: "supervised" });
+    expect(put.headers).toMatchObject({ "X-Factory-UI": "1" });
+    expect(put.headers?.Authorization).toBeUndefined();
+  });
+  it("runs a project action and streams its output", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] },
+      "/api/projects/my-app/actions/check": { ok: true, taskId: "t1" }, "/api/tasks/t1": { id: "t1", label: "Run checks: my-app", status: "ok", lines: ["✓ test (3s): npm test"] } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("button", { name: "Run checks" }));
+    expect(await screen.findByText(/✓ test \(3s\): npm test/)).toBeInTheDocument();
+    expect(screen.getByText(/Run checks: my-app: done/)).toBeInTheDocument();
+  });
+  it("the wizard only lets you continue from Linear once a key exists, and shows each step's real status", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": { ...setupInfo, projectCount: 0, linear: { ...setupInfo.linear, keyPresent: false } }, "/api/setup/linear": { teams: [] },
+      "/api/health": { system: overview().system, health: [{ name: "claude code", status: "fail", detail: "not logged in", checkedAt: 1 }, { name: "sandbox", status: "ok", detail: "ready", checkedAt: 1 }], scheduler: null } };
+    app("/setup");
+    expect(await screen.findByText("not logged in")).toBeInTheDocument();
+    expect(screen.getByText(/run `claude`, then \/login/i)).toBeInTheDocument(); // the fix is shown next to the failure
+    await userEvent.click(screen.getByRole("button", { name: /Continue anyway/ }));
+    expect(await screen.findByText("Connect Linear")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled(); // no key yet
   });
 });

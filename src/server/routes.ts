@@ -67,6 +67,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
       scheduler: d.scheduler?.status() ?? null,
       system: await systemInfo(d.dataDir ?? "."),
       health: (await d.health?.check()) ?? [],
+      projectCount: d.config?.projects.projects.length,
       mergeMode: d.config?.factory.mergeMode ?? "pr-only",
       dryRun: d.config?.factory.dryRun ?? false,
     };
