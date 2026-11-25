@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { agentEnv } from "../agents/env.js";
 import { runProcess, type RunResult } from "../agents/process.js";
-import { sandboxAvailable, sandboxPrefix, type SandboxOptions } from "./sandbox.js";
+import { DEFAULT_WRITE_ALLOW, sandboxAvailable, sandboxPrefix, type SandboxOptions } from "./sandbox.js";
 
 export type CommandKind = "install" | "build" | "test" | "lint" | "typecheck";
 
@@ -53,7 +53,7 @@ export async function runProjectCommand(o: RunCommandOptions, deps: { run?: type
   const isInstall = o.kind === "install";
   const opts: SandboxOptions = {
     worktree: o.worktree, network: isInstall, home: o.sandbox?.home, readAllow: o.sandbox?.readAllow, gitCommonDir: o.sandbox?.gitCommonDir,
-    writeAllow: isInstall ? (o.sandbox?.writeAllow ?? undefined) : undefined,
+    writeAllow: isInstall ? (o.sandbox?.writeAllow ?? DEFAULT_WRITE_ALLOW) : undefined, // only installs may touch package-manager caches
   };
   const prefix = useSandbox ? sandboxPrefix(opts, join(o.profileDir, `sandbox-${o.kind}.sb`)) : [];
   const argv = [...prefix, "/bin/sh", "-c", o.command];

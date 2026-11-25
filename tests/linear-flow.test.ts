@@ -137,7 +137,7 @@ describe("stage -> status mapping", () => {
     expect(statusForStage("IMPLEMENTATION")).toBe("inProgress");
     expect(statusForStage("REMEDIATION")).toBe("inProgress");
     expect(statusForStage("CI_VALIDATION")).toBe("readyForReview");
-    expect(statusForStage("MERGING")).toBe("merging");
+    expect(statusForStage("MERGING")).toBe("readyForReview"); // PR-only: waiting for a human
     expect(statusForStage("COMPLETED")).toBe("done");
     expect(statusForStage("FAILED")).toBe("blocked");
     expect(statusForStage("DISCOVERED")).toBeUndefined();
@@ -172,7 +172,7 @@ describe("outbox + reporter end to end", () => {
     await mk(tracked).tick();
     await flush();
     const states = fake.calls.filter((c) => c.startsWith("setState")).map((c) => c.split(":")[2]);
-    expect(states).toEqual(["Specification review", "In progress", "Ready for review", "Merging", "Done"]);
+    expect(states).toEqual(["Specification review", "In progress", "Ready for review", "Done"]);
     expect(fake.issues.get(job.externalId)!.state.name).toBe("Done");
   });
   it("blocks the issue with a label and an explanatory comment, and unblocks on retry", async () => {

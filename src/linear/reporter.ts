@@ -19,7 +19,8 @@ export function statusForStage(stage: StageName): StateKey | undefined {
       return "inProgress";
     case "PULL_REQUEST_CREATION": case "CI_VALIDATION": case "MERGE_VALIDATION":
       return "readyForReview";
-    case "MERGING": case "LINEAR_COMPLETION": return "merging";
+    case "MERGING": return "readyForReview"; // PR-only: the factory never merges; it is waiting for a human
+    case "LINEAR_COMPLETION": return "done";
     case "COMPLETED": return "done";
     case "BLOCKED": case "NEEDS_ATTENTION": case "FAILED": return "blocked";
     default: return undefined; // DISCOVERED, ELIGIBILITY_CHECK, PAUSED, CANCELLED

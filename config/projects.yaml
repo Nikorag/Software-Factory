@@ -30,7 +30,9 @@ projects:
     defaultBranch: main
     autonomy: supervised
     # package.json scripts + .github/workflows/ci.yml.
-    commands: { install: "npm ci", lint: "npm run lint", typecheck: "npm run typecheck", test: "npm test" }
+    # lint is OMITTED: `npm run lint` crashes on the default branch itself ("typescript-eslint does not support TS 7.0"; found by
+    # `project:check`). Fix by pinning typescript to 6.x in Blobs, then add `lint: "npm run lint"` back.
+    commands: { install: "npm ci", typecheck: "npm run typecheck", test: "npm test" }
     github: { account: Nikorag, repo: Nikorag/Blobs }
     linear: { teamKey: JAM, projectName: "Blobs" }
 

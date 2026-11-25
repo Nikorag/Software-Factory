@@ -16,21 +16,21 @@ const jam = () => {
 };
 
 describe("planSetup", () => {
-  it("plans exactly the 5 required statuses and 2 required labels for JAM, and nothing optional", async () => {
+  it("plans exactly the 4 required statuses and 2 required labels for JAM, and nothing optional", async () => {
     const plan = planSetup(await auditTeam(jam(), cfg, team));
     expect(plan.map((a) => `${a.kind}:${a.name}`).sort()).toEqual([
       "label:factory:blocked", "label:factory:enabled",
-      "status:Blocked", "status:Merging", "status:Ready for review", "status:Ready for specification", "status:Specification review",
+      "status:Blocked", "status:Ready for review", "status:Ready for specification", "status:Specification review",
     ].sort());
   });
   it("adds the optional ones only on request", async () => {
     const plan = planSetup(await auditTeam(jam(), cfg, team), { includeOptional: true });
-    expect(plan).toHaveLength(5 + 2 + 2 + 4);
+    expect(plan).toHaveLength(4 + 2 + 3 + 4);
     expect(plan.map((a) => a.name)).toEqual(expect.arrayContaining(["factory:autonomous", "factory:bugfix", "Changes requested"]));
   });
   it("gives sensible Linear state types: pickup is unstarted, working states started, done completed", async () => {
     const types = Object.fromEntries(planSetup(await auditTeam(jam(), cfg, team), { includeOptional: true }).flatMap((a) => (a.kind === "status" ? [[a.name, a.type]] : [])));
-    expect(types).toMatchObject({ "Ready for specification": "unstarted", "Specification review": "started", Merging: "started", Blocked: "started" });
+    expect(types).toMatchObject({ "Ready for specification": "unstarted", "Specification review": "started", Blocked: "started" });
     for (const t of Object.values(types)) expect(["unstarted", "started", "completed"]).toContain(t);
   });
 });
@@ -40,7 +40,7 @@ describe("applySetup", () => {
     const f = jam();
     const r = await applySetup(f, cfg, team);
     expect(r.failed).toEqual([]);
-    expect(r.created).toHaveLength(7);
+    expect(r.created).toHaveLength(6);
     expect((await auditTeam(f, cfg, team)).ok).toBe(true);
     expect(f.calls.filter((c) => c.startsWith("createState:Done") || c.startsWith("createState:In progress"))).toEqual([]); // never touches existing
   });
@@ -58,14 +58,14 @@ describe("applySetup", () => {
     f.labelDefs.push({ id: "y", name: "Factory:Enabled" });
     const r = await applySetup(f, cfg, team);
     expect(r.created.join()).not.toMatch(/"Blocked"|factory:enabled/);
-    expect(r.created).toHaveLength(5);
+    expect(r.created).toHaveLength(4);
   });
   it("reports a failure, carries on with the rest, and a retry finishes the job", async () => {
     const f = jam();
     f.failOn("createWorkflowState", new LinearApiError("forbidden", false), 1);
     const r = await applySetup(f, cfg, team);
     expect(r.failed).toHaveLength(1);
-    expect(r.created).toHaveLength(6);
+    expect(r.created).toHaveLength(5);
     expect((await applySetup(f, cfg, team)).created).toHaveLength(1);
     expect((await auditTeam(f, cfg, team)).ok).toBe(true);
   });

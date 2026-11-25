@@ -14,6 +14,8 @@ export const FactoryConfig = z.object({
   logLevel: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
   dryRun: z.boolean().default(false),
   maxRemediationAttempts: z.number().int().min(0).max(10).default(3),
+  // Delivery is PR-only by decision: the factory opens pull requests and never merges them. `auto` does not exist yet.
+  mergeMode: z.literal("pr-only").default("pr-only"),
   maxConcurrentJobs: z.number().int().min(1).default(1),
   // Project commands (install/build/test/lint/typecheck) run under macOS sandbox-exec: no network (installs excepted),
   // writes only inside the worktree/temp, no reading of credentials. `required: true` refuses to run them unconfined.

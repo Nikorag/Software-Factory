@@ -81,7 +81,7 @@ export function createImplementationHandlers(d: ImplDeps) {
   /** Latest blocking findings from the most recent stage that asked for remediation. */
   function latestFindings(jobId: string): unknown[] {
     const row = d.db.select().from(stageExecutions)
-      .where(and(eq(stageExecutions.jobId, jobId), eq(stageExecutions.outcome, "succeeded"), inArray(stageExecutions.stage, ["AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW", "CLAUDE_REVIEW", "FINAL_VALIDATION"])))
+      .where(and(eq(stageExecutions.jobId, jobId), eq(stageExecutions.outcome, "succeeded"), inArray(stageExecutions.stage, ["AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW", "CLAUDE_REVIEW", "FINAL_VALIDATION", "CI_VALIDATION"])))
       .orderBy(desc(stageExecutions.id)).limit(1).get();
     const f = ((row?.outputJson ? JSON.parse(row.outputJson) : {}) as { details?: { findings?: { severity: string }[] } }).details?.findings ?? [];
     return f.filter((x) => isBlocking(x.severity));

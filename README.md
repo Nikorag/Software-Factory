@@ -4,9 +4,9 @@ A local-first, standalone TypeScript orchestrator that turns Linear tickets into
 using Claude Code as the engineering agent, GitHub SpecKit for specifications, and a local model (via Bionic)
 for independent review. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Status: Milestones 1–7 complete.** Config, logging, SQLite schema, doctor, loopback service skeleton, and the
+**Status: Milestones 1–8 complete.** Config, logging, SQLite schema, doctor, loopback service skeleton, and the
 durable job engine (state machine, retries, remediation cap, cancellation, crash recovery, dry-run, pause and
-emergency stop), plus the project registry, read-only repository validation and isolated git worktrees, Linear discovery with a durable write-back outbox, the Claude Code and local-model adapters with enforced permission profiles, and the Spec Kit specification pipeline (ticket → reviewed, validated spec). Autonomous implementation (sandboxed checks, independent and Claude reviews, remediation loop, evidence report) is built. PR delivery, CI/merge, and the dashboard are not built yet.
+emergency stop), plus the project registry, read-only repository validation and isolated git worktrees, Linear discovery with a durable write-back outbox, the Claude Code and local-model adapters with enforced permission profiles, and the Spec Kit specification pipeline (ticket → reviewed, validated spec). Autonomous implementation (sandboxed checks, independent and Claude reviews, remediation loop, evidence report) is built. PR-only delivery (push, open the PR, watch CI, wait for a human to merge; the factory never merges) is built. The scheduler, dashboard and LaunchAgent are not built yet.
 Try `pnpm factory simulate` (in-memory, no side effects).
 
 ## Quick start
@@ -20,6 +20,7 @@ pnpm factory project:sync       # clone factory-managed repos (idempotent)
 pnpm factory project:validate   # inspect enrolled repos (read-only)
 pnpm factory linear:check       # verify LINEAR_API_KEY and configured statuses/labels (read-only)
 pnpm factory project:onboard <id>   # add Spec Kit + constitution on a local review branch
+pnpm factory project:check <id> # prove a project's test commands work (sandboxed, throwaway worktree)
 pnpm factory work               # run claimable jobs once (real agents, uses your subscription)
 pnpm factory serve           # loopback service on 127.0.0.1:4780 (GET /health)
 pnpm typecheck && pnpm lint && pnpm test

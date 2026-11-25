@@ -5,7 +5,8 @@ import { ModelRouter } from "../src/agents/router.js";
 import { AgentRunner } from "../src/agents/runner.js";
 import { FactoryConfig, ModelsConfig, ProjectConfig } from "../src/config/schema.js";
 import { openDb } from "../src/db/client.js";
-import { onboardProject } from "../src/speckit/onboard.js";
+import { onboardProject, raiseOnboardingPr } from "../src/speckit/onboard.js";
+import { FakeGitHub } from "./helpers/fake-github.js";
 import { commitPaths, findBinary, initSpecKit, isInitialised } from "../src/speckit/tools.js";
 import { ScriptedAgent, overwrite } from "./helpers/scripted-agent.js";
 import { makeRepo, sh, tmp } from "./helpers/git-fixture.js";
@@ -102,5 +103,39 @@ describe("spec kit tooling", () => {
     expect(sh(repo, "log", "--format=%an|%s", "-1")).toBe("Software Factory|spec: add");
     expect(sh(repo, "status", "--porcelain")).toBe("?? other.txt"); // unrelated file left alone
     expect(await commitPaths(repo, ["does-not-exist"], "x")).toBe(false);
+  });
+});
+
+describe("raising the onboarding PR (never merges)", () => {
+  const ready = async () => {
+    const s = setup((cwd) => overwrite(cwd, ".specify/memory/constitution.md", "# Constitution\n- tests must pass\n"));
+    const r = await onboardProject(s.project, { runner: s.runner, dataDir: s.dataDir, init: { bin: fakeSpecify() } });
+    const project = ProjectConfig.parse({ ...s.project, github: { repo: "Nikorag/Thing" } });
+    return { ...s, project, r };
+  };
+  it("pushes factory/onboard-speckit to origin (not main) and opens a PR whose body asks for careful review", async () => {
+    const { fx, project, r } = await ready();
+    const gh = new FakeGitHub();
+    const out = await raiseOnboardingPr(project, { github: gh, worktree: r.worktree });
+    expect(out.reused).toBe(false);
+    expect(sh(fx.origin, "branch", "--list", "factory/onboard-speckit")).toContain("factory/onboard-speckit");
+    expect(sh(fx.origin, "log", "--format=%s", "main", "-1")).toBe("init"); // main untouched
+    expect(gh.created[0]).toMatchObject({ repo: "Nikorag/Thing", head: "factory/onboard-speckit", base: "main", title: "Add Spec Kit and project constitution (for review)" });
+    expect(gh.created[0]!.body).toMatch(/not merged automatically/);
+    expect(gh.created[0]!.body).toMatch(/becomes policy/);
+    expect(gh.calls.filter((c) => /merge/i.test(c))).toEqual([]);
+  });
+  it("is idempotent and refuses a closed PR, a missing constitution, and a dirty worktree", async () => {
+    const { project, r } = await ready();
+    const gh = new FakeGitHub();
+    await raiseOnboardingPr(project, { github: gh, worktree: r.worktree });
+    expect((await raiseOnboardingPr(project, { github: gh, worktree: r.worktree })).reused).toBe(true);
+    expect(gh.created).toHaveLength(1);
+    gh.prs[0]!.state = "CLOSED";
+    await expect(raiseOnboardingPr(project, { github: gh, worktree: r.worktree })).rejects.toThrow(/already exists and is CLOSED/);
+    overwrite(r.worktree, "dirty.txt", "x");
+    await expect(raiseOnboardingPr(project, { github: new FakeGitHub(), worktree: r.worktree })).rejects.toThrow(/uncommitted changes/);
+    const fresh = setup(); sh(fresh.fx.repo, "branch", "x");
+    await expect(raiseOnboardingPr(project, { github: new FakeGitHub(), worktree: fresh.fx.repo })).rejects.toThrow(/no constitution commit/);
   });
 });

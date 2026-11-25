@@ -5,6 +5,7 @@ server:
   port: 4780
 logLevel: info
 dryRun: false                    # true: discover and plan, never mutate repos or Linear
+mergeMode: pr-only               # the factory raises pull requests and NEVER merges them; a human merges
 maxRemediationAttempts: 3
 maxConcurrentJobs: 1             # raise only after measuring memory headroom
 pollIntervalSeconds: 60

@@ -17,6 +17,8 @@ import { syncProjects } from "../repo/registry.js";
 import { WorktreeManager } from "../repo/worktrees.js";
 import { createSpecKitHandlers } from "../speckit/handlers.js";
 import { createImplementationHandlers, type ImplDeps } from "../implement/handlers.js";
+import { createDeliveryHandlers, type DeliveryDeps } from "../delivery/handlers.js";
+import { createGhClient, type GitHubClient } from "../github/client.js";
 
 export interface Context {
   config: LoadedConfig;
@@ -32,7 +34,7 @@ export interface Context {
 }
 
 /** Wires every real component together. Tests substitute `agents`, `linear` and `db`; nothing here is a mock. */
-export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logger?: Logger; linear?: LinearClient; claudeBin?: string; agents?: ConstructorParameters<typeof ModelRouter>[1]; runCommand?: ImplDeps["runCommand"] } = {}): Context {
+export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logger?: Logger; linear?: LinearClient; claudeBin?: string; agents?: ConstructorParameters<typeof ModelRouter>[1]; runCommand?: ImplDeps["runCommand"]; github?: GitHubClient; delivery?: DeliveryDeps["timing"]; deliveryNow?: DeliveryDeps["now"]; push?: DeliveryDeps["push"] } = {}): Context {
   const dataDir = config.factory.dataDir;
   const logger = opts.logger ?? createLogger({ level: config.factory.logLevel, file: join(dataDir, "logs", "factory.log") });
   const handle = opts.db ?? openDb(join(dataDir, "database", "factory.sqlite"));
@@ -68,7 +70,11 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
       db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger,
       dataDir, runCommand: opts.runCommand, settings: { protectedPaths: config.factory.protectedPaths, commandTimeoutSeconds: config.factory.commandTimeoutSeconds, sandbox: config.factory.sandbox },
     }),
-    // PULL_REQUEST_CREATION onwards arrive in Milestone 8; until then the engine blocks a job that reaches them.
+    // PR-only delivery: push + open the PR, watch CI, report readiness, wait for a human to merge. The factory never merges.
+    ...createDeliveryHandlers({
+      db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger, dataDir,
+      github: (p) => opts.github ?? createGhClient({ account: p.github.account }), timing: opts.delivery, now: opts.deliveryNow, push: opts.push,
+    }),
   };
   const engine = new Engine({ db: handle.db, logger, config, handlers, observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun }) });
   return { config, handle, logger, router, runner, worktrees, linear, project, handlers, engine };

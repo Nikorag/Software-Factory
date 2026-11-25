@@ -52,7 +52,7 @@ export const stageExecutions = sqliteTable(
     jobId: text("job_id").notNull().references(() => jobs.id),
     stage: text("stage").notNull(),
     attempt: integer("attempt").notNull(),
-    outcome: text("outcome", { enum: ["started", "succeeded", "failed", "timed_out", "cancelled"] }).notNull(),
+    outcome: text("outcome", { enum: ["started", "succeeded", "failed", "timed_out", "cancelled", "waiting"] }).notNull(),
     inputJson: text("input_json"),
     outputJson: text("output_json"),
     error: text("error"),

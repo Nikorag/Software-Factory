@@ -16,8 +16,9 @@ import { auditTeam, SUGGESTED_STATUS_TYPE } from "./linear/check.js";
 import { applySetup, planSetup } from "./linear/setup.js";
 import { flushOutbox } from "./linear/outbox.js";
 import { createContext } from "./app/context.js";
-import { onboardProject } from "./speckit/onboard.js";
+import { onboardProject, raiseOnboardingPr } from "./speckit/onboard.js";
 import { checkProject } from "./repo/check.js";
+import { createGhClient } from "./github/client.js";
 
 const openFactoryDb = () => {
   const config = loadConfig();
@@ -196,14 +197,19 @@ program
 
 program
   .command("project:onboard <id>")
-  .description("Add Spec Kit and an evidence-based constitution to a project on a local review branch (never pushes, never overwrites)")
-  .action(async (id: string) => {
+  .description("Add Spec Kit and an evidence-based constitution to a project on a local review branch (never overwrites). With --pr, also pushes the branch and opens a PR for review (never merges).")
+  .option("--pr", "push factory/onboard-speckit and open a pull request for human review")
+  .action(async (id: string, opts: { pr?: boolean }) => {
     const config = loadConfig();
     const project = config.projects.projects.find((p) => p.id === id);
     if (!project) { console.error(`no such project: ${id}`); process.exitCode = 1; return; }
     const ctx = createContext(config);
     const r = await onboardProject(project, { runner: ctx.runner, dataDir: config.factory.dataDir });
     console.log(r.status === "already-initialised" ? `${id}: Spec Kit is already set up` : `${id}: created branch ${r.branch} (${r.commits.join(", ")})\n  review: git -C ${r.worktree} log -p ${project.defaultBranch}..HEAD`);
+    if (opts.pr) {
+      const { pr, reused } = await raiseOnboardingPr(project, { github: createGhClient({ account: project.github.account }), worktree: r.worktree });
+      console.log(`${reused ? "PR already open" : "PR raised"}: ${pr.url}  (not merged: a human reviews and merges it)`);
+    }
     ctx.handle.close();
   });
 

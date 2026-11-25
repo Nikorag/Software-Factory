@@ -19,6 +19,7 @@ export interface StageContext {
 export type StageResult =
   | { kind: "ok"; output?: unknown }
   | { kind: "remediate"; reason: string; output?: unknown } // findings that need fixing
+  | { kind: "wait"; reason: string; delayMs: number } // nothing is wrong: poll again later (CI pending, awaiting a human). Never consumes retries.
   | { kind: "retry"; reason: string } // transient failure
   | { kind: "blocked"; reason: string } // needs a dependency / ambiguity resolved
   | { kind: "needs_attention"; reason: string } // human required (e.g. security)
@@ -113,7 +114,7 @@ export class Engine {
     const execId = db.insert(stageExecutions).values({ jobId: job.id, stage, attempt, outcome: "started", idempotencyKey: key, startedAt: this.o.now() }).returning({ id: stageExecutions.id }).get().id;
     const log = logger.child({ jobId: job.id, stage, attempt });
 
-    const finish = (outcome: "succeeded" | "failed" | "timed_out" | "cancelled", extra: { output?: unknown; error?: string } = {}) =>
+    const finish = (outcome: "succeeded" | "failed" | "timed_out" | "cancelled" | "waiting", extra: { output?: unknown; error?: string } = {}) =>
       db.update(stageExecutions).set({ outcome, outputJson: extra.output === undefined ? null : JSON.stringify(extra.output), error: extra.error ?? null, finishedAt: this.o.now() }).where(eq(stageExecutions.id, execId)).run();
 
     // Dry run: record the intended operation, never invoke side-effecting stages.
@@ -162,7 +163,7 @@ export class Engine {
 
   private apply(
     job: JobRow, stage: StageName, result: StageResult,
-    finish: (o: "succeeded" | "failed" | "timed_out" | "cancelled", e?: { output?: unknown; error?: string }) => unknown,
+    finish: (o: "succeeded" | "failed" | "timed_out" | "cancelled" | "waiting", e?: { output?: unknown; error?: string }) => unknown,
     note?: string, maxRetries = 0,
   ): boolean {
     const { db } = this.o;
@@ -192,6 +193,12 @@ export class Engine {
           this.setStage(job, target, { remediationAttempts: attempts, stageAttempts: 0 });
         });
         return true;
+      }
+      case "wait": {
+        // Not a failure: release the lease and come back later. The stage does not advance and no attempt budget is spent.
+        finish("waiting", { output: { reason: result.reason, delayMs: result.delayMs } });
+        db.update(jobs).set({ status: "queued", leaseOwner: null, leaseExpiresAt: null, notBefore: new Date(this.o.now().getTime() + result.delayMs), lastError: null, updatedAt: this.o.now() }).where(eq(jobs.id, job.id)).run();
+        return false;
       }
       case "retry":
         finish("failed", { error: result.reason });

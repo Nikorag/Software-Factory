@@ -17,9 +17,9 @@ describe("auditTeam", () => {
     f.labelDefs = [{ id: "x", name: "Bug" }];
     const a = await auditTeam(f, cfg, team);
     const reqMissing = [...a.statuses, ...a.labels].filter((g) => g.required).map((g) => g.name).sort();
-    expect(reqMissing).toEqual(["Blocked", "Merging", "Ready for review", "Ready for specification", "Specification review", "factory:blocked", "factory:enabled"].sort());
+    expect(reqMissing).toEqual(["Blocked", "Ready for review", "Ready for specification", "Specification review", "factory:blocked", "factory:enabled"].sort());
     expect(a.ok).toBe(false);
-    expect(a.statuses.filter((g) => !g.required).map((g) => g.name).sort()).toEqual(["Changes requested", "Ready for development"]);
+    expect(a.statuses.filter((g) => !g.required).map((g) => g.name).sort()).toEqual(["Changes requested", "Merging", "Ready for development"]); // Merging is optional: the factory never merges
     expect(a.labels.filter((g) => !g.required).map((g) => g.name).sort()).toEqual(["factory:autonomous", "factory:bugfix", "factory:feature", "factory:maintenance"]);
     expect(a.existingStatuses).toEqual(expect.arrayContaining(["In progress", "Done"]));
   });
@@ -38,7 +38,7 @@ describe("auditTeam", () => {
     expect((await auditTeam(f, c, team)).statuses.map((g) => g.key)).not.toContain("done");
   });
   it("the 'required' sets are exactly what the reporter and discovery actually write", () => {
-    expect(REQUIRED_STATUSES.sort()).toEqual(["blocked", "done", "inProgress", "merging", "readyForReview", "readyForSpecification", "specificationReview"]);
+    expect([...REQUIRED_STATUSES].sort()).toEqual(["blocked", "done", "inProgress", "readyForReview", "readyForSpecification", "specificationReview"]);
     expect(REQUIRED_LABELS.sort()).toEqual(["blocked", "enabled"]);
   });
 });

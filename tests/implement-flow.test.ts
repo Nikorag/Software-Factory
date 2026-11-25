@@ -3,76 +3,28 @@ import { join } from "node:path";
 import pino from "pino";
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { createContext, type Context } from "../src/app/context.js";
-import { loadConfig } from "../src/config/load.js";
-import { ModelsConfig, ProjectConfig, type LoadedConfig } from "../src/config/schema.js";
+import { createContext } from "../src/app/context.js";
 import { Engine } from "../src/core/engine.js";
-import { enqueue, getJob } from "../src/core/jobs.js";
-import { openDb } from "../src/db/client.js";
-import { artifacts, decisions, jobs, projects, stageExecutions } from "../src/db/schema.js";
+import { artifacts, decisions, jobs, stageExecutions } from "../src/db/schema.js";
 import { SandboxUnavailable } from "../src/exec/commands.js";
 import { sandboxAvailable } from "../src/exec/sandbox.js";
-import { createLinearReporter } from "../src/linear/reporter.js";
-import { commitPaths } from "../src/speckit/tools.js";
-import { featureDirFor } from "../src/speckit/artifacts.js";
-import { defaults, GOOD_SRC, GOOD_TEST, ImplAgent, tickTasks, write } from "./helpers/impl-agent.js";
-import { exists, fixture } from "./helpers/scripted-agent.js";
-import { FakeLinear } from "./helpers/fake-linear.js";
-import { makeRepo, sh } from "./helpers/git-fixture.js";
-
-const TITLE = "Optional due dates for todos";
-const SPEC_FILES = ["spec.md", "plan.md", "tasks.md", "research.md", "data-model.md", "quickstart.md", "contracts/todo-module.md", "checklists/requirements.md"];
-
-interface H { linear: FakeLinear; ctx: Context; claude: ImplAgent; haiku: ImplAgent; repo: string; jobId: string; engine: Engine; wt: string; hist: () => string[]; stages: () => string[] }
-
-async function harness(o: { commands?: Record<string, string>; baseTest?: string; localModel?: boolean; runCommand?: Context["handlers"] extends never ? never : unknown } = {}): Promise<H> {
-  const { repo } = makeRepo({
-    "package.json": JSON.stringify({ name: "todo", type: "module", scripts: { test: "node --test test/" } }),
-    "src/todos.js": "export const list = () => [];\n",
-    "test/todos.test.js": o.baseTest ?? 'import test from "node:test";\nimport assert from "node:assert";\nimport { list } from "../src/todos.js";\ntest("empty", () => assert.deepEqual(list(), []));\n',
-    ".gitignore": "node_modules\n",
-  });
-  const base = loadConfig("config");
-  const commands = o.commands ?? { test: "node --test test/", lint: "node --check src/todos.js" };
-  const project = ProjectConfig.parse({ id: "p", name: "P", repository: repo, linear: { teamKey: "JAM" }, commands });
-  const r = (provider: string, model: string) => ({ provider, model });
-  const config: LoadedConfig = {
-    ...base, factory: { ...base.factory, dataDir: join(repo, "..", "data") }, projects: { projects: [project] },
-    models: ModelsConfig.parse({ routes: { classification: r("anthropic", "haiku"), specification: r("anthropic", "default"), implementation: r("anthropic", "default"), independent_review: r("anthropic", "haiku"), final_review: r("anthropic", "default") } }),
-  };
-  const claude = new ImplAgent("anthropic");
-  const haiku = claude; // one scripted agent serves both Claude routes; assertions distinguish by req.model
-  const linear = new FakeLinear();
-  const issue = linear.addIssue({ key: "JAM-1", team: "JAM" }); issue.title = TITLE;
-  const ctx = createContext(config, { db: openDb(":memory:"), logger: pino({ level: "silent" }), linear, agents: { anthropic: claude, local: claude } });
-  ctx.handle.db.update(projects).set({ validationJson: JSON.stringify({ ok: true }) }).run();
-  const jobId = enqueue(ctx.handle.db, { projectId: "p", externalId: issue.id, externalKey: "JAM-1" }).job.id;
-  // Arrive at IMPLEMENTATION_PREPARATION the way a real job does: worktree on factory/JAM-1 with the committed spec.
-  const info = await ctx.worktrees.create({ id: jobId, projectId: "p", externalKey: "JAM-1" });
-  const dir = featureDirFor("JAM-1", TITLE);
-  for (const f of SPEC_FILES) write(info.path, `${dir}/${f}`, fixture(f));
-  write(info.path, `${dir}/ticket.md`, `# JAM-1: ${TITLE}\n`);
-  await commitPaths(info.path, [dir], "spec(JAM-1): all");
-  ctx.handle.db.update(jobs).set({ stage: "IMPLEMENTATION_PREPARATION" }).where(eq(jobs.id, jobId)).run();
-  const engine = new Engine({ db: ctx.handle.db, logger: pino({ level: "silent" }), config, handlers: ctx.handlers, backoffBaseMs: 0, observer: createLinearReporter(ctx.handle.db) });
-  const hist = () => ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.jobId, jobId)).all().map((x) => `${x.stage}:${x.outcome}`);
-  return { linear, ctx, claude, haiku, repo, jobId, engine, wt: info.path, hist, stages: () => hist().map((h) => h.split(":")[0]!) };
-}
-const job = (h: H) => getJob(h.ctx.handle.db, h.jobId)!;
-const decisionKinds = (h: H) => h.ctx.handle.db.select().from(decisions).all().map((d) => d.kind);
-const impl = (h: H) => h.claude.calls.filter((c) => c.role === "implementer");
+import { defaults, GOOD_SRC, GOOD_TEST, tickTasks, write } from "./helpers/impl-agent.js";
+import { exists } from "./helpers/scripted-agent.js";
+import { sh } from "./helpers/git-fixture.js";
+import { decisionKinds, harness, impl, job, type H } from "./helpers/impl-harness.js";
 
 describe.skipIf(!sandboxAvailable())("implementation pipeline (real engine, git, sandboxed commands; scripted agents)", () => {
   let h: H;
   beforeEach(async () => { h = await harness(); });
 
-  it("takes a committed spec to a tested, reviewed, final-validated implementation, with an evidence report", async () => {
+  it("takes a committed spec to a tested, reviewed, final-validated implementation, a raised PR, and waits for a human", async () => {
     await h.engine.tick();
     expect(h.hist()).toEqual([
       "IMPLEMENTATION_PREPARATION:succeeded", "IMPLEMENTATION:succeeded", "AUTOMATED_TESTING:succeeded", "LOCAL_MODEL_REVIEW:succeeded",
-      "CLAUDE_REVIEW:succeeded", "FINAL_VALIDATION:succeeded", "PULL_REQUEST_CREATION:failed", // Milestone 8 starts here
+      "CLAUDE_REVIEW:succeeded", "FINAL_VALIDATION:succeeded", "PULL_REQUEST_CREATION:succeeded", "CI_VALIDATION:succeeded", "MERGE_VALIDATION:succeeded",
+      "MERGING:waiting", // PR-only: the factory raised the PR and now waits for a human to merge it
     ]);
-    expect(job(h)).toMatchObject({ stage: "BLOCKED", heldFromStage: "PULL_REQUEST_CREATION" });
+    expect(job(h)).toMatchObject({ stage: "MERGING", status: "queued" });
     expect(existsSync(join(h.wt, "src/due.js"))).toBe(true);
     expect(sh(h.wt, "status", "--porcelain")).toBe("");
     expect(sh(h.wt, "log", "--format=%an|%s", "origin/main..HEAD").split("\n")).toEqual(expect.arrayContaining(["Software Factory|impl(JAM-1): pass 1"]));
@@ -237,7 +189,7 @@ describe.skipIf(!sandboxAvailable())("final validation gates (deterministic, ind
     const testing = h.ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.stage, "AUTOMATED_TESTING")).all();
     expect(testing.some((r) => r.outputJson?.includes("check:test") || r.outputJson?.includes("check:lint"))).toBe(true); // the break was detected by a real run
     expect(job(h).remediationAttempts).toBe(2);
-    expect(h.stages().at(-2)).toBe("FINAL_VALIDATION");
+    expect(h.stages().slice(-5)).toEqual(["FINAL_VALIDATION", "PULL_REQUEST_CREATION", "CI_VALIDATION", "MERGE_VALIDATION", "MERGING"]);
   });
 });
 

@@ -225,3 +225,26 @@ describe("dry run", () => {
     expect(called).toEqual([]);
   });
 });
+
+describe("wait (poll later without failing)", () => {
+  it("re-queues for later, keeps the stage, and never consumes the retry budget (even after many waits)", async () => {
+    const job = add();
+    let t = 1_000_000, polls = 0;
+    const e = engine({ ...simulatedHandlers(), ELIGIBILITY_CHECK: async () => (++polls < 25 ? { kind: "wait", reason: "CI pending", delayMs: 60_000 } : { kind: "ok" }) }, config(), { now: () => new Date(t) });
+    for (let i = 0; i < 40; i++) { await e.tick(); t += 60_001; if (getJob(h.db, job.id)!.stage === "COMPLETED") break; }
+    expect(polls).toBe(25);
+    expect(getJob(h.db, job.id)!.stage).toBe("COMPLETED"); // 24 waits > maxRetries (2) and nothing failed
+    expect(history(job.id).filter((x) => x === "ELIGIBILITY_CHECK:waiting")).toHaveLength(24);
+    expect(getJob(h.db, job.id)!.stageAttempts).toBe(0);
+  });
+  it("is not claimable before its delay has passed", async () => {
+    const job = add();
+    let t = 5_000_000;
+    const e = engine({ ...simulatedHandlers(), ELIGIBILITY_CHECK: async () => ({ kind: "wait", reason: "later", delayMs: 600_000 }) }, config(), { now: () => new Date(t) });
+    await e.tick();
+    expect(await e.tick()).toBe(0);
+    expect(getJob(h.db, job.id)).toMatchObject({ status: "queued", stage: "ELIGIBILITY_CHECK", lastError: null });
+    t += 600_001;
+    expect(await e.tick()).toBe(1);
+  });
+});

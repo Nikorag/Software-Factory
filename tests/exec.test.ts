@@ -78,6 +78,22 @@ sb("sandboxed project commands (real sandbox-exec)", () => {
     expect(r.tail).toContain("NET-OK");
     expect(r.ok).toBe(true);
   });
+  it("lets an INSTALL write package-manager caches (so `npm ci` can work) but never a test/lint/typecheck command (found by project:check: npm failed with EPERM)", async () => {
+    const w = world();
+    mkdirSync(join(w.home, ".npm"), { recursive: true });
+    const cmd = `echo cached > ${w.home}/.npm/cache-entry && cat ${w.home}/.npm/cache-entry`;
+    const inst = await run(w, cmd, { kind: "install" });
+    expect(inst.tail).toContain("cached");
+    expect(readFileSync(join(w.home, ".npm", "cache-entry"), "utf8")).toContain("cached");
+    rmSync(join(w.home, ".npm", "cache-entry"));
+    const test = await run(w, cmd, { kind: "test" });
+    expect(test.tail).toMatch(/Operation not permitted/);
+    expect(existsSync(join(w.home, ".npm", "cache-entry"))).toBe(false);
+    // ...and even an install cannot write elsewhere under $HOME
+    const stray = await run(w, `echo x > ${w.home}/elsewhere.txt`, { kind: "install" });
+    expect(stray.tail).toMatch(/Operation not permitted/);
+    expect(existsSync(join(w.home, "elsewhere.txt"))).toBe(false);
+  });
   it("gives commands a scrubbed environment (no tokens, no API keys)", async () => {
     const w = world();
     process.env.LINEAR_API_KEY = "lin_secret"; process.env.GH_TOKEN = "gh_secret"; process.env.ANTHROPIC_API_KEY = "sk_secret";

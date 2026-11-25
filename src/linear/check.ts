@@ -5,7 +5,7 @@ type StatusKey = keyof LinearConfig["statuses"];
 type LabelKey = keyof LinearConfig["labels"];
 
 /** What the factory writes today. Anything else in config is reserved for later milestones or only refines behaviour. */
-export const REQUIRED_STATUSES: StatusKey[] = ["readyForSpecification", "specificationReview", "inProgress", "readyForReview", "merging", "done", "blocked"];
+export const REQUIRED_STATUSES: StatusKey[] = ["readyForSpecification", "specificationReview", "inProgress", "readyForReview", "done", "blocked"]; // "Merging" is unused: the factory never merges
 export const REQUIRED_LABELS: LabelKey[] = ["enabled", "blocked"];
 
 /** Linear workflow-state type to pick when creating each status by hand (Linear asks for one). */

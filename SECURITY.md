@@ -21,3 +21,6 @@ Enforced (tested, including live against the real CLI): per-role permission prof
 
 ## Secrets
 Every commit on a job branch is scanned for credentials (private keys, AWS/GitHub/Linear/Anthropic/Slack/Stripe/Google keys, JWTs, quoted credential assignments), across the **whole branch history**, not just the final diff. A hit stops the job for a human and never goes to automated remediation: a later commit cannot remove a secret from history, and history is what gets pushed. The finding never echoes the secret.
+
+## Delivery
+The factory cannot merge: delivery is PR-only by decision (`mergeMode: pr-only`), the GitHub client has no merge operation, and a test asserts that no merge capability exists in the client, the delivery handlers or the push helper. Pushes go through one function (`pushBranch`): explicit `factory/*` refspec, never forced, never the default branch; a non-fast-forward rejection stops for a human. Agents never push (their git `push`, `fetch`, `remote`, `config`, `gh`, curl and ssh are denied); the factory pushes, with the GitHub token held only in that one git process's environment. A PR for a branch that is already closed or merged is never reopened or replaced.
