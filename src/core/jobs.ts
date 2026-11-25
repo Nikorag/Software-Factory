@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNull, lte, lt, or } from "drizzle-orm";
 import type { FactoryDb } from "../db/client.js";
 import { agentInvocations, artifacts, decisions, jobs, linearOutbox, stageExecutions, worktrees } from "../db/schema.js";
 import type { StageName } from "../config/schema.js";
+import { fixCycleHistory } from "./fix-cycles.js";
 
 export type JobRow = typeof jobs.$inferSelect;
 const ACTIVE = ["queued", "running", "waiting"] as const;
@@ -66,10 +67,13 @@ export function renewLease(db: FactoryDb, id: string, owner: string, now: Date, 
 /**
  * Crash recovery: running jobs whose lease expired are re-queued at their current stage, and their
  * dangling "started" executions are closed as interrupted. Handlers must be idempotent on replay.
+ * `exclude`: jobs the caller is executing right now. Never recover those: after a sleep the wall clock jumps past
+ * their lease before the heartbeat had a chance to renew it, but they are alive, not crashed.
  */
-export function recoverExpired(db: FactoryDb, now: Date): string[] {
+export function recoverExpired(db: FactoryDb, now: Date, exclude: Iterable<string> = []): string[] {
+  const skip = new Set(exclude);
   return db.transaction((tx) => {
-    const stale = tx.select().from(jobs).where(and(eq(jobs.status, "running"), lt(jobs.leaseExpiresAt, now))).all();
+    const stale = tx.select().from(jobs).where(and(eq(jobs.status, "running"), lt(jobs.leaseExpiresAt, now))).all().filter((j) => !skip.has(j.id));
     for (const j of stale) {
       tx.update(stageExecutions).set({ outcome: "failed", error: "interrupted (process crash or lease expiry)", finishedAt: now })
         .where(and(eq(stageExecutions.jobId, j.id), eq(stageExecutions.outcome, "started"))).run();
@@ -80,6 +84,8 @@ export function recoverExpired(db: FactoryDb, now: Date): string[] {
   });
 }
 
+const HELD = ["BLOCKED", "FAILED", "NEEDS_ATTENTION", "PAUSED", "CANCELLED"];
+
 /** Request cancellation. Queued/waiting jobs cancel immediately; running jobs are signalled and stop at the next check. */
 export function cancelJob(db: FactoryDb, id: string, actor: string): JobRow {
   return db.transaction((tx) => {
@@ -87,27 +93,36 @@ export function cancelJob(db: FactoryDb, id: string, actor: string): JobRow {
     if (!job) throw new JobError(`no such job ${id}`);
     if (["done", "failed", "cancelled"].includes(job.status)) throw new JobError(`job already ${job.status}`);
     if (job.status === "running") tx.update(jobs).set({ cancelRequested: true }).where(eq(jobs.id, id)).run();
-    else tx.update(jobs).set({ status: "cancelled", stage: "CANCELLED", heldFromStage: job.stage, updatedAt: new Date() }).where(eq(jobs.id, id)).run();
+    // An already-held job keeps the stage it was really at, so a later retry resumes the work, not the hold.
+    else tx.update(jobs).set({ status: "cancelled", stage: "CANCELLED", heldFromStage: HELD.includes(job.stage) ? job.heldFromStage : job.stage, updatedAt: new Date() }).where(eq(jobs.id, id)).run();
     tx.insert(decisions).values({ jobId: id, kind: "job.cancel", decision: "cancel requested", actor }).run();
     return tx.select().from(jobs).where(eq(jobs.id, id)).get()!;
   });
 }
 
-/** Manually retry a failed/held job from the stage it stopped at, with fresh attempt counters. */
+/**
+ * Manually retry a failed/held job from the stage it stopped at, with fresh attempt counters. The error being cleared and the job's
+ * lifetime fix cycles are recorded with the retry, so what went wrong (and how often) stays visible. A retried archived job is unarchived.
+ */
 export function retryJob(db: FactoryDb, id: string, actor: string, resumeAt?: StageName): JobRow {
   return db.transaction((tx) => {
     const job = tx.select().from(jobs).where(eq(jobs.id, id)).get();
     if (!job) throw new JobError(`no such job ${id}`);
-    const held = ["BLOCKED", "FAILED", "NEEDS_ATTENTION", "PAUSED", "CANCELLED"].includes(job.stage);
+    const held = HELD.includes(job.stage);
     if (!held) throw new JobError(`job is not retryable (stage ${job.stage}, status ${job.status})`);
     const resume = resumeAt ?? ((job.heldFromStage ?? "DISCOVERED") as StageName);
+    const before = fixCycleHistory(tx, id);
     try {
-      tx.update(jobs).set({ stage: resume, status: "queued", heldFromStage: null, stageAttempts: 0, remediationAttempts: 0, cancelRequested: false, lastError: null, notBefore: null, updatedAt: new Date() })
+      tx.update(jobs).set({ stage: resume, status: "queued", heldFromStage: null, stageAttempts: 0, remediationAttempts: 0, cancelRequested: false, lastError: null, notBefore: null, archivedAt: null, updatedAt: new Date() })
         .where(eq(jobs.id, id)).run();
     } catch (e) {
       throw new JobError(`cannot retry: another active job exists for this issue (${(e as Error).message})`);
     }
-    tx.insert(decisions).values({ jobId: id, kind: "job.retry", decision: `resume at ${resume}`, actor }).run();
+    const rationale = [
+      `${job.stage}${job.heldFromStage ? ` at ${job.heldFromStage}` : ""}: ${job.lastError ?? "(no error recorded)"}`,
+      `Fix cycles: ${job.remediationAttempts} in the phase being retried, ${before.total} in total; manual retries: ${before.retries + 1}.`,
+    ].join("\n");
+    tx.insert(decisions).values({ jobId: id, kind: "job.retry", decision: `resume at ${resume} (retry ${before.retries + 1})`, rationale, actor }).run();
     return tx.select().from(jobs).where(eq(jobs.id, id)).get()!;
   });
 }

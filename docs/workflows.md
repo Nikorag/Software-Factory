@@ -1,12 +1,12 @@
 # Workflows
 
 Stage list: `STAGES` in `src/config/schema.ts`. Transitions, remediation routing and which stages mutate: `src/core/workflow.ts`.
-Per-stage timeout/retry policy: `config/workflows.yaml` (falls back to `defaults`).
+Per-stage timeout/retry policy: `config/workflows.yaml` (falls back to `defaults`). Stages that run agents or project commands also have a built-in timeout budget covering that work (`src/config/stage-budgets.ts`: agent timeouts, `commandTimeoutSeconds` per check, and for IMPLEMENTATION the configured passes). It applies to every workflow, and a configured timeout shorter than it is raised to it, since a timeout throws the stage's work away.
 
 ## Handler contract
 A stage handler is `(ctx) => Promise<StageResult>` and **must be idempotent** (it may be replayed after a crash).
 Results: `ok`, `remediate` (findings to fix), `retry` (transient), `blocked`, `needs_attention`, `fail`. A thrown error or timeout counts as `retry`.
-`ctx.signal` aborts on timeout, cancellation, emergency stop or lease loss.
+`ctx.signal` aborts on timeout, cancellation, emergency stop or lease loss. After an abort the engine waits (up to 15 s) for the handler to return before releasing the job, and does not run that job again until it has: one agent per worktree.
 
 ## Transitions
 - Happy path follows `STAGES`. Clean reviews skip remediation (`SPECIFICATION_REVIEW`→`SPECIFICATION_VALIDATION`, `CLAUDE_REVIEW`→`FINAL_VALIDATION`).
@@ -43,7 +43,7 @@ CLI: `factory jobs | job:cancel | job:retry | pause | resume | stop | clear-stop
 | `CLAUDE_REVIEW` | Claude reviews the change and gives a verdict, with evidence, on each earlier finding (recorded as `code-review.verdict` decisions). |
 | `REMEDIATION` | The implementer resumes its session with the latest blocking findings. It must reject invalid findings with evidence (recorded). The factory commits, re-scans for secrets, and the workflow re-runs `AUTOMATED_TESTING`, so a fix that breaks the build is caught by a real run. |
 | `FINAL_VALIDATION` | Deterministic gates, independent of any reviewer: all checks re-run; clean tree; no protected-path changes; no secrets in history; no conflict markers; **no skipped/disabled tests and no deleted test files**; every task ticked; then the `final-reviewer` must show, for every FR/SC criterion, the code and a test that would fail without it. On success the factory writes an **evidence report** (checks, criteria with evidence, commits, rejected findings and reasons) to `<dataDir>/reports/<jobId>.md`, recorded as a `completion-report` artefact for the PR description. |
-Remediation is capped at `maxRemediationAttempts` (3) across all of these. Dry-run jobs skip implementation and the stages that depend on it.
+Remediation is capped at `maxRemediationAttempts` (3) per phase: the specification, the code (review fixes before the PR) and CI (fixes after the PR is raised, including the re-review those fixes go through) each get their own budget. A manual retry starts a fresh budget and records the error it clears and the job's lifetime fix cycles. Dry-run jobs skip implementation and the stages that depend on it.
 
 ## Delivery stages: PR-only by decision
 **The factory raises pull requests and never merges them.** This is configuration (`mergeMode: pr-only`, the only value the schema accepts) *and* structure: `GitHubClient` has no merge method, `src/delivery` contains no merge call, and a test asserts it. A human merges.
