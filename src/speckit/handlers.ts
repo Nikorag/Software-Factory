@@ -7,7 +7,7 @@ import { artifacts, stageExecutions } from "../db/schema.js";
 import type { StageHandler } from "../core/engine.js";
 import { git as realGit } from "../repo/git.js";
 import { openQuestions, readSpecBundle, recordArtifacts, validateSpecArtifacts } from "./artifacts.js";
-import { analysisPrompt, analyzePrompt, classificationPrompt, remediationPrompt, reviewPrompt, skillPrompt } from "./prompts.js";
+import { analysisPrompt, analyzePrompt, classificationPrompt, HUMAN_ONLY_TASKS, remediationPrompt, reviewPrompt, skillPrompt } from "./prompts.js";
 import { Analysis, Analyze, Classification, blocking, Remediation, Review, type Finding } from "./schemas.js";
 import { commitPaths, isInitialised } from "./tools.js";
 import { createStageKit, failureToResult, type StageKitDeps } from "../app/stage-kit.js";
@@ -74,7 +74,7 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
         specify: `Feature request:\n${p.ticket}`,
         clarify: "Resolve ambiguities against the ticket below.\n" + p.ticket,
         plan: `Technical context: use the repository's existing stack, conventions and CLAUDE.md. Do not add dependencies unless the specification requires them.`,
-        tasks: `Every behavioural change needs tests. Project commands - test: ${project.commands.test ?? "(detect from the repo)"}; lint: ${project.commands.lint ?? "(detect)"}; typecheck: ${project.commands.typecheck ?? "(detect)"}.`,
+        tasks: `Every behavioural change needs tests. Project commands - test: ${project.commands.test ?? "(detect from the repo)"}; lint: ${project.commands.lint ?? "(detect)"}; typecheck: ${project.commands.typecheck ?? "(detect)"}.\n\n${HUMAN_ONLY_TASKS}`,
       }[step];
       // A step can finish without producing its file (observed once live: a one-off permission denial on an in-scope Write).
       // Rerun that step once, in the same attempt, before failing the stage.

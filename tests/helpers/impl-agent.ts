@@ -10,6 +10,8 @@ export interface ImplBehaviour {
   converge: (n: number) => S;
   classify: () => S; codeReview: (n: number) => S; security: () => S; claudeReview: (n: number) => S; finalReview: (n: number) => S;
   remediation: () => S;
+  /** The implementer's structured answer on each implement pass (default: T001 done, nothing skipped or deferred). */
+  implementResult?: (n: number) => S;
   failure?: (req: AgentRequest) => Partial<AgentResult> | undefined;
 }
 
@@ -17,6 +19,11 @@ export const write = (cwd: string, rel: string, content: string) => { const p = 
 export const tickTasks = (cwd: string, dir: string) => {
   const p = join(cwd, dir, "tasks.md");
   writeFileSync(p, readFileSync(p, "utf8").replace(/- \[ \] (T\d{3})/g, "- [x] $1"));
+};
+/** Leaves (or puts back) a task unticked, optionally with a marker such as `[HUMAN]` after its id. */
+export const untick = (cwd: string, dir: string, id: string, tag = "") => {
+  const p = join(cwd, dir, "tasks.md");
+  writeFileSync(p, readFileSync(p, "utf8").replace(new RegExp(`- \\[[ xX]\\] ${id}\\b`), `- [ ] ${id}${tag ? ` ${tag}` : ""}`));
 };
 export const GOOD_SRC = 'export function isOverdue(due, today) { return due < today; }\n';
 export const GOOD_TEST = 'import test from "node:test";\nimport assert from "node:assert";\nimport { isOverdue } from "../src/due.js";\ntest("a past date is overdue", () => assert.equal(isOverdue("2020-01-01", "2026-01-01"), true));\ntest("today is not overdue", () => assert.equal(isOverdue("2026-01-01", "2026-01-01"), false));\n';
@@ -49,7 +56,7 @@ export class ImplAgent implements Agent {
     const props = (req.jsonSchema?.properties ?? {}) as Record<string, unknown>;
     const dir = this.featureDir(req);
     let s: S;
-    if ("tasksDone" in props) { this.b.implement(req.cwd, dir, ++this.n.implement, req); s = { summary: "implemented", tasksDone: ["T001"], tasksSkipped: [] }; }
+    if ("tasksDone" in props) { this.b.implement(req.cwd, dir, ++this.n.implement, req); s = this.b.implementResult?.(this.n.implement) ?? { summary: "implemented", tasksDone: ["T001"], tasksSkipped: [], deferred: [] }; }
     else if ("converged" in props) s = this.b.converge(++this.n.converge);
     else if ("failingTests" in props) s = this.b.classify();
     else if (JSON.stringify(req.jsonSchema ?? {}).includes('"exploit"')) s = this.b.security();
