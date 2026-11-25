@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isMap, parseDocument, type Document } from "yaml";
+import { isMap, isSeq, parseDocument, type Document, type YAMLMap } from "yaml";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir, loadConfig } from "./load.js";
 import { ProjectInput, type LoadedConfig } from "./schema.js";
@@ -62,7 +62,9 @@ export function upsertProject(input: unknown, dir = seedHomeConfig()): LoadedCon
   if (!p.repository && !p.github.repo) throw new ConfigError("set a GitHub repo (owner/name) for a factory-managed clone, or the path of an existing checkout");
   const doc = readDoc(dir);
   const list = doc.get("projects", true) as { items: { toJSON(): { id?: string } }[]; set: (i: number, v: unknown) => void; add: (v: unknown) => void };
+  if (isSeq(list)) list.flow = false; // an empty `projects: []` is flow style: a project list should read as a normal block list
   const node = doc.createNode(clean({ ...p, linear: p.linear && clean(p.linear), github: clean(p.github), commands: clean(p.commands) }));
+  (node as YAMLMap).flow = false;
   const i = list.items.findIndex((x) => x.toJSON().id === p.id);
   if (i >= 0) list.set(i, node); else list.add(node);
   return commit(dir, doc);

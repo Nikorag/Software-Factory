@@ -36,6 +36,15 @@ describe("config store (what the settings UI writes)", () => {
     expect(removeProject("my-app", dir).projects.projects).toEqual([]);
     expect(() => removeProject("my-app", dir)).toThrow(/no such project/);
   });
+  it("writes a readable block list, not one long flow line", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    upsertProject(app1, dir);
+    upsertProject({ ...app1, id: "second", name: "Second", github: { repo: "me/second" }, linear: { teamKey: "ENG", projectName: "Second" } }, dir);
+    const text = readFileSync(join(dir, "projects.yaml"), "utf8");
+    expect(text).toMatch(/^projects:\n {2}- id: my-app\n/m);
+    expect(text).not.toMatch(/^projects:\s*\[/m);
+    expect(loadConfig(dir).projects.projects.map((p) => p.id)).toEqual(["my-app", "second"]);
+  });
   it("keeps the comments of a hand-edited file", () => {
     const dir = seedHomeConfig(join(tmpDir(), "config"));
     writeFileSync(join(dir, "projects.yaml"), "# my own note\nprojects: []\n");

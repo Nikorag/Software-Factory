@@ -24,3 +24,11 @@ Every commit on a job branch is scanned for credentials (private keys, AWS/GitHu
 
 ## Delivery
 The factory cannot merge: delivery is PR-only by decision (`mergeMode: pr-only`), the GitHub client has no merge operation, and a test asserts that no merge capability exists in the client, the delivery handlers or the push helper. Pushes go through one function (`pushBranch`): explicit `factory/*` refspec, never forced, never the default branch; a non-fast-forward rejection stops for a human. Agents never push (their git `push`, `fetch`, `remote`, `config`, `gh`, curl and ssh are denied); the factory pushes, with the GitHub token held only in that one git process's environment. A PR for a branch that is already closed or merged is never reopened or replaced.
+
+## Dashboard access (tokenless by design)
+
+The dashboard accepts changes from its own page without a token (same-origin, loopback-only, `Host`/`Origin` checked), so a website you visit cannot drive it. Another process on your machine, or another user of a shared Mac, can send the same headers and so can pause the factory, answer held jobs and edit project commands (which run in the sandbox). Run it on a machine you alone use, or keep the token requirement by reverting ADR 0007. See [ADR 0007](docs/adr/0007-tokenless-dashboard.md).
+
+## The installer
+
+`install.sh` is meant to be piped to bash, so it is deliberately small and readable: no sudo, no credentials, no login item, wrapped in a function so a truncated download never runs, and `--dry-run` prints every action. Pin a release with `FACTORY_REF=<tag>` rather than `main`.
