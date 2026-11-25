@@ -8,6 +8,7 @@ import { buildServer } from "./server/app.js";
 import { cancelJob, listJobs, retryJob } from "./core/jobs.js";
 import * as control from "./core/control.js";
 import { runSimulation } from "./core/simulation.js";
+import { syncProjects, validateProjects } from "./repo/registry.js";
 
 const openFactoryDb = () => {
   const config = loadConfig();
@@ -60,6 +61,25 @@ for (const [name, fn] of [["pause", control.pause], ["resume", control.resume], 
     const { handle } = openFactoryDb(); (fn as (d: typeof handle.db, a: string) => void)(handle.db, ACTOR); console.log(`${name}: ok`); handle.close();
   });
 }
+
+program
+  .command("project:validate [id]")
+  .description("Inspect enrolled repositories (read-only) and record the result")
+  .option("--json", "print full JSON reports")
+  .action(async (id: string | undefined, opts: { json?: boolean }) => {
+    const { config, handle } = openFactoryDb();
+    const selected = config.projects.projects.filter((p) => !id || p.id === id);
+    if (selected.length === 0) { console.error(id ? `no such project: ${id}` : "no projects configured in config/projects.yaml"); process.exitCode = 1; handle.close(); return; }
+    syncProjects(handle.db, config.projects.projects);
+    const reports = await validateProjects(handle.db, selected);
+    for (const r of reports) {
+      if (opts.json) { console.log(JSON.stringify(r, null, 2)); continue; }
+      console.log(`${r.ok ? "✓" : "✗"} ${r.projectId}  ${r.path}  (default: ${r.defaultBranch ?? "?"}, build: ${r.buildSystems.join(",") || "none"}, protection: ${r.branchProtection.status})`);
+      for (const f of r.findings) console.log(`    ${f.severity.padEnd(5)} ${f.code}: ${f.message}`);
+    }
+    process.exitCode = reports.every((r) => r.ok) ? 0 : 1;
+    handle.close();
+  });
 
 program
   .command("serve")

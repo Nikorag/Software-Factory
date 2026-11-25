@@ -1,2 +1,8 @@
 # Integrations
 Verified so far: gh (authenticated), Claude Code 2.1.x CLI. SpecKit commands (from its README): `specify init`, `/speckit-constitution`, `-specify`, `-plan`, `-tasks`, `-implement`, `-converge`; re-verify against the installed version in Milestone 6. Linear, Bionic: pending.
+
+## Git and repositories (Milestone 3)
+- All git calls go through `src/repo/git.ts`: no shell, no credential prompts, and a guard (`assertSafeGitArgs`) that rejects force/mirror/delete pushes, pushes to protected branches (the project's default branch), and deletion of protected branches. A push must name an explicit branch.
+- `factory project:validate [id]` inspects each enrolled repo **read-only**: git status, default branch, origin (credentials stripped), CLAUDE.md, `.specify/`, submodules, build system and candidate test/lint/typecheck commands, GitHub Actions workflows, branch protection. Existing config is never overwritten; detected commands are suggestions.
+- Branch protection is read with `gh api`. A 404 on the branch is only trusted as "unprotected" after the repository itself is confirmed visible; otherwise the result is `unknown`. **Full autonomy errors on unprotected branches or protection with no required checks, and warns when unverifiable.** Milestone 8 must refuse to auto-merge unless protection was actually verified.
+- SSH host aliases such as `git@github.com-<account>:owner/repo.git` (multi-account setups) are recognised. `gh` uses its *active* account, so a repo owned by the other account reads as inaccessible until you `gh auth switch`. A per-project GitHub account setting is planned.
