@@ -1,13 +1,13 @@
+# Stage timeouts and retries. Every workflow (feature, bugfix, maintenance) gets built-in per-stage timeouts that cover
+# what each stage's own work may take (agent timeouts, project commands at commandTimeoutSeconds, implementation passes):
+# see src/config/stage-budgets.ts. A timeout set here is used only when it is LONGER than that built-in one, so a short
+# value (including one in an older copy of this file) can never abort a stage mid-work. `defaults` covers the short stages.
 defaults:
   timeoutSeconds: 900
   maxRetries: 2
 workflows:
   feature:
     stages:
-      REQUIREMENTS_ANALYSIS: { timeoutSeconds: 900, maxRetries: 2 }
-      SPECIFICATION_GENERATION: { timeoutSeconds: 2400, maxRetries: 2 }   # specify + clarify + plan + tasks
-      SPECIFICATION_REVIEW: { timeoutSeconds: 900, maxRetries: 2 }
-      SPECIFICATION_REMEDIATION: { timeoutSeconds: 1200, maxRetries: 1 }
-      SPECIFICATION_VALIDATION: { timeoutSeconds: 900, maxRetries: 2 }
-      IMPLEMENTATION: { timeoutSeconds: 3600, maxRetries: 1 }
+      SPECIFICATION_REMEDIATION: { timeoutSeconds: 900, maxRetries: 1 }
+      IMPLEMENTATION: { timeoutSeconds: 900, maxRetries: 1 }
       CI_VALIDATION: { timeoutSeconds: 1800, maxRetries: 0 }

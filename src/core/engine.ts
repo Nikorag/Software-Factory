@@ -5,6 +5,8 @@ import type { StageName, LoadedConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { decisions, jobs, stageExecutions } from "../db/schema.js";
 import { getControl } from "./control.js";
+import { effectiveStageTimeoutSeconds } from "../config/stage-budgets.js";
+import { fixCycleHistory, inCiPhase, lifetimeNote, type FixPhase } from "./fix-cycles.js";
 import { claimNext, getJob, recoverExpired, renewLease, runningCount, type JobRow } from "./jobs.js";
 import { isMutating, nextStage, remediationTarget, statusForStage } from "./workflow.js";
 
@@ -43,6 +45,8 @@ export interface EngineOptions {
   leaseMs?: number;
   heartbeatMs?: number;
   backoffBaseMs?: number;
+  /** After an abort (cancel, stop, timeout...), how long to wait for the stage's handler (and its agent process) to actually stop before the job is released. */
+  abortSettleMs?: number;
 }
 
 type AbortReason = "timeout" | "cancel" | "estop" | "lease-lost" | "shutdown";
@@ -52,11 +56,15 @@ export class Engine {
   readonly owner: string;
   /** Aborters for stages running right now, so a stop or shutdown reaches the agent immediately, not at the next heartbeat. */
   private readonly active = new Map<string, (r: AbortReason) => void>();
+  /** Jobs whose runJob is in flight here (between stages too, and while an aborted handler is settling). Never recovered as crashed. */
+  private readonly running = new Set<string>();
+  /** Aborted handlers that had not stopped within abortSettleMs. Their jobs are not claimed again until they have: one agent per worktree. */
+  private readonly unsettled = new Map<string, Promise<unknown>>();
   private readonly o: Required<Omit<EngineOptions, "owner" | "observer">> & { observer?: EngineObserver };
 
   constructor(opts: EngineOptions) {
     this.owner = opts.owner ?? `factory-${process.pid}-${randomUUID().slice(0, 8)}`;
-    this.o = { now: () => new Date(), leaseMs: 60_000, heartbeatMs: 15_000, backoffBaseMs: 5_000, ...opts };
+    this.o = { now: () => new Date(), leaseMs: 60_000, heartbeatMs: 15_000, backoffBaseMs: 5_000, abortSettleMs: 15_000, ...opts };
   }
 
   /** Ids of jobs this engine is executing right now. */
@@ -80,6 +88,10 @@ export class Engine {
   remediationCap(job: Pick<JobRow, "projectId">): number {
     return this.o.config.projects?.projects.find((p) => p.id === job.projectId)?.overrides?.maxRemediationAttempts ?? this.o.config.factory.maxRemediationAttempts;
   }
+  /** Implementation passes for a job: its project's own setting, else the global one. */
+  private implementationPasses(job: Pick<JobRow, "projectId">): number {
+    return this.o.config.projects?.projects.find((p) => p.id === job.projectId)?.overrides?.maxImplementationPasses ?? this.o.config.factory.maxImplementationPasses;
+  }
   /** How many jobs of one project may run at once. Default 1. Every job has its own worktree (isolated files, and worktree creation is serialised per repository), so this is not a technical limit: it is a conservative default, because tickets in one repository often touch the same files and would raise conflicting PRs, and each job installs and tests on its own. Raise it per project when the work is independent. */
   private projectCap(projectId: string): number {
     return this.o.config.projects?.projects.find((p) => p.id === projectId)?.overrides?.maxConcurrentJobs ?? 1;
@@ -93,13 +105,17 @@ export class Engine {
    */
   start(): number {
     const { db } = this.o;
-    recoverExpired(db, this.o.now());
+    const now = this.o.now();
+    // Renew our own leases first: after the machine sleeps the clock jumps past them before any heartbeat has run. Then recover only
+    // jobs nobody here is running (crashed processes, or our own from before a restart), never the ones this engine is executing.
+    for (const id of this.running) renewLease(db, id, this.owner, now, this.o.leaseMs);
+    recoverExpired(db, now, [...this.running, ...this.unsettled.keys()]);
     const ctl = getControl(db);
     if (ctl.paused || ctl.emergencyStop) return 0;
     this.resumePaused();
     let started = 0;
     while (this.inflight.size < this.o.config.factory.maxConcurrentJobs) {
-      const job = claimNext(db, this.owner, this.o.now(), this.o.leaseMs, (j) => runningCount(db, j.projectId) < this.projectCap(j.projectId));
+      const job = claimNext(db, this.owner, this.o.now(), this.o.leaseMs, (j) => !this.running.has(j.id) && !this.unsettled.has(j.id) && runningCount(db, j.projectId) < this.projectCap(j.projectId));
       if (!job) break;
       const p: Promise<void> = this.runJob(job.id)
         .catch((e) => this.o.logger.error({ jobId: job.id, err: String(e) }, "job run failed"))
@@ -129,6 +145,16 @@ export class Engine {
 
   /** Runs a claimed job stage by stage until it completes, holds, is rescheduled, or loses its lease. */
   async runJob(jobId: string): Promise<void> {
+    if (this.running.has(jobId)) return; // already executing here: never two runs of one job (one agent per worktree)
+    this.running.add(jobId);
+    try {
+      await this.runClaimed(jobId);
+    } finally {
+      this.running.delete(jobId);
+    }
+  }
+
+  private async runClaimed(jobId: string): Promise<void> {
     const { db } = this.o;
     const claimed = getJob(db, jobId);
     if (claimed) this.notify(claimed, claimed.stage as StageName); // re-assert external status after retry/recovery (observer dedupes)
@@ -138,15 +164,29 @@ export class Engine {
       if (job.cancelRequested) return this.hold(job, "CANCELLED", "cancelled by request");
       const ctl = getControl(db);
       if (ctl.paused || ctl.emergencyStop) return this.hold(job, "PAUSED", ctl.reason ?? "factory paused");
-      if (HELD_STAGES.has(job.stage as StageName)) return; // defensive: nothing to execute
+      if (HELD_STAGES.has(job.stage as StageName)) return this.release(job); // nothing to execute: never leave it "running"
       const keepGoing = await this.runStage(job, job.stage as StageName);
       if (!keepGoing) return;
     }
   }
 
+  /** A claimed job that sits in a held stage (e.g. queued there by an old cancel-then-retry): give it back its held status and free its slot. */
+  private release(job: JobRow): void {
+    const { db } = this.o;
+    const stage = job.stage as StageName;
+    db.transaction(() => {
+      db.update(jobs).set({ status: statusForStage(stage), leaseOwner: null, leaseExpiresAt: null, updatedAt: this.o.now() }).where(eq(jobs.id, job.id)).run();
+      db.insert(decisions).values({ jobId: job.id, kind: "job.release", decision: `released at ${stage}`, rationale: "the job was queued in a held stage, so there was nothing to run; retry it to resume", actor: "factory" }).run();
+    });
+    this.o.logger.warn({ jobId: job.id, stage }, "released a job queued in a held stage");
+  }
+
   private policy(job: JobRow, stage: StageName) {
     const w = this.o.config.workflows;
-    return { ...w.defaults, ...(w.workflows[job.workflow]?.stages[stage] ?? {}) };
+    const p = { ...w.defaults, ...(w.workflows[job.workflow]?.stages[stage] ?? {}) };
+    // Never shorter than what the stage's own handler may spend (agents, project commands, passes): a timeout there discards real work.
+    const timeoutSeconds = effectiveStageTimeoutSeconds(stage, p.timeoutSeconds, { commandTimeoutSeconds: this.o.config.factory.commandTimeoutSeconds, implementationPasses: this.implementationPasses(job) });
+    return { ...p, timeoutSeconds };
   }
 
   /** Executes one stage attempt. Returns true if the job is still ours and runnable immediately. */
@@ -186,10 +226,12 @@ export class Engine {
     }, this.o.heartbeatMs);
 
     let result: StageResult;
+    // async wrapper: a handler that throws synchronously becomes a rejection like any other
+    const run = (async () => handler({ job, attempt, executionId: execId, signal: ac.signal, dryRun, logger: log }))();
     try {
       const aborted = new Promise<never>((_, rej) => ac.signal.addEventListener("abort", () => rej(new Error(`aborted: ${reason}`)), { once: true }));
       aborted.catch(() => {}); // avoid unhandled rejection when the handler wins the race
-      result = await Promise.race([handler({ job, attempt, executionId: execId, signal: ac.signal, dryRun, logger: log }), aborted]);
+      result = await Promise.race([run, aborted]);
     } catch (e) {
       result = { kind: "retry", reason: e instanceof Error ? e.message : String(e) };
     } finally {
@@ -197,6 +239,9 @@ export class Engine {
       clearInterval(beat);
       this.active.delete(job.id);
     }
+    // Aborted: the agent is being stopped (SIGTERM, grace, SIGKILL, then post-run checks). Let it finish stopping before the job is
+    // released, or a quick retry could start a second agent in the same worktree.
+    if (reason) await this.settle(job.id, run, log);
 
     if (reason === "shutdown") {
       // The service is stopping, not the job failing: put it back exactly where it was, spending no attempt, so a restart resumes it.
@@ -214,6 +259,27 @@ export class Engine {
     return this.apply(job, stage, result, finish, undefined, policy.maxRetries);
   }
 
+  /** Waits (bounded) for an aborted handler to stop. If it has not, its job is kept from being claimed again until it has. */
+  private async settle(jobId: string, run: Promise<unknown>, log: Logger): Promise<void> {
+    const done = run.then(() => undefined, () => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settled = await Promise.race([done.then(() => true), new Promise<boolean>((r) => { timer = setTimeout(() => r(false), this.o.abortSettleMs); })]);
+    clearTimeout(timer);
+    if (settled) return;
+    log.warn({ waitedMs: this.o.abortSettleMs }, "aborted stage has not stopped yet; the job will not be run again until it has");
+    this.unsettled.set(jobId, done);
+    void done.then(() => { if (this.unsettled.get(jobId) === done) this.unsettled.delete(jobId); });
+  }
+
+  /** Which fix-cycle budget a remediation from `stage` spends, and how many of it are already used. */
+  private fixPhase(job: JobRow, stage: StageName): { phase: FixPhase; used: number } {
+    if (stage === "SPECIFICATION_REVIEW" || stage === "SPECIFICATION_VALIDATION") return { phase: "specification", used: job.remediationAttempts };
+    if (inCiPhase(this.o.db, job.id)) return { phase: "CI", used: job.remediationAttempts };
+    // CI's first fix request opens a fresh budget: the review fixes before the PR must not use up the fixes CI needs.
+    if (stage === "CI_VALIDATION") return { phase: "CI", used: 0 };
+    return { phase: "code", used: job.remediationAttempts };
+  }
+
   private apply(
     job: JobRow, stage: StageName, result: StageResult,
     finish: (o: "succeeded" | "failed" | "timed_out" | "cancelled" | "waiting", e?: { output?: unknown; error?: string }) => unknown,
@@ -228,22 +294,30 @@ export class Engine {
           finish("succeeded", { output: result.output });
           if (note) db.insert(decisions).values({ jobId: job.id, kind: "dry-run", decision: `${stage} skipped`, rationale: note, actor: "factory" }).run();
           if (next === "COMPLETED") this.complete(job);
-          else this.setStage(job, next, { stageAttempts: 0 });
+          else if (next === "IMPLEMENTATION_PREPARATION") {
+            // Leaving the specification phase: code fixes get their own budget, whatever the spec used.
+            if (job.remediationAttempts > 0) db.insert(decisions).values({ jobId: job.id, kind: "remediation.budget", decision: "fresh fix-cycle budget for the code phase", rationale: `the specification used ${job.remediationAttempts}`, actor: "factory" }).run();
+            this.setStage(job, next, { stageAttempts: 0, remediationAttempts: 0 });
+          } else this.setStage(job, next, { stageAttempts: 0 });
         });
         return next !== "COMPLETED";
       }
       case "remediate": {
         const target = remediationTarget(stage);
         if (!target) { finish("failed", { error: `${stage} cannot remediate` }); this.hold(job, "FAILED", `${stage} reported findings but has no remediation path`); return false; }
-        const attempts = job.remediationAttempts + 1;
+        const { phase, used } = this.fixPhase(job, stage);
+        const attempts = used + 1;
         finish("succeeded", { output: { remediate: result.reason, details: result.output } });
         const cap = this.remediationCap(job);
+        const history = fixCycleHistory(db, job.id);
         if (attempts > cap) {
-          this.hold(job, "NEEDS_ATTENTION", `remediation attempts exhausted (${cap}): ${result.reason}`);
+          const note = lifetimeNote(history);
+          this.hold(job, "NEEDS_ATTENTION", `remediation attempts exhausted (${cap}) in the ${phase} phase: ${result.reason}${note ? `\n(${note}: retrying again may not converge)` : ""}`);
           return false;
         }
         db.transaction(() => {
-          db.insert(decisions).values({ jobId: job.id, kind: "remediation", decision: `${stage} -> ${target} (attempt ${attempts})`, rationale: result.reason, actor: "factory" }).run();
+          if (used !== job.remediationAttempts) db.insert(decisions).values({ jobId: job.id, kind: "remediation.budget", decision: "fresh fix-cycle budget for the CI phase", rationale: `the code phase used ${job.remediationAttempts}`, actor: "factory" }).run();
+          db.insert(decisions).values({ jobId: job.id, kind: "remediation", decision: `${stage} -> ${target} (attempt ${attempts} of ${cap}, ${phase} phase)`, rationale: result.reason, actor: "factory" }).run();
           this.setStage(job, target, { remediationAttempts: attempts, stageAttempts: 0 });
         });
         return true;

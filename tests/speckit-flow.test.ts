@@ -182,6 +182,8 @@ describe("independent review fallback (only for a local route)", () => {
   });
 });
 
+const specFixes = (h: ReturnType<typeof harness>) => h.ctx.handle.db.select().from(decisions).where(eq(decisions.kind, "remediation")).all().length;
+
 describe("review -> remediation loop", () => {
   it("fixes blocking findings, records rejected ones with their reasons, and tells the agent exactly what to fix", async () => {
     const h = harness();
@@ -193,7 +195,8 @@ describe("review -> remediation loop", () => {
     h.claude.b.onRemediate = (req, dir) => overwrite(req.cwd, `${dir}/spec.md`, fixture("spec.md") + "\n\n<!-- R1: date format clarified -->\n");
     await h.engine.tick();
     expect(h.stages().slice(2, 8)).toEqual(["REQUIREMENTS_ANALYSIS", "SPECIFICATION_GENERATION", "SPECIFICATION_REVIEW", "SPECIFICATION_REMEDIATION", "SPECIFICATION_VALIDATION", "IMPLEMENTATION_PREPARATION"]);
-    expect(job(h).remediationAttempts).toBe(1);
+    expect(specFixes(h)).toBe(1);
+    expect(job(h).remediationAttempts).toBe(0); // the code phase starts with a fresh fix-cycle budget
     const rem = h.claude.calls.find((c) => "accepted" in ((c.jsonSchema?.properties ?? {}) as object))!;
     expect(rem.prompt).toContain("R1");
     expect(rem.prompt).toContain("R2");
@@ -221,7 +224,8 @@ describe("specification validation", () => {
     await h.engine.tick();
     const findings = h.claude.calls.find((c) => "accepted" in ((c.jsonSchema?.properties ?? {}) as object))!.prompt;
     expect(findings).toContain("check:has-requirements");
-    expect(job(h).remediationAttempts).toBe(1);
+    expect(specFixes(h)).toBe(1);
+    expect(job(h).remediationAttempts).toBe(0); // the code phase starts with a fresh fix-cycle budget
     expect(h.stages()).toContain("SPECIFICATION_REMEDIATION");
     expect(h.stages().filter((s) => s === "SPECIFICATION_VALIDATION")).toHaveLength(2);
   });
@@ -232,7 +236,8 @@ describe("specification validation", () => {
       ? [{ id: "A1", category: "Inconsistency", severity: "HIGH", location: "plan.md", summary: "plan contradicts spec", recommendation: "align" }, { id: "A2", category: "Style", severity: "LOW", location: "t", summary: "nit", recommendation: "r" }]
       : [{ id: "A2", category: "Style", severity: "MEDIUM", location: "t", summary: "nit", recommendation: "r" }] });
     await h.engine.tick();
-    expect(job(h).remediationAttempts).toBe(1);
+    expect(specFixes(h)).toBe(1);
+    expect(job(h).remediationAttempts).toBe(0); // the code phase starts with a fresh fix-cycle budget
     expect(h.claude.calls.find((c) => "accepted" in ((c.jsonSchema?.properties ?? {}) as object))!.prompt).toContain("analyze:A1");
     expect(h.stages()).toContain("IMPLEMENTATION_PREPARATION"); // MEDIUM did not block
   });
