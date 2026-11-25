@@ -22,7 +22,7 @@ import { TaskManager } from "./tasks.js";
 import { UpdateChecker } from "./versions.js";
 import { bbStore } from "../bitbucket/auth.js";
 import { keychainStore, trackerConfigured } from "../tracker/index.js";
-import { pruneAgentLogs } from "./retention.js";
+import { pruneAgentLogs, rotateLogs } from "./retention.js";
 import { addProfile, DEFAULT_PROFILE, factoryRoot, listProfiles, removeProfile } from "../config/profiles.js";
 import { isUp, startService as launchService } from "./launch.js";
 import { drainChildren, killAllChildren, reapOrphans, setChildPidDir } from "../agents/children.js";
@@ -85,11 +85,19 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
   try {
     await app.listen({ host: config.factory.server.host, port });
   } catch (e) { setChildPidDir(null); lock.release(); throw e; }
-  // Conversation logs are sensitive (ticket text, code, command output): prune on start and then daily.
-  const agentLogs = join(config.factory.dataDir, "logs", "agents");
-  const prune = () => { try { const n = pruneAgentLogs(agentLogs, config.factory.logRetentionDays); if (n) logger.info({ removed: n, days: config.factory.logRetentionDays }, "pruned old agent logs"); } catch { /* best effort */ } };
+  // Conversation and command logs are sensitive (ticket text, code, command output): prune on start and then daily.
+  const logsDir = join(config.factory.dataDir, "logs");
+  const prune = () => {
+    for (const sub of ["agents", "commands"]) {
+      try { const n = pruneAgentLogs(join(logsDir, sub), config.factory.logRetentionDays); if (n) logger.info({ removed: n, days: config.factory.logRetentionDays, dir: sub }, "pruned old logs"); } catch { /* best effort */ }
+    }
+  };
   prune();
   const pruneTimer = setInterval(prune, 24 * 3600_000); pruneTimer.unref();
+  // factory.log, service.out and the LaunchAgent's stdout/stderr are append-only: cap them by size (checked on start and every 10 minutes).
+  const rotate = () => { try { const r = rotateLogs(logsDir); if (r.length) logger.info({ rotated: r }, "rotated logs"); } catch { /* best effort */ } };
+  rotate();
+  const rotateTimer = setInterval(rotate, 10 * 60_000); rotateTimer.unref();
   scheduler?.start();
   logger.info({ port, scheduler: Boolean(scheduler), dryRun: config.factory.dryRun, mergeMode: config.factory.mergeMode }, "factory service started");
 
@@ -99,6 +107,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     async stop(reason = "stop requested") {
       if (stopped) return; stopped = true;
       writeStopMarker(dataDir, reason); // first, so the app can tell this stop from a crash however it ends
+      clearInterval(pruneTimer); clearInterval(rotateTimer);
       logger.info({ reason }, "factory service stopping");
       await scheduler?.stop();
       // The engine is idle once each aborted stage has returned, which can be before its process group has exited (it gets

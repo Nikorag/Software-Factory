@@ -40,8 +40,23 @@ const sameToken = (a: string, b: string): boolean => {
   return timingSafeEqual(x, y);
 };
 
+/** Mutating requests and anything that is not a 2xx are worth keeping; successful reads (mostly polling) are debug-only. */
+export function requestLogLevel(method: string, statusCode: number): "info" | "debug" {
+  const read = method === "GET" || method === "HEAD" || method === "OPTIONS";
+  return !read || statusCode < 200 || statusCode >= 300 ? "info" : "debug";
+}
+
 export function buildServer(deps: ServerDeps): FastifyInstance {
-  const app: FastifyInstance = Fastify({ loggerInstance: deps.logger as FastifyBaseLogger, bodyLimit: 16 * 1024 });
+  // Fastify's own per-request logging is off: the dashboard and the menu bar app poll several endpoints every few seconds, which
+  // filled factory.log with ~150k lines a day. requestLogLevel() decides instead: changes and errors at info, routine reads at debug.
+  const app: FastifyInstance = Fastify({ loggerInstance: deps.logger as FastifyBaseLogger, bodyLimit: 16 * 1024, disableRequestLogging: true });
+  // disableRequestLogging also silences Fastify's default error log, so keep server errors (with their stack) ourselves.
+  app.addHook("onError", async (req, _reply, err) => {
+    if ((err.statusCode ?? 500) >= 500) req.log.error({ err }, "request failed");
+  });
+  app.addHook("onResponse", async (req, reply) => {
+    req.log[requestLogLevel(req.method, reply.statusCode)]({ method: req.method, url: req.url.split("?")[0], statusCode: reply.statusCode, ms: Math.round(reply.elapsedTime) }, "request");
+  });
   const hostOk = (host: string | undefined): boolean => {
     if (!host) return false;
     const h = host.toLowerCase();
