@@ -24,6 +24,8 @@ export const jobs = sqliteTable(
     remediationAttempts: integer("remediation_attempts").notNull().default(0),
     stageAttempts: integer("stage_attempts").notNull().default(0),
     cancelRequested: integer("cancel_requested", { mode: "boolean" }).notNull().default(false),
+    heldFromStage: text("held_from_stage"), // stage to resume at when a held/failed job is retried
+    notBefore: ts("not_before"), // retry backoff: not claimable before this time
     leaseOwner: text("lease_owner"), // process that holds the job
     leaseExpiresAt: ts("lease_expires_at"),
     dryRun: integer("dry_run", { mode: "boolean" }).notNull().default(false),

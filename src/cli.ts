@@ -5,6 +5,15 @@ import { openDb } from "./db/client.js";
 import { runDoctor } from "./doctor/checks.js";
 import { createLogger } from "./logging/logger.js";
 import { buildServer } from "./server/app.js";
+import { cancelJob, listJobs, retryJob } from "./core/jobs.js";
+import * as control from "./core/control.js";
+import { runSimulation } from "./core/simulation.js";
+
+const openFactoryDb = () => {
+  const config = loadConfig();
+  return { config, handle: openDb(join(config.factory.dataDir, "database", "factory.sqlite")) };
+};
+const ACTOR = "cli";
 
 const program = new Command("factory").description("Local-first autonomous software factory");
 
@@ -25,6 +34,32 @@ program
     const c = loadConfig();
     console.log(`OK: ${c.projects.projects.length} project(s), dataDir=${c.factory.dataDir}`);
   });
+
+program
+  .command("simulate")
+  .description("Run a simulated job through every stage in an in-memory database (no side effects)")
+  .option("--dry-run", "exercise dry-run behaviour (mutating stages are skipped)")
+  .action(async (opts: { dryRun?: boolean }) => {
+    const { history } = await runSimulation(loadConfig(), Boolean(opts.dryRun));
+    console.log(history.join("\n"));
+  });
+
+program.command("jobs").description("List jobs").action(() => {
+  const { handle } = openFactoryDb();
+  for (const j of listJobs(handle.db)) console.log(`${j.id.slice(0, 8)}  ${j.externalKey.padEnd(10)} ${j.status.padEnd(9)} ${j.stage}${j.lastError ? `  (${j.lastError})` : ""}`);
+  handle.close();
+});
+program.command("job:cancel <id>").description("Cancel a job").action((id: string) => {
+  const { handle } = openFactoryDb(); console.log(cancelJob(handle.db, id, ACTOR).status); handle.close();
+});
+program.command("job:retry <id>").description("Retry a failed or held job").action((id: string) => {
+  const { handle } = openFactoryDb(); console.log(retryJob(handle.db, id, ACTOR).stage); handle.close();
+});
+for (const [name, fn] of [["pause", control.pause], ["resume", control.resume], ["stop", control.emergencyStop], ["clear-stop", control.clearEmergencyStop]] as const) {
+  program.command(name).description(`Control: ${name}`).action(() => {
+    const { handle } = openFactoryDb(); (fn as (d: typeof handle.db, a: string) => void)(handle.db, ACTOR); console.log(`${name}: ok`); handle.close();
+  });
+}
 
 program
   .command("serve")

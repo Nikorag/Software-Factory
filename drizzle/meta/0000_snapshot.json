@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c6e2dc98-95f3-4a70-9b7e-4e33559c60e6",
+  "id": "0e6b959b-fbdd-4b1b-bceb-ced51b925dc9",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "agent_invocations": {
@@ -319,6 +319,20 @@
           "notNull": true,
           "autoincrement": false,
           "default": false
+        },
+        "held_from_stage": {
+          "name": "held_from_stage",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "not_before": {
+          "name": "not_before",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "lease_owner": {
           "name": "lease_owner",

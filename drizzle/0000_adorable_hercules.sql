@@ -44,6 +44,8 @@ CREATE TABLE `jobs` (
 	`remediation_attempts` integer DEFAULT 0 NOT NULL,
 	`stage_attempts` integer DEFAULT 0 NOT NULL,
 	`cancel_requested` integer DEFAULT false NOT NULL,
+	`held_from_stage` text,
+	`not_before` integer,
 	`lease_owner` text,
 	`lease_expires_at` integer,
 	`dry_run` integer DEFAULT false NOT NULL,
