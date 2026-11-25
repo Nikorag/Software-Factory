@@ -4,6 +4,8 @@ Updates: `software-factory update` (add `--check` to only look). Releases are gi
 
 ## Unreleased
 
+- **No more fix-cycle loops on work only a human can do** (ADR 0011). Tasks tagged `[HUMAN]`, and anything an agent defers (`deferred` in the implementer, remediation and converge output), are listed on the PR under "Needs human verification" instead of blocking. A finding re-raised after being rejected with nothing changed is deferred rather than cycled again; reviewers see what earlier cycles raised and decided, and a branch whose code did not change is not re-tested or re-reviewed. The implementation pass loop stops when a pass changes nothing and converge appends nothing. Retries are told why the last attempt failed and resume the implementer's session (falling back to a fresh one if it expired); the implementer now sees the ticket and human answers; a committed secret stops the job before another agent run. CI's no-checks grace window and time limit restart from each push.
+
 - **Bitbucket Cloud support** as an alternative to GitHub, chosen per project, with named token credentials (access tokens or Atlassian API tokens) in the keychain. See docs/bitbucket.md.
 
 - **Jira support** (Jira Cloud, OAuth 2.0 3LO) as an alternative to Linear, chosen per profile. Statuses and labels are mapped to existing ones in Settings because Jira statuses cannot be created. See docs/jira.md.
