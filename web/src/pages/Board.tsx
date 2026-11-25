@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Pager } from "@/components/Pager";
+import { usePaged } from "@/lib/paging";
 import { StatusBadge } from "@/components/StatusBadge";
 import { api, send } from "@/lib/api";
 import type { Board as BoardData, BoardItem } from "@/lib/types";
@@ -14,6 +16,19 @@ import { usePoll } from "@/hooks/usePoll";
 import { cn } from "@/lib/utils";
 
 const ALL = "__all";
+
+const LANE_PAGE = 10;
+/** One column of the board: the first few tickets, then "show more" so a busy column does not become a wall. */
+function Lane({ state, items, render }: { state: string; items: BoardItem[]; render: (t: BoardItem) => React.ReactNode }) {
+  const [shown, setShown] = useState(LANE_PAGE);
+  return (
+    <section aria-label={state} className="grid w-72 shrink-0 content-start gap-2">
+      <h3 className="flex items-center gap-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{state}<span className="rounded-full bg-muted px-1.5 text-[10px] tabular-nums">{items.length}</span></h3>
+      {items.slice(0, shown).map(render)}
+      {items.length > shown ? <Button size="sm" variant="ghost" onClick={() => setShown(shown + LANE_PAGE)}>Show {Math.min(LANE_PAGE, items.length - shown)} more ({items.length - shown} hidden)</Button> : null}
+    </section>
+  );
+}
 
 function Ticket({ t, onStart, busy }: { t: BoardItem; onStart: (t: BoardItem) => void; busy: boolean }) {
   return (
@@ -57,6 +72,7 @@ export function Board() {
   const lanes = new Map<string, BoardItem[]>();
   for (const t of data?.items ?? []) lanes.set(t.state, [...(lanes.get(t.state) ?? []), t]);
   const searching = q !== "";
+  const results = usePaged(data?.items ?? [], 25);
 
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
@@ -74,15 +90,13 @@ export function Board() {
       {data && data.items.length === 0 ? (
         <Card><CardContent className="text-sm text-muted-foreground">{searching ? `No ticket matches “${q}” in this profile's projects.` : data.projects.length ? "No open tickets in your projects." : <>No projects are linked to Linear yet. <Link className="underline" to="/settings">Add one in Settings</Link>.</>}</CardContent></Card>
       ) : null}
-      {searching ? (
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{(data?.items ?? []).map((t) => <div key={t.id} className="grid gap-1"><span className="text-xs text-muted-foreground">{t.state}</span><Ticket t={t} onStart={start} busy={busy === t.id} /></div>)}</div>
-      ) : (
+      {searching ? (<>
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{results.slice.map((t) => <div key={t.id} className="grid gap-1"><span className="text-xs text-muted-foreground">{t.state}</span><Ticket t={t} onStart={start} busy={busy === t.id} /></div>)}</div>
+        <Pager page={results.page} pages={results.pages} pageSize={results.pageSize} total={results.total} onPage={results.setPage} onPageSize={results.setPageSize} />
+      </>) : (
         <div className="flex gap-3 overflow-x-auto pb-2">
           {[...lanes.entries()].map(([state, items]) => (
-            <section key={state} aria-label={state} className="grid w-72 shrink-0 content-start gap-2">
-              <h3 className="flex items-center gap-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{state}<span className="rounded-full bg-muted px-1.5 text-[10px] tabular-nums">{items.length}</span></h3>
-              {items.map((t) => <Ticket key={t.id} t={t} onStart={start} busy={busy === t.id} />)}
-            </section>
+            <Lane key={state} state={state} items={items} render={(t) => <Ticket key={t.id} t={t} onStart={start} busy={busy === t.id} />} />
           ))}
         </div>
       )}

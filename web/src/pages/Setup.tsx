@@ -11,7 +11,7 @@ import type { Project, SetupInfo, TeamAudit } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
 import { cn } from "@/lib/utils";
 
-const STEPS = ["Your tools", "Linear", "First project", "Done"];
+const STEPS = ["Your tools", "Issue Tracking", "First project", "Done"];
 
 /** First-run wizard: each step checks the real thing, so "Next" is only offered when it is true. */
 export function Setup() {

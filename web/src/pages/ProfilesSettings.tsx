@@ -1,3 +1,5 @@
+import { Pager } from "@/components/Pager";
+import { usePaged } from "@/lib/paging";
 import { useState } from "react";
 import { ExternalLink, Plus, Trash2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -21,11 +23,12 @@ export function ProfilesSettings() {
     if (r.ok) { setName(""); setMsg({ ok: !r.data.warning, text: r.data.warning ?? `Created "${r.data.profile?.name ?? name}" and started it. Switch to it from the profile menu to set up its Linear key and projects.` }); void reload(); } else setMsg({ ok: false, text: r.error });
   };
   const remove = async (n: string) => { const r = await send("DELETE", `/api/profiles/${encodeURIComponent(n)}`); setMsg(r.ok ? { ok: true, text: `Removed "${n}". Its data is still on disk.` } : { ok: false, text: r.error }); void reload(); };
+  const profiles = usePaged(data?.profiles ?? [], 10);
   return (
     <div className="grid gap-4">
       <Card><CardHeader><CardTitle className="text-sm">Profiles</CardTitle><CardDescription>Each profile is its own factory with its own projects, Linear workspace, GitHub account, data and port. They run at the same time and never share anything.</CardDescription></CardHeader>
         <CardContent className="grid gap-2">
-          {(data?.profiles ?? []).map((p) => (
+          {profiles.slice.map((p) => (
             <div key={p.name} className="flex flex-wrap items-center gap-3 rounded-md border p-3 text-sm">
               <b>{p.name}</b>
               {p.current ? <Badge variant="secondary">this one</Badge> : null}
@@ -40,6 +43,7 @@ export function ProfilesSettings() {
               ) : null}
             </div>
           ))}
+          <Pager page={profiles.page} pages={profiles.pages} pageSize={profiles.pageSize} total={profiles.total} onPage={profiles.setPage} onPageSize={profiles.setPageSize} />
         </CardContent></Card>
       <Card><CardHeader><CardTitle className="text-sm">Add a profile</CardTitle></CardHeader>
         <CardContent className="grid gap-2">

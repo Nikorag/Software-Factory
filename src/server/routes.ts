@@ -1,7 +1,7 @@
-import { realpathSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { realpathSync, statSync, openSync, readSync, closeSync, unlinkSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { LoadedConfig } from "../config/schema.js";
 import { STAGES } from "../config/schema.js";
@@ -9,7 +9,7 @@ import type { FactoryDb } from "../db/client.js";
 import { agentInvocations, artifacts, decisions, jobs, linearOutbox, projects, stageExecutions, worktrees } from "../db/schema.js";
 import * as control from "../core/control.js";
 import type { Engine } from "../core/engine.js";
-import { answerJob, cancelJob, JobError, retryJob } from "../core/jobs.js";
+import { answerJob, archiveJob, cancelJob, deleteJob, JobError, retryJob } from "../core/jobs.js";
 import type { Scheduler } from "../service/scheduler.js";
 import { counts, systemInfo, type HealthChecker } from "../service/metrics.js";
 import { readConversation } from "../agents/transcript.js";
@@ -41,7 +41,7 @@ const ms = (d: Date | null | undefined) => (d ? d.getTime() : null);
 const jobRow = (j: typeof jobs.$inferSelect) => ({
   id: j.id, key: j.externalKey, project: j.projectId, workflow: j.workflow, stage: j.stage, status: j.status, heldFromStage: j.heldFromStage,
   remediationAttempts: j.remediationAttempts, stageAttempts: j.stageAttempts, autonomous: j.autonomous, dryRun: j.dryRun, prUrl: j.prUrl,
-  lastError: j.lastError, notBefore: ms(j.notBefore), createdAt: ms(j.createdAt), updatedAt: ms(j.updatedAt),
+  lastError: j.lastError, notBefore: ms(j.notBefore), createdAt: ms(j.createdAt), updatedAt: ms(j.updatedAt), archivedAt: ms(j.archivedAt),
 });
 const clip = (s: string | null, n = 4000) => (s && s.length > n ? `${s.slice(0, n)}…` : s);
 
@@ -62,12 +62,21 @@ export function readLogTail(dataDir: string, path: string, tail: number): { text
   } catch { return null; }
 }
 
+/** Delete an agent log, only if it lives under <dataDir>/logs (same containment rule as readLogTail). */
+function removeLog(dataDir: string, path: string): void {
+  try {
+    const root = realpathSync(join(dataDir, "logs"));
+    const real = realpathSync(resolve(path));
+    if (real.startsWith(root + sep)) unlinkSync(real);
+  } catch { /* already gone */ }
+}
+
 export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>): void {
   const { db } = d;
   const actor = "dashboard";
 
   app.get("/api/overview", async () => {
-    const all = db.select().from(jobs).orderBy(desc(jobs.updatedAt)).limit(300).all();
+    const all = db.select().from(jobs).where(isNull(jobs.archivedAt)).orderBy(desc(jobs.updatedAt)).limit(300).all();
     return {
       control: control.getControl(db),
       counts: counts(db),
@@ -84,12 +93,25 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     };
   });
 
-  app.get<{ Querystring: { status?: string; project?: string; limit?: string } }>("/api/jobs", async (req) => {
-    const limit = Math.min(Number(req.query.limit) || 100, 500);
-    let rows = db.select().from(jobs).orderBy(desc(jobs.updatedAt)).limit(1000).all();
-    if (req.query.status) rows = rows.filter((j) => j.status === req.query.status);
-    if (req.query.project) rows = rows.filter((j) => j.projectId === req.query.project);
-    return { jobs: rows.slice(0, limit).map(jobRow) };
+  /** Paged, filterable job list. archived: "hide" (default) | "only" | "all". q matches ticket key, project, stage or the last error. */
+  app.get<{ Querystring: { status?: string; project?: string; q?: string; archived?: string; page?: string; pageSize?: string; limit?: string } }>("/api/jobs", async (req) => {
+    const pageSize = Math.min(Math.max(Number(req.query.pageSize ?? req.query.limit) || 25, 1), 200);
+    const conds = [];
+    if (req.query.status) conds.push(eq(jobs.status, req.query.status as typeof jobs.$inferSelect["status"]));
+    if (req.query.project) conds.push(eq(jobs.projectId, req.query.project));
+    if (req.query.archived === "only") conds.push(isNotNull(jobs.archivedAt));
+    else if (req.query.archived !== "all") conds.push(isNull(jobs.archivedAt));
+    const text = (req.query.q ?? "").trim().slice(0, 100);
+    if (text) {
+      const like = `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      conds.push(or(sql`${jobs.externalKey} like ${like} escape '\\'`, sql`${jobs.projectId} like ${like} escape '\\'`, sql`${jobs.stage} like ${like} escape '\\'`, sql`coalesce(${jobs.lastError}, '') like ${like} escape '\\'`)!);
+    }
+    const where = conds.length ? and(...conds) : undefined;
+    const total = db.select({ n: sql<number>`count(*)` }).from(jobs).where(where).get()?.n ?? 0;
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(Math.max(Number(req.query.page) || 1, 1), pages);
+    const rows = db.select().from(jobs).where(where).orderBy(desc(jobs.updatedAt)).limit(pageSize).offset((page - 1) * pageSize).all();
+    return { jobs: rows.map(jobRow), total, page, pageSize, pages };
   });
 
   app.get<{ Params: { id: string } }>("/api/jobs/:id", async (req, reply) => {
@@ -177,6 +199,19 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   app.post<{ Params: { id: string }; Body: { answer?: unknown } }>("/api/jobs/:id/answer", { preHandler: requireToken }, async (req, reply) => {
     try { return { ok: true, job: jobRow(answerJob(db, req.params.id, typeof req.body?.answer === "string" ? req.body.answer : "", actor)) }; }
     catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
+  });
+  for (const [name, archived] of [["archive", true], ["unarchive", false]] as const) {
+    app.post<{ Params: { id: string } }>(`/api/jobs/:id/${name}`, { preHandler: requireToken }, async (req, reply) => {
+      try { return { ok: true, job: jobRow(archiveJob(db, req.params.id, actor, archived)) }; }
+      catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
+    });
+  }
+  app.delete<{ Params: { id: string } }>("/api/jobs/:id", { preHandler: requireToken }, async (req, reply) => {
+    try {
+      const { logPaths } = deleteJob(db, req.params.id);
+      if (d.dataDir) for (const p of logPaths) removeLog(d.dataDir, p);
+      return { ok: true };
+    } catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
   });
   app.post<{ Params: { id: string } }>("/api/jobs/:id/retry", { preHandler: requireToken }, async (req, reply) => {
     try { return { ok: true, job: jobRow(retryJob(db, req.params.id, actor)) }; }

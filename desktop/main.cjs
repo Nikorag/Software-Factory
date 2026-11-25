@@ -1,7 +1,8 @@
 // The Software Factory desktop app: a window onto a profile's dashboard. It is deliberately thin: the factory itself runs as a
 // background service (started by `software-factory start`) and keeps working when this window is closed.
-const { app, BrowserWindow, Menu, Tray, shell, dialog, session, nativeImage } = require("electron");
+const { app, BrowserWindow, Menu, Notification, Tray, shell, dialog, session, nativeImage } = require("electron");
 const { summarise } = require("./tray-model.cjs");
+const { newInterruptions } = require("./notify-model.cjs");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -75,9 +76,13 @@ async function stopAll() {
 
 
 // ---- the menu bar icon: the app stays here when its window is closed, so the factory is one click away while the engine runs ----
+/** Showing the Dock icon again after it was hidden brings back the default Electron icon, so set ours every time. */
+function setDockIcon() { if (process.platform === "darwin" && fs.existsSync(ICON)) app.dock?.setIcon(nativeImage.createFromPath(ICON)); }
+function showDock() { if (process.platform !== "darwin" || !app.dock) return; setDockIcon(); void Promise.resolve(app.dock.show()).then(setDockIcon); }
+
 function openWindow(profile) {
   if (profile) current = profile;
-  if (process.platform === "darwin") void app.dock?.show();
+  if (process.platform === "darwin") void showDock();
   if (!win) createWindow();
   else { if (win.isMinimized()) win.restore(); win.show(); win.focus(); if (profile) void show(profile); }
 }
@@ -103,6 +108,27 @@ async function refreshTray() {
   tray.setContextMenu(Menu.buildFromTemplate(items));
 }
 
+// ---- system notifications for interruptions: a job that stops and needs you (a question, a fix-cycle limit, a failure) ----
+const seenInterruptions = new Set(), seededProfiles = new Set();
+async function checkInterruptions() {
+  if (SMOKE || !Notification.isSupported()) return;
+  for (const p of readProfiles()) {
+    if (!(await up(p))) continue;
+    let jobs;
+    try {
+      const get = async (status) => (await (await fetch(`${urlOf(p)}api/jobs?status=${status}&archived=hide&pageSize=50`, { signal: AbortSignal.timeout(1500) })).json()).jobs ?? [];
+      jobs = [...(await get("waiting")), ...(await get("failed"))];
+    } catch { continue; }
+    const fresh = newInterruptions(p.name, jobs, seenInterruptions, seededProfiles.has(p.name));
+    seededProfiles.add(p.name);
+    for (const n of fresh) {
+      const note = new Notification({ title: n.title, body: n.body, silent: false });
+      note.on("click", () => { openWindow(find(n.profile)); if (win) win.loadURL(`${urlOf(find(n.profile) ?? current)}#/jobs/${encodeURIComponent(n.jobId)}`); });
+      note.show();
+    }
+  }
+}
+
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, "trayTemplate.png")); // black with alpha: macOS tints it for light and dark menu bars
   icon.setTemplateImage(true);
@@ -110,6 +136,7 @@ function createTray() {
   tray.setToolTip("Software Factory");
   tray.on("double-click", () => openWindow());
   void refreshTray(); setInterval(() => void refreshTray(), 5000);
+  void checkInterruptions(); setInterval(() => void checkInterruptions(), 10000);
 }
 
 async function buildMenu() {
@@ -169,7 +196,7 @@ else {
   app.on("second-instance", (_e, argv) => openWindow(find(profileArg(argv)))); // `software-factory` again: bring the window back, even from the menu bar
   app.whenReady().then(() => {
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false)); // no camera, mic, location, notifications...
-    if (process.platform === "darwin" && fs.existsSync(ICON)) app.dock?.setIcon(nativeImage.createFromPath(ICON));
+    setDockIcon();
     void buildMenu(); setInterval(() => void buildMenu(), 5000);
     if (!SMOKE) createTray();
     createWindow();

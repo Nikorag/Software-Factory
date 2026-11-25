@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNull, lte, lt, or } from "drizzle-orm";
 import type { FactoryDb } from "../db/client.js";
-import { decisions, jobs, stageExecutions } from "../db/schema.js";
+import { agentInvocations, artifacts, decisions, jobs, linearOutbox, stageExecutions, worktrees } from "../db/schema.js";
 import type { StageName } from "../config/schema.js";
 
 export type JobRow = typeof jobs.$inferSelect;
@@ -131,4 +131,42 @@ export function answerJob(db: FactoryDb, id: string, text: string, actor: string
 
 export function humanAnswers(db: FactoryDb, jobId: string): string[] {
   return db.select().from(decisions).where(and(eq(decisions.jobId, jobId), eq(decisions.kind, "human.answer"))).orderBy(asc(decisions.id)).all().map((r) => r.rationale ?? "");
+}
+
+const FINISHED = ["done", "failed", "cancelled"];
+
+/** Hide a finished job from the lists (it stays in the database and can be restored). A job still in flight cannot be archived: cancel it first. */
+export function archiveJob(db: FactoryDb, id: string, actor: string, archived = true): JobRow {
+  return db.transaction((tx) => {
+    const job = tx.select().from(jobs).where(eq(jobs.id, id)).get();
+    if (!job) throw new JobError(`no such job ${id}`);
+    if (archived && !FINISHED.includes(job.status)) throw new JobError(`job is ${job.status}: cancel it before archiving`);
+    tx.update(jobs).set({ archivedAt: archived ? new Date() : null }).where(eq(jobs.id, id)).run();
+    tx.insert(decisions).values({ jobId: id, kind: archived ? "job.archive" : "job.unarchive", decision: archived ? "archived" : "restored from archive", actor }).run();
+    return tx.select().from(jobs).where(eq(jobs.id, id)).get()!;
+  });
+}
+
+/**
+ * Permanently delete a finished job and its history. Refused while the job is in flight, and while its worktree is still on disk
+ * (deleting the record would orphan the directory: archive it, and let cleanup remove the worktree first).
+ * Returns the agent log paths so the caller can remove those files.
+ */
+export function deleteJob(db: FactoryDb, id: string): { logPaths: string[] } {
+  return db.transaction((tx) => {
+    const job = tx.select().from(jobs).where(eq(jobs.id, id)).get();
+    if (!job) throw new JobError(`no such job ${id}`);
+    if (!FINISHED.includes(job.status)) throw new JobError(`job is ${job.status}: cancel it before deleting`);
+    const wt = tx.select().from(worktrees).where(eq(worktrees.jobId, id)).get();
+    if (wt && wt.state !== "removed") throw new JobError(`its worktree (${wt.path}) still exists: archive the job instead, or remove the worktree first`);
+    const logPaths = tx.select({ p: agentInvocations.logPath }).from(agentInvocations).where(eq(agentInvocations.jobId, id)).all().flatMap((r) => (r.p ? [r.p] : []));
+    tx.delete(worktrees).where(eq(worktrees.jobId, id)).run();
+    tx.delete(artifacts).where(eq(artifacts.jobId, id)).run();
+    tx.delete(linearOutbox).where(eq(linearOutbox.jobId, id)).run();
+    tx.delete(decisions).where(eq(decisions.jobId, id)).run();
+    tx.delete(agentInvocations).where(eq(agentInvocations.jobId, id)).run();
+    tx.delete(stageExecutions).where(eq(stageExecutions.jobId, id)).run();
+    tx.delete(jobs).where(eq(jobs.id, id)).run();
+    return { logPaths };
+  });
 }

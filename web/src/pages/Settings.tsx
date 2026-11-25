@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Plus } from "lucide-react";
+import { AlertTriangle, Plus, Search } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Pager } from "@/components/Pager";
+import { matches, usePaged } from "@/lib/paging";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checks } from "@/components/Integrations";
@@ -29,14 +32,18 @@ function ProjectsPane({ projects, teams, globals, tracker, reload }: { projects:
   useEffect(() => { if (sel === null && projects[0]) setSel(projects[0].id); }, [projects, sel]);
   const onDirty = useCallback((d: boolean) => setDirty(d), []);
   const go = (id: string) => { if (id === sel) return; if (dirty) setPending(id); else setSel(id); };
+  const [filter, setFilter] = useState("");
+  const visible = projects.filter((p) => p.id === sel || matches(filter, p.name, p.id, p.githubRepo, p.bitbucketRepo, p.repository));
+  const paged = usePaged(visible, 10);
   const current = sel === NEW ? null : projects.find((p) => p.id === sel) ?? null;
 
   return (
     <div className="grid gap-4 md:grid-cols-[260px_minmax(0,1fr)] [&>*]:min-w-0">
       <Card className="min-w-0 self-start overflow-hidden"><CardContent className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 p-3">
         <Button size="sm" onClick={() => go(NEW)}><Plus />Add project</Button>
+        {projects.length > 5 ? <div className="relative"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter projects" className="pl-8" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter projects" /></div> : null}
         <nav aria-label="Projects" className="grid grid-cols-[minmax(0,1fr)] gap-1">
-          {projects.map((p) => (
+          {paged.slice.map((p) => (
             <button key={p.id} type="button" aria-current={sel === p.id ? "true" : undefined} onClick={() => go(p.id)}
               className={cn("flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent", sel === p.id && "bg-accent font-medium")}>
               <span className="min-w-0 flex-1"><span className="block truncate">{p.name}</span><span className="block truncate font-mono text-[11px] text-muted-foreground" title={p.githubRepo || p.repository}>{p.githubRepo || p.repository}</span></span>
@@ -45,8 +52,10 @@ function ProjectsPane({ projects, teams, globals, tracker, reload }: { projects:
               {!p.enabled ? <span className="text-[11px] text-muted-foreground">off</span> : null}
             </button>
           ))}
+          {projects.length > 0 && visible.length === 0 ? <p className="px-1 text-sm text-muted-foreground">No project matches “{filter}”.</p> : null}
           {projects.length === 0 ? <p className="px-1 text-sm text-muted-foreground">No projects yet. <Link className="underline" to="/setup">Run the setup wizard</Link> or add one.</p> : null}
         </nav>
+        <Pager page={paged.page} pages={paged.pages} pageSize={paged.pageSize} total={paged.total} onPage={paged.setPage} />
       </CardContent></Card>
       <Card className="min-w-0 overflow-hidden"><CardContent className="min-w-0 p-5">
         {sel === null && projects.length === 0 ? <p className="text-sm text-muted-foreground">Add a project to get started.</p> : (

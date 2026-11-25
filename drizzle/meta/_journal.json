@@ -43,6 +43,13 @@
       "when": 1795628876753,
       "tag": "0005_sleepy_mathemanic",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1795640879250,
+      "tag": "0006_puzzling_spitfire",
+      "breakpoints": true
     }
   ]
 }
