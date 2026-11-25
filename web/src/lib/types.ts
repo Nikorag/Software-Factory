@@ -1,7 +1,7 @@
 export interface Job {
   id: string; key: string; project: string; workflow: string; stage: string; status: string; heldFromStage: string | null;
   remediationAttempts: number; stageAttempts: number; autonomous: boolean; dryRun: boolean; prUrl: string | null;
-  lastError: string | null; notBefore: number | null; createdAt: number | null; updatedAt: number | null;
+  lastError: string | null; notBefore: number | null; createdAt: number | null; updatedAt: number | null; archivedAt?: number | null;
 }
 export interface Health { name: string; status: string; detail: string; checkedAt: number }
 export interface SystemInfo {

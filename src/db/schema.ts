@@ -35,6 +35,7 @@ export const jobs = sqliteTable(
     manual: integer("manual", { mode: "boolean" }).notNull().default(false), // a person picked this ticket on the Board (no label or status required)
     prUrl: text("pr_url"),
     lastError: text("last_error"),
+    archivedAt: ts("archived_at"), // hidden from lists by default; only finished jobs can be archived
     createdAt: ts("created_at").notNull().default(now),
     updatedAt: ts("updated_at").notNull().default(now),
   },

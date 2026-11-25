@@ -111,7 +111,7 @@ describe("dashboard", () => {
     app("/jobs/j1");
     await userEvent.click(await screen.findByRole("button", { name: /Run checks: done/ }));
     expect(screen.getByText(/runs build, typecheck, lint and tests itself/)).toBeInTheDocument();
-    expect(screen.getByText("Filtered to Run checks.")).toBeInTheDocument();
+    expect(screen.getByText("Showing Run checks only.")).toBeInTheDocument();
     expect(screen.queryByText("LOCAL_MODEL_REVIEW")).toBeNull();
   });
   it("controls work with no token and no read-only mode, sending the same-origin header", async () => {
