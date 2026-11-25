@@ -40,6 +40,10 @@ export function buildProfile(o: SandboxOptions): string {
     "(version 1)",
     "(allow default)",
     o.network ? "" : "(deny network*)",
+    // Local Unix-domain sockets inside temp dirs stay usable (tsx, vite and similar tools talk to themselves over one). This is
+    // not network access: TCP, including loopback, remains denied (tests/exec.test.ts). SBPL's unix-socket filter takes ONE
+    // path, so there is one rule per directory (found by iterating against the real sandbox-exec).
+    ...(o.network ? [] : ["/private/var/folders", "/private/tmp"].map((d) => `(allow network-bind network-inbound network-outbound (local unix-socket (subpath ${q(d)})) (remote unix-socket (subpath ${q(d)})))`)),
     "(deny file-write*)",
     `(allow file-write* ${sub([...writeOk, "/private/tmp", "/private/var/folders", "/tmp"])} (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper") (regex #"^/dev/(fd|ttys[0-9]+)"))`,
     // Deny reading contents under $HOME, then re-allow the worktree and toolchain dirs (later rules win).

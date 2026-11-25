@@ -30,9 +30,7 @@ projects:
     defaultBranch: main
     autonomy: supervised
     # package.json scripts + .github/workflows/ci.yml.
-    # lint is OMITTED: `npm run lint` crashes on the default branch itself ("typescript-eslint does not support TS 7.0"; found by
-    # `project:check`). Fix by pinning typescript to 6.x in Blobs, then add `lint: "npm run lint"` back.
-    commands: { install: "npm ci", typecheck: "npm run typecheck", test: "npm test" }
+    commands: { install: "npm ci", lint: "npm run lint", typecheck: "npm run typecheck", test: "npm test" }
     github: { account: Nikorag, repo: Nikorag/Blobs }
     linear: { teamKey: JAM, projectName: "Blobs" }
 
@@ -50,7 +48,9 @@ projects:
     defaultBranch: main
     autonomy: supervised
     # package.json scripts (`npm run check` = typecheck + lint + test + build). No CI workflow in the repo.
-    commands: { install: "npm ci", lint: "npm run lint", typecheck: "npm run typecheck", test: "npm test" }
+    # `npm run typecheck` is bare `tsc`, which only works where a previous build left Next.js's generated types (PageProps) behind;
+    # found by project:check on a clean checkout. `next typegen` generates them first.
+    commands: { install: "npm ci", lint: "npm run lint", typecheck: "npx next typegen && npm run typecheck", test: "npm test" }
     github: { account: Nikorag, repo: Nikorag/HungryBirds }
     linear: { teamKey: JAM, projectName: "Hungry Birds" }
 

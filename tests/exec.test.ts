@@ -72,6 +72,16 @@ sb("sandboxed project commands (real sandbox-exec)", () => {
     expect(r.tail).toContain("NET-BLOCKED");
     expect(r.ok).toBe(false);
   });
+  it("lets a tool use a Unix-domain socket in the temp dir (tsx needs one) while TCP, even loopback, stays blocked", async () => {
+    const w = world();
+    const sock = `/tmp/factory-sbx-${process.pid}-${Date.now()}.sock`;
+    const unix = `node -e "const net=require('net');const s=net.createServer(c=>c.end('PONG')).listen('${sock}',()=>{net.connect('${sock}').on('data',d=>{console.log(String(d));s.close();process.exit(0)})})"`;
+    const r = await run(w, unix);
+    expect(r.tail).toContain("PONG");
+    expect(r.ok).toBe(true);
+    const tcp = await run(w, `node -e "require('net').createServer().listen(0,'127.0.0.1',()=>{console.log('TCP-LISTEN-OK');process.exit(0)}).on('error',e=>{console.log('TCP-BLOCKED '+e.code);process.exit(3)})"`);
+    expect(tcp.tail).toContain("TCP-BLOCKED");
+  });
   it("allows network only for install", async () => {
     const w = world();
     const r = await run(w, `node -e "require('http').get('http://127.0.0.1:${port}',r=>{console.log('NET-OK');process.exit(0)}).on('error',e=>{console.log('NET-BLOCKED');process.exit(3)})"`, { kind: "install" });
