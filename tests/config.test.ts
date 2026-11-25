@@ -103,3 +103,33 @@ describe("managed clones", () => {
     expect(() => load("projects:\n  - { id: a, name: A, github: { repo: not-a-slug } }")).toThrow(ConfigError);
   });
 });
+
+describe("stage timeout budgets", () => {
+  it("never lets a configured timeout undercut a stage's own work, for every workflow in the shipped config", async () => {
+    const { stageBudgetSeconds, effectiveStageTimeoutSeconds } = await import("../src/config/stage-budgets.js");
+    const c = loadConfig("config");
+    const inputs = { commandTimeoutSeconds: c.factory.commandTimeoutSeconds, implementationPasses: c.factory.maxImplementationPasses };
+    for (const wf of ["feature", "bugfix", "maintenance"]) {
+      for (const stage of ["IMPLEMENTATION_PREPARATION", "IMPLEMENTATION", "AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW", "CLAUDE_REVIEW", "REMEDIATION", "FINAL_VALIDATION", "SPECIFICATION_GENERATION"] as const) {
+        const configured = { ...c.workflows.defaults, ...(c.workflows.workflows[wf]?.stages[stage] ?? {}) }.timeoutSeconds;
+        expect(effectiveStageTimeoutSeconds(stage, configured, inputs)).toBeGreaterThanOrEqual(stageBudgetSeconds(stage, inputs)!);
+      }
+    }
+  });
+  it("covers the handlers' own agent timeouts plus their project commands", async () => {
+    const { stageBudgetSeconds } = await import("../src/config/stage-budgets.js");
+    const i = { commandTimeoutSeconds: 900, implementationPasses: 3 };
+    expect(stageBudgetSeconds("REMEDIATION", i)).toBeGreaterThan(40 * 60);
+    expect(stageBudgetSeconds("FINAL_VALIDATION", i)).toBeGreaterThan(4 * 900 + 25 * 60);
+    expect(stageBudgetSeconds("LOCAL_MODEL_REVIEW", i)).toBeGreaterThan(2 * 15 * 60);
+    expect(stageBudgetSeconds("IMPLEMENTATION_PREPARATION", i)).toBeGreaterThan(5 * 900);
+    expect(stageBudgetSeconds("DISCOVERED", i)).toBeUndefined(); // short stages use the configured timeout
+  });
+  it("scales IMPLEMENTATION with the configured passes, so every pass can complete", async () => {
+    const { stageBudgetSeconds } = await import("../src/config/stage-budgets.js");
+    const at = (passes: number) => stageBudgetSeconds("IMPLEMENTATION", { commandTimeoutSeconds: 900, implementationPasses: passes })!;
+    expect(at(1)).toBeGreaterThan(70 * 60);
+    expect(at(5)).toBeGreaterThan(5 * 70 * 60);
+    expect(at(5) - at(4)).toBe(70 * 60);
+  });
+});

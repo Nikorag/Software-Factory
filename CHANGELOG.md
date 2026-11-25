@@ -4,6 +4,14 @@ Updates: `software-factory update` (add `--check` to only look). Releases are gi
 
 ## Unreleased
 
+- **Engine robustness**:
+  - Fix cycles are budgeted per phase. The specification, the code reviews and CI each get `maxRemediationAttempts`, so a hard spec can no longer use up the fixes the code needs (the counter used to be shared and never reset).
+  - Stage timeouts can no longer cut a stage's own work short. Every workflow (feature, bugfix, maintenance) gets built-in per-stage timeouts derived from the agent timeouts, `commandTimeoutSeconds` and, for implementation, the configured number of passes. A shorter value in `workflows.yaml`, including an older copy in `~/.software-factory/config`, is raised to it.
+  - After the Mac sleeps, the engine no longer re-queues jobs it is still running: it renews its own leases first and only recovers jobs nobody is running.
+  - Cancelling a held job, then retrying it, resumes the real work instead of leaving a job stuck "running" in a held stage. Jobs already stuck that way are released when next claimed.
+  - Retrying an archived job unarchives it. A retry records the error it clears and the job's lifetime fix cycles, and a later "fix cycles exhausted" stop says how many cycles and retries the job has had.
+  - Cancel, emergency stop and timeouts wait (up to 15 s) for the agent to actually stop before the job is released, and the job is not run again until it has, so a quick retry cannot start a second agent in the same worktree.
+
 - **Bitbucket Cloud support** as an alternative to GitHub, chosen per project, with named token credentials (access tokens or Atlassian API tokens) in the keychain. See docs/bitbucket.md.
 
 - **Jira support** (Jira Cloud, OAuth 2.0 3LO) as an alternative to Linear, chosen per profile. Statuses and labels are mapped to existing ones in Settings because Jira statuses cannot be created. See docs/jira.md.
