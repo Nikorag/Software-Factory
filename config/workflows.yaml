@@ -1,0 +1,8 @@
+defaults:
+  timeoutSeconds: 900
+  maxRetries: 2
+workflows:
+  feature:
+    stages:
+      IMPLEMENTATION: { timeoutSeconds: 3600, maxRetries: 1 }
+      CI_VALIDATION: { timeoutSeconds: 1800, maxRetries: 0 }

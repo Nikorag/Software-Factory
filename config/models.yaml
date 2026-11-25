@@ -1,0 +1,10 @@
+# Model routing. Identifiers are placeholders until verified with `pnpm doctor`.
+local:
+  baseUrl: http://127.0.0.1:1234/v1   # UNVERIFIED for Bionic: confirm via `pnpm doctor`
+  requestTimeoutSeconds: 300
+routes:
+  classification:     { provider: local,     model: UNCONFIGURED-QWEN }
+  specification:      { provider: anthropic, model: UNCONFIGURED-CLAUDE }
+  implementation:     { provider: anthropic, model: UNCONFIGURED-CLAUDE }
+  independent_review: { provider: local,     model: UNCONFIGURED-QWEN }
+  final_review:       { provider: anthropic, model: UNCONFIGURED-CLAUDE }

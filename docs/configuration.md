@@ -1,0 +1,2 @@
+# Configuration
+`config/factory.yaml`, `models.yaml`, `projects.yaml`, `workflows.yaml` are validated by Zod (`src/config/schema.ts`). Override the directory with `FACTORY_CONFIG_DIR`. Validate with `pnpm factory config:check`. Model ids are never hardcoded; routes map a task (classification, specification, implementation, independent_review, final_review) to a provider (`local` | `anthropic`) and model string.

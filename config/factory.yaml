@@ -1,0 +1,10 @@
+# Factory-wide settings. Agents must never be able to modify this directory (see protectedPaths).
+dataDir: ~/.software-factory     # database, logs, project clones, worktrees
+server:
+  host: 127.0.0.1                # loopback only
+  port: 4780
+logLevel: info
+dryRun: false                    # true: discover and plan, never mutate repos or Linear
+maxRemediationAttempts: 3
+maxConcurrentJobs: 1             # raise only after measuring memory headroom
+pollIntervalSeconds: 60
