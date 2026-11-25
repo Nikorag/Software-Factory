@@ -89,8 +89,8 @@ function createWindow() {
     icon: fs.existsSync(ICON) ? ICON : undefined,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false },
   });
-  // The page is our own loopback dashboard. It may navigate between our own profiles; links out go to the browser, and only https GitHub ones.
-  const external = (u) => { try { const x = new URL(u); if (x.protocol === "https:" && x.hostname === "github.com") void shell.openExternal(u); } catch { /* ignore */ } };
+  // The page is our own loopback dashboard. It may navigate between our own profiles; links out go to the browser, and only https GitHub ones (plus the Atlassian sign-in).
+  const external = (u) => { try { const x = new URL(u); if (x.protocol === "https:" && ["github.com", "auth.atlassian.com"].includes(x.hostname)) void shell.openExternal(u); /* GitHub links, and the Atlassian sign-in for connecting Jira */ } catch { /* ignore */ } };
   win.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: "deny" }; });
   win.webContents.on("will-navigate", (e, url) => { if (url.startsWith("data:")) return; try { if (origins().has(new URL(url).origin)) return; } catch { /* fall through */ } e.preventDefault(); external(url); });
   win.on("closed", () => { win = null; });

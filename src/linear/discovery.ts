@@ -34,6 +34,11 @@ export async function discoverIssues(deps: {
 
   // Collect candidates per project; an issue may match several project bindings.
   const matches = new Map<string, { issue: LinearIssue; projects: ProjectConfig[] }>();
+  if (bound.length && (!linear.statuses.readyForSpecification || !linear.labels.enabled)) {
+    // Jira: nothing is guessed. Until the pickup status and the opt-in label are mapped there is nothing to search for.
+    for (const p of bound) report.errors.push({ projectId: p.id, error: "the tracker mapping is incomplete: map the \"Ready for specification\" status and the \"enabled\" label in Settings → Tracker (or use manual mode)" });
+    return report;
+  }
   for (const p of bound) {
     try {
       const issues = await client.listIssues({

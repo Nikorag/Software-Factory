@@ -8,11 +8,11 @@ import { ConfigError } from "../config/load.js";
 import type { LoadedConfig, ProjectConfig } from "../config/schema.js";
 import { openDb, type DbHandle } from "../db/client.js";
 import { Engine, type HandlerRegistry } from "../core/engine.js";
-import { createLinearClient, type LinearClient } from "../linear/client.js";
+import type { LinearClient } from "../linear/client.js";
+import { createTrackerClient } from "../tracker/index.js";
 import { createIntakeHandlers } from "../linear/handlers.js";
 import { createLinearReporter } from "../linear/reporter.js";
 import { createLogger } from "../logging/logger.js";
-import { resolveSecret } from "../service/secrets.js";
 import { gitAuthEnv } from "../repo/gh.js";
 import { syncProjects } from "../repo/registry.js";
 import { WorktreeManager } from "../repo/worktrees.js";
@@ -57,12 +57,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     repoPath: (id) => project(id).repository, defaultBranch: (id) => project(id).defaultBranch,
     networkEnv: (id) => gitAuthEnv(project(id).github.account),
   });
-  const linear = (): LinearClient => {
-    if (opts.linear) return opts.linear;
-    const key = resolveSecret({ envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService });
-    if (!key) throw new ConfigError(`${config.linear.apiKeyEnv} is not set and no keychain entry "${config.linear.keychainService}" was found`);
-    return createLinearClient({ apiKey: key });
-  };
+  const linear = (): LinearClient => (opts.linear ? opts.linear : createTrackerClient(config));
 
   const handlers: HandlerRegistry = {
     ...createIntakeHandlers({ db: handle.db, linear, linearConfig: config.linear, project }),

@@ -14,6 +14,8 @@ export const FactoryConfig = z.object({
   logLevel: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
   // The gh login this profile uses unless a project names its own. Lets e.g. a "home" and a "work" profile use different GitHub accounts.
   githubAccount: z.string().regex(/^[A-Za-z0-9-]{1,39}$/).optional(),
+  // Which issue tracker this profile uses. The factory never needs both: a "home" profile can be on Linear and a "work" profile on Jira.
+  tracker: z.enum(["linear", "jira"]).default("linear"),
   // automatic: tickets labelled factory:enabled in the pickup status are picked up on their own. manual: nothing starts until you start it from the Board.
   pickupMode: z.enum(["automatic", "manual"]).default("automatic"),
   dryRun: z.boolean().default(false),
@@ -165,8 +167,37 @@ export const LinearConfig = z.object({
 });
 export type LinearConfig = z.infer<typeof LinearConfig>;
 
+const STATUS_KEYS = ["readyForSpecification", "specificationReview", "readyForDevelopment", "inProgress", "readyForReview", "changesRequested", "merging", "done", "blocked"] as const;
+const LABEL_KEYS = ["enabled", "autonomous", "bugfix", "feature", "maintenance", "blocked"] as const;
+export const JIRA_STATUS_KEYS = STATUS_KEYS;
+export const JIRA_LABEL_KEYS = LABEL_KEYS;
+
+/**
+ * Jira (Atlassian OAuth 2.0 3LO). Unlike Linear, the factory cannot create Jira statuses (workflows are admin-owned), so every factory
+ * status is MAPPED to one that already exists ("" = not mapped: the factory then simply does not move tickets to it). Labels are mapped
+ * the same way so a work Jira can keep its own naming. No secret lives here: the OAuth client secret and tokens are in the keychain.
+ */
+export const JiraConfig = z.object({
+  clientId: z.string().optional(), // the OAuth app's client id (public); its secret is in the keychain
+  keychainService: z.string().default("software-factory-jira"),
+  site: z.object({ cloudId: z.string(), url: z.string(), name: z.string() }).optional(),
+  statuses: z.partialRecord(z.enum(STATUS_KEYS), z.string()).default({}),
+  labels: z.partialRecord(z.enum(LABEL_KEYS), z.string()).default({}),
+});
+export type JiraConfig = z.infer<typeof JiraConfig>;
+
+/** What the rest of the factory sees as "the tracker's names": for Jira, the mapped names (unmapped = ""). */
+export function effectiveTrackerNames(jira: JiraConfig): LinearConfig {
+  return LinearConfig.parse({
+    keychainService: jira.keychainService,
+    statuses: Object.fromEntries(STATUS_KEYS.map((k) => [k, jira.statuses[k] ?? ""])),
+    labels: Object.fromEntries(LABEL_KEYS.map((k) => [k, jira.labels[k] ?? ""])),
+  });
+}
+
 export const LoadedConfig = z.object({
-  linear: LinearConfig,
+  linear: LinearConfig, // for a Jira profile: the mapped Jira names (see JiraConfig)
+  jira: JiraConfig,
   factory: FactoryConfig,
   models: ModelsConfig,
   projects: ProjectsConfig,

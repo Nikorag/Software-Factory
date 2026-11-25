@@ -133,7 +133,7 @@ describe("dashboard", () => {
 });
 
 const proj = { id: "my-app", name: "My App", enabled: true, autonomy: "supervised", repository: "/x", githubRepo: "me/my-app", defaultBranch: "main", githubAccount: null, managed: true, linear: { teamKey: "ENG", projectName: "My App" }, commands: { test: "npm test" }, validation: null, activeJobs: 0 };
-const setupInfo = { configDir: null, homeConfigDir: "~/.software-factory/config", usingDefaults: true, projectCount: 1, linear: { keyPresent: true, env: "LINEAR_API_KEY", keychainService: "svc" } };
+const setupInfo = { tracker: { kind: "linear", name: "Linear", connected: true }, configDir: null, homeConfigDir: "~/.software-factory/config", usingDefaults: true, projectCount: 1, linear: { keyPresent: true, env: "LINEAR_API_KEY", keychainService: "svc" } };
 
 describe("settings and setup", () => {
   it("shows projects in a list on the left and the selected one in a full editor", async () => {
@@ -218,13 +218,13 @@ describe("settings and setup", () => {
     expect(screen.queryByText(/Update available:/)).toBeNull();
   });
   it("the wizard only lets you continue from Linear once a key exists, and shows each step's real status", async () => {
-    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": { ...setupInfo, projectCount: 0, linear: { ...setupInfo.linear, keyPresent: false } }, "/api/setup/linear": { teams: [] },
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": { ...setupInfo, projectCount: 0, tracker: { kind: "linear", name: "Linear", connected: false }, linear: { ...setupInfo.linear, keyPresent: false } }, "/api/setup/linear": { teams: [] },
       "/api/health": { system: overview().system, health: [{ name: "claude code", status: "fail", detail: "not logged in", checkedAt: 1 }, { name: "sandbox", status: "ok", detail: "ready", checkedAt: 1 }], scheduler: null } };
     app("/setup");
     expect(await screen.findByText("not logged in")).toBeInTheDocument();
     expect(screen.getByText(/run `claude`, then \/login/i)).toBeInTheDocument(); // the fix is shown next to the failure
     await userEvent.click(screen.getByRole("button", { name: /Continue anyway/ }));
-    expect(await screen.findByText("Connect Linear")).toBeInTheDocument();
+    expect(await screen.findByText("Connect your issue tracker")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled(); // no key yet
   });
   it("opens the editor for the project named in the link", async () => {
@@ -404,5 +404,64 @@ describe("settings and setup", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toBeTruthy());
     expect(JSON.parse(calls.find((c) => c.method === "PUT")!.body!).pickupMode).toBe("manual");
+  });
+  const jiraInfo = { ...setupInfo, tracker: { kind: "jira", name: "Jira", connected: true } };
+  const jiraStatus = { tracker: "jira", clientId: "clientidclientid1234", secretSet: true, connected: true, site: { cloudId: "c1", url: "https://acme.atlassian.net", name: "Acme" }, siteChoices: [], callbackUrl: "http://127.0.0.1:4780/api/jira/oauth/callback", scopes: [] };
+  const jiraMap = { statuses: { inProgress: "In Progress" }, labels: { enabled: "factory-ready" }, required: { statuses: ["specificationReview", "inProgress", "readyForReview", "done", "blocked"], labels: ["blocked"], automaticStatus: "readyForSpecification", automaticLabel: "enabled" } };
+  const jiraMeta = { projects: [{ key: "ENG", name: "Engineering" }], project: "ENG", statuses: ["To Do", "In Progress", "In Review", "Closed"], labels: ["urgent", "factory-ready"] };
+  const jiraRoutes = () => ({ "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": jiraInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings, "/api/jira/status": jiraStatus, "/api/jira/mapping": jiraMap, "/api/jira/metadata": jiraMeta, "/api/jira/mapping/check": { ok: true, projects: [] } });
+
+  it("walks through connecting Jira: shows the callback URL to register, saves the app, and starts the OAuth sign-in in the browser", async () => {
+    const opened: string[] = [];
+    vi.stubGlobal("open", (u: string) => { opened.push(u); return null; });
+    routes = { ...jiraRoutes(), "/api/setup": jiraInfo, "/api/jira/status": { ...jiraStatus, connected: false, site: null }, "/api/jira/app": { ok: true }, "/api/jira/connect": { url: "https://auth.atlassian.com/authorize?client_id=x", callbackUrl: "x" } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    expect(await screen.findByTestId("callback")).toHaveTextContent("http://127.0.0.1:4780/api/jira/oauth/callback");
+    expect(screen.getByText(/OAuth 2.0 \(3LO\)/)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/Client secret/), "supersecretsupersecret1");
+    await userEvent.click(screen.getByRole("button", { name: "Save app" }));
+    await waitFor(() => expect(JSON.parse(calls.find((c) => c.url === "/api/jira/app")!.body!)).toEqual({ clientId: "clientidclientid1234", clientSecret: "supersecretsupersecret1" }));
+    await userEvent.click(screen.getByRole("button", { name: /Connect Jira/ }));
+    await waitFor(() => expect(opened).toEqual(["https://auth.atlassian.com/authorize?client_id=x"]));
+    expect(screen.queryByDisplayValue("supersecretsupersecret1")).toBeNull();                      // the secret is cleared from the page once saved
+    vi.unstubAllGlobals(); vi.stubGlobal("fetch", globalThis.fetch);
+  });
+  it("maps the factory's statuses and labels onto Jira's, flags what is still required, and saves", async () => {
+    routes = { ...jiraRoutes(), "/api/jira/mapping ": {} };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    expect(await screen.findByText(/cannot create statuses in Jira/)).toBeInTheDocument();
+    expect(screen.getByText(/Still to map: Specification review, Ready for review, Done, Blocked/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("combobox", { name: "Done status" }));
+    await userEvent.click(await screen.findByRole("option", { name: "Closed" }));
+    await userEvent.type(screen.getByLabelText("Blocked label"), "factory blocked");               // spaces are stripped: Jira labels cannot have them
+    expect(screen.getByLabelText("Blocked label")).toHaveValue("factoryblocked");
+    await userEvent.click(screen.getByRole("button", { name: "Save mapping" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT" && c.url === "/api/jira/mapping")).toBeTruthy());
+    const sent = JSON.parse(calls.find((c) => c.method === "PUT" && c.url === "/api/jira/mapping")!.body!);
+    expect(sent.statuses).toMatchObject({ inProgress: "In Progress", done: "Closed" });
+    expect(sent.labels).toMatchObject({ enabled: "factory-ready", blocked: "factoryblocked" });
+  });
+  it("uses Jira's words in the project editor, and shows which Jira projects fail the mapping check", async () => {
+    routes = { ...jiraRoutes(), "/api/projects": { projects: [proj] }, "/api/setup/linear": { teams: [{ key: "ENG", name: "Engineering", projects: ["Web"], audit: { ok: true, statuses: [], labels: [] } }] } };
+    app("/settings");
+    expect(await screen.findByText("Jira project")).toBeInTheDocument();
+    expect(screen.getByText("Component (optional)")).toBeInTheDocument();
+    cleanup();
+    routes = { ...jiraRoutes(), "/api/jira/mapping/check": { ok: false, projects: [{ projectId: "my-app", jiraProject: "ENG", found: true, missing: ['done: "Closed"'] }] } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    expect(await screen.findByText(/these statuses do not exist there: done: "Closed"/)).toBeInTheDocument();
+  });
+  it("switches the tracker only after confirming, and shows the server's refusal", async () => {
+    routes = { ...jiraRoutes(), "/api/setup": setupInfo, "/api/settings/tracker": { ok: true } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    await userEvent.click(await screen.findByRole("radio", { name: "Jira" }));
+    expect(await screen.findByText("Switch this profile to Jira?")).toBeInTheDocument();
+    expect(calls.some((c) => c.url === "/api/settings/tracker")).toBe(false);                      // nothing happens until confirmed
+    await userEvent.click(screen.getByRole("button", { name: "Switch" }));
+    await waitFor(() => expect(JSON.parse(calls.find((c) => c.url === "/api/settings/tracker")!.body!)).toEqual({ tracker: "jira" }));
   });
 });

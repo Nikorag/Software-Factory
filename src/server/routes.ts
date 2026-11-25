@@ -17,6 +17,7 @@ import { registerSettingsRoutes } from "./settings-routes.js";
 import { onboardingOf, type CheckRecord } from "../repo/readiness.js";
 import type { RepoReport } from "../repo/inspect.js";
 import { registerBoardRoutes } from "./board-routes.js";
+import { registerJiraRoutes } from "./jira-routes.js";
 import { registerProfileRoutes } from "./profile-routes.js";
 
 export interface ApiDeps {
@@ -29,6 +30,7 @@ export interface ApiDeps {
   dataDir?: string;
   /** Settings UI + setup wizard. Absent in tests that do not exercise them. */
   profiles?: import("./profile-routes.js").ProfileDeps;
+  jira?: Omit<import("./jira-routes.js").JiraRouteDeps, "db" | "config">;
   updates?: { status(): Promise<import("../service/versions.js").UpdateStatus> };
   settings?: Omit<import("./settings-routes.js").SettingsDeps, "db" | "config">;
 }
@@ -177,6 +179,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
   });
   if (d.settings && d.config) registerBoardRoutes(app, { db, config: d.config, linear: d.settings.linear }, requireToken);
+  if (d.jira && d.config) registerJiraRoutes(app, { ...d.jira, db, config: d.config }, requireToken);
   if (d.profiles) registerProfileRoutes(app, d.profiles, requireToken);
   if (d.settings && d.config) registerSettingsRoutes(app, { ...d.settings, db, config: d.config }, requireToken);
 }

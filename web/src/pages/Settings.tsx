@@ -5,7 +5,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Checks, LinearSetup } from "@/components/Integrations";
+import { Checks } from "@/components/Integrations";
+import { TrackerSetup } from "@/components/TrackerSetup";
 import { ProjectEditor } from "@/components/ProjectEditor";
 import { api } from "@/lib/api";
 import { WorkflowSettings } from "@/pages/WorkflowSettings";
@@ -18,7 +19,7 @@ import { cn } from "@/lib/utils";
 const NEW = "__new";
 
 /** Projects: a list on the left, a full-height editor on the right. */
-function ProjectsPane({ projects, teams, globals, reload }: { projects: Project[]; teams: TeamAudit[]; globals: GlobalSettings | null; reload: () => void }) {
+function ProjectsPane({ projects, teams, globals, tracker, reload }: { projects: Project[]; teams: TeamAudit[]; globals: GlobalSettings | null; tracker?: "linear" | "jira"; reload: () => void }) {
   const [params] = useSearchParams();
   const [sel, setSel] = useState<string | null>(params.get("project"));
   const [dirty, setDirty] = useState(false);
@@ -47,7 +48,7 @@ function ProjectsPane({ projects, teams, globals, reload }: { projects: Project[
       </CardContent></Card>
       <Card className="min-w-0 overflow-hidden"><CardContent className="min-w-0 p-5">
         {sel === null && projects.length === 0 ? <p className="text-sm text-muted-foreground">Add a project to get started.</p> : (
-          <ProjectEditor key={sel ?? "none"} project={current} teams={teams} globals={globals} onDirty={onDirty}
+          <ProjectEditor key={sel ?? "none"} project={current} teams={teams} globals={globals} tracker={tracker} onDirty={onDirty}
             onSaved={(id) => { reload(); if (sel === NEW) setSel(id); }} onRemoved={() => { reload(); setSel(null); }} />
         )}
       </CardContent></Card>
@@ -69,11 +70,11 @@ export function Settings() {
   return (
     <Tabs defaultValue="projects">
       <TabsList><TabsTrigger value="projects">Projects</TabsTrigger><TabsTrigger value="workflow">Workflow</TabsTrigger><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="profiles">Profiles</TabsTrigger><TabsTrigger value="system">System</TabsTrigger></TabsList>
-      <TabsContent value="projects"><ProjectsPane projects={data?.projects ?? []} teams={teams} globals={globals} reload={() => { void reload(); void reloadInfo(); }} /></TabsContent>
+      <TabsContent value="projects"><ProjectsPane projects={data?.projects ?? []} teams={teams} globals={globals} tracker={info?.tracker.kind} reload={() => { void reload(); void reloadInfo(); }} /></TabsContent>
       <TabsContent value="workflow"><WorkflowSettings value={globals} onSaved={() => void reloadGlobals()} /></TabsContent>
       <TabsContent value="integrations" className="grid gap-4">
         <Card><CardHeader><CardTitle className="text-sm">Status</CardTitle></CardHeader><CardContent><Checks /></CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-sm">Linear</CardTitle></CardHeader><CardContent><LinearSetup info={info} onKey={() => void reloadInfo()} onTeams={setTeams} /></CardContent></Card>
+        <Card><CardHeader><CardTitle className="text-sm">Issue tracker</CardTitle></CardHeader><CardContent><TrackerSetup info={info} onChanged={() => void reloadInfo()} onKey={() => void reloadInfo()} onTeams={setTeams} /></CardContent></Card>
       </TabsContent>
       <TabsContent value="profiles"><ProfilesSettings /></TabsContent>
       <TabsContent value="system"><Card><CardContent className="grid gap-1 text-sm">

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { isMap, isSeq, parseDocument, type Document, type YAMLMap } from "yaml";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir, loadConfig } from "./load.js";
-import { ProjectInput, ProjectOverrides, type LoadedConfig } from "./schema.js";
+import { JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, ProjectInput, ProjectOverrides, type LoadedConfig } from "./schema.js";
 
 const FILES = ["factory.yaml", "linear.yaml", "models.yaml", "workflows.yaml", "projects.yaml"];
 
@@ -139,4 +139,55 @@ export function applyGlobal(live: LoadedConfig, fresh: LoadedConfig): void {
   live.factory.pickupMode = fresh.factory.pickupMode;
   applyProjects(live, fresh); // projects that follow the profile's default GitHub account pick up the change
   Object.assign(live.models.routes, fresh.models.routes);
+}
+
+// ---- tracker: which one this profile uses, and the Jira connection and mapping ----
+const editYaml = (dir: string, file: string, edit: (doc: Document) => void): void => {
+  const f = join(dir, file);
+  const doc = parseDocument(existsSync(f) ? readFileSync(f, "utf8") : "{}\n");
+  if (!isMap(doc.contents)) doc.contents = doc.createNode({}) as never;
+  edit(doc);
+  const scratch = mkdtempSync(join(tmpdir(), "factory-cfg-"));
+  try {
+    for (const x of FILES.concat(["jira.yaml"])) if (existsSync(join(dir, x))) copyFileSync(join(dir, x), join(scratch, x));
+    writeFileSync(join(scratch, file), doc.toString());
+    loadConfig(scratch); // refuse anything that would leave the config unloadable
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
+  writeFileSync(`${f}.tmp`, doc.toString()); renameSync(`${f}.tmp`, f);
+};
+
+export function updateTracker(kind: "linear" | "jira", dir = seedHomeConfig()): LoadedConfig {
+  editYaml(dir, "factory.yaml", (d) => { d.set("tracker", kind); });
+  return loadConfig(dir);
+}
+
+export const JiraMapping = z.object({
+  statuses: z.partialRecord(z.enum(JIRA_STATUS_KEYS), z.string().max(255)).default({}),
+  // Jira labels cannot contain spaces
+  labels: z.partialRecord(z.enum(JIRA_LABEL_KEYS), z.string().max(255).regex(/^\S*$/, "a Jira label cannot contain spaces")).default({}),
+});
+
+export interface JiraPatch { clientId?: string; site?: { cloudId: string; url: string; name: string } | null; mapping?: z.input<typeof JiraMapping> }
+/** Writes jira.yaml (comments preserved). The OAuth client secret and tokens are never written here: they live in the keychain. */
+export function updateJiraConfig(patch: JiraPatch, dir = seedHomeConfig()): LoadedConfig {
+  const mapping = patch.mapping ? JiraMapping.parse(patch.mapping) : null;
+  editYaml(dir, "jira.yaml", (d) => {
+    if (patch.clientId !== undefined) d.set("clientId", patch.clientId);
+    if (patch.site === null) d.delete("site"); else if (patch.site) d.set("site", d.createNode(patch.site));
+    if (mapping) {
+      d.set("statuses", d.createNode(Object.fromEntries(Object.entries(mapping.statuses).filter(([, v]) => v !== undefined))));
+      d.set("labels", d.createNode(Object.fromEntries(Object.entries(mapping.labels).filter(([, v]) => v !== undefined))));
+    }
+  });
+  return loadConfig(dir);
+}
+
+/** Apply a new tracker setup to the config object the running service holds (in place: handlers captured these objects). */
+export function applyTracker(live: LoadedConfig, fresh: LoadedConfig): void {
+  live.factory.tracker = fresh.factory.tracker;
+  live.jira = fresh.jira;
+  Object.assign(live.linear.statuses, fresh.linear.statuses);
+  Object.assign(live.linear.labels, fresh.linear.labels);
+  live.linear.keychainService = fresh.linear.keychainService;
+  live.linear.apiKeyEnv = fresh.linear.apiKeyEnv;
 }

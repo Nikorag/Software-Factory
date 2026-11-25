@@ -8,6 +8,7 @@ import { auditTeam, type TeamAudit } from "../linear/check.js";
 import { applySetup } from "../linear/setup.js";
 import type { LinearClient } from "../linear/client.js";
 import { createLinearClient } from "../linear/client.js";
+import { trackerName } from "../tracker/index.js";
 import { syncProjects } from "../repo/registry.js";
 import { listGhAccounts, type GhAccount } from "../github/accounts.js";
 import { ACTIONS, type ActionKind, type ProjectActions } from "../service/actions.js";
@@ -35,10 +36,11 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
   // ---- setup wizard ----
   app.get("/api/setup", async () => ({
     configDir: d.config.configDir ?? null, homeConfigDir: homeConfigDir(), usingDefaults: !d.config.configDir || d.config.configDir === BUNDLED_CONFIG_DIR,
-    projectCount: d.config.projects.projects.length, linear: { keyPresent: d.linearKeyPresent(), env: d.config.linear.apiKeyEnv, keychainService: d.config.linear.keychainService ?? null },
+    projectCount: d.config.projects.projects.length, tracker: { kind: d.config.factory.tracker, name: trackerName(d.config), connected: d.linearKeyPresent() }, linear: { keyPresent: d.linearKeyPresent(), env: d.config.linear.apiKeyEnv, keychainService: d.config.linear.keychainService ?? null },
   }));
 
   app.post<{ Body: { key?: unknown } }>("/api/setup/linear-key", { preHandler: requireToken }, async (req, reply) => {
+    if (d.config.factory.tracker === "jira") return reply.code(400).send({ error: "this profile uses Jira: connect it with OAuth in Settings → Tracker" });
     const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
     if (!/^lin_api_[A-Za-z0-9]{20,}$/.test(key)) return reply.code(400).send({ error: "that does not look like a Linear personal API key (it starts with lin_api_)" });
     try {
@@ -53,13 +55,16 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
       const client = d.linear();
       const teams = await client.teams();
       const out: { key: string; name: string; projects: string[]; audit: TeamAudit }[] = [];
-      for (const t of teams) out.push({ key: t.key, name: t.name, projects: (await client.projects(t.id)).map((p) => p.name), audit: await auditTeam(client, d.config.linear, t) });
+      const jira = d.config.factory.tracker === "jira";
+      // Jira: "teams" are Jira projects and "projects" their components. Nothing is created in Jira, so there is no audit: see the mapping instead.
+      for (const t of teams) out.push({ key: t.key, name: t.name, projects: (await client.projects(t.id)).map((p) => p.name), audit: jira ? { team: { key: t.key, name: t.name }, statuses: [], labels: [], existingStatuses: [], existingLabels: [], ok: true } : await auditTeam(client, d.config.linear, t) });
       return { teams: out };
     } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
   });
 
   /** Creates only what is missing (never edits or deletes). */
   app.post<{ Params: { team: string } }>("/api/setup/linear/:team/create", { preHandler: requireToken }, async (req, reply) => {
+    if (d.config.factory.tracker === "jira") return reply.code(400).send({ error: "Jira statuses and labels cannot be created by the factory: map them to existing ones in Settings → Tracker" });
     try {
       const client = d.linear();
       const team = (await client.teams()).find((t) => t.key === req.params.team);

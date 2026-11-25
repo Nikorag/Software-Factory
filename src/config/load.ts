@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
-import { FactoryConfig, LinearConfig, ModelsConfig, ProjectsConfig, ProjectsFile, WorkflowsConfig, type LoadedConfig } from "./schema.js";
+import { effectiveTrackerNames, FactoryConfig, JiraConfig, LinearConfig, ModelsConfig, ProjectsConfig, ProjectsFile, WorkflowsConfig, type LoadedConfig } from "./schema.js";
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -79,7 +79,8 @@ export function loadConfig(configDir = defaultConfigDir()): LoadedConfig {
     })),
   });
   const workflows = readYaml(dir, "workflows.yaml", WorkflowsConfig, false);
-  const linear = readYaml(dir, "linear.yaml", LinearConfig, false);
+  const jira = readYaml(dir, "jira.yaml", JiraConfig, false);
+  const linear = factory.tracker === "jira" ? effectiveTrackerNames(jira) : readYaml(dir, "linear.yaml", LinearConfig, false);
 
   const ids = new Set<string>();
   const bindings = new Map<string, string>();
@@ -92,11 +93,11 @@ export function loadConfig(configDir = defaultConfigDir()): LoadedConfig {
     if (repos.has(repo)) throw new ConfigError(`projects.yaml: "${p.id}" and "${repos.get(repo)}" use the same repository (${repo}); repositories must never be shared`);
     repos.set(repo, p.id);
     if (p.linear) {
-      // Each Linear project (or team-wide fallback) maps to exactly one repo.
+      // Each tracker project (or team-wide fallback) maps to exactly one repo.
       const key = `${p.linear.teamKey}/${(p.linear.projectId ?? p.linear.projectName ?? "*").toLowerCase()}`;
       if (bindings.has(key)) throw new ConfigError(`projects.yaml: "${p.id}" and "${bindings.get(key)}" are bound to the same Linear target (${key}); each Linear project must map to a different repository`);
       bindings.set(key, p.id);
     }
   }
-  return { linear, factory: { ...factory, dataDir: expandHome(factory.dataDir) }, models, projects, workflows, configDir: dir };
+  return { linear, jira, factory: { ...factory, dataDir: expandHome(factory.dataDir) }, models, projects, workflows, configDir: dir };
 }
