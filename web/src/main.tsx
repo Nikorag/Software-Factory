@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Shell } from "@/components/Shell";
 import { HealthPage } from "@/pages/Health";
 import { JobDetail } from "@/pages/JobDetail";
+import { Board } from "@/pages/Board";
 import { Jobs } from "@/pages/Jobs";
 import { Overview } from "@/pages/Overview";
 import { Settings } from "@/pages/Settings";
@@ -18,6 +19,7 @@ createRoot(document.getElementById("root")!).render(
         <Routes>
           <Route element={<Shell />}>
             <Route index element={<Overview />} />
+            <Route path="board" element={<Board />} />
             <Route path="jobs" element={<Jobs />} />
             <Route path="jobs/:id" element={<JobDetail />} />
             <Route path="projects" element={<Navigate to="/settings" replace />} />

@@ -28,7 +28,7 @@ export function createIntakeHandlers(d: { db: FactoryDb; linear: () => LinearCli
       }
       const project = d.project(job.projectId);
       // Prior jobs are ignored here: this job *is* the one allowed to process the issue.
-      const v = evaluateEligibility(issue, project, d.linearConfig, { projectRunnable: isRunnable(d.db, project.id) });
+      const v = evaluateEligibility(issue, project, d.linearConfig, { projectRunnable: isRunnable(d.db, project.id), manual: job.manual });
       d.db.insert(decisions).values({ jobId: job.id, kind: "eligibility", decision: v.eligible ? "eligible" : "no longer eligible", rationale: v.reasons.join("; ") || null, actor: "factory" }).run();
       if (!v.eligible) {
         return { kind: "blocked", reason: `This ticket is no longer eligible for the factory: ${v.reasons.join("; ")}. Fix that in Linear, then retry the job.` };

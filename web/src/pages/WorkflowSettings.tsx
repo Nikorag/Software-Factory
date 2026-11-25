@@ -34,6 +34,16 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
   const save = async () => { setErr(null); const r = await send("PUT", "/api/settings/global", g); if (r.ok) { setSaved(true); onSaved(); } else setErr(r.error); };
   return (
     <div className="grid gap-4">
+      <Card><CardHeader><CardTitle className="text-sm">Ticket pickup</CardTitle><CardDescription>How tickets get started.</CardDescription></CardHeader>
+        <CardContent className="grid gap-2">
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Ticket pickup">
+            {([["automatic", "Automatic", "Tickets labelled factory:enabled in the pickup status are started on their own."], ["manual", "Manual", "Nothing starts by itself. You pick tickets on the Board."]] as const).map(([v, label, hint]) => (
+              <button key={v} type="button" role="radio" aria-checked={(g.pickupMode ?? "automatic") === v} onClick={() => { setSaved(false); setG({ ...g, pickupMode: v }); }}
+                className={`grid max-w-sm flex-1 gap-0.5 rounded-md border p-3 text-left text-sm transition-colors hover:bg-accent ${(g.pickupMode ?? "automatic") === v ? "border-foreground bg-accent" : ""}`}><b>{label}</b><span className="text-xs text-muted-foreground">{hint}</span></button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">A project can override this in its own settings. In either mode you can start any ticket yourself from the Board (it needs no label or status), and a project must be fully onboarded first.</p>
+        </CardContent></Card>
       <Card><CardHeader><CardTitle className="text-sm">GitHub account</CardTitle><CardDescription>The <code>gh</code> login this profile uses to clone, push branches and open pull requests. A project can name a different one. Your machine's own active gh login is never switched.</CardDescription></CardHeader>
         <CardContent className="grid gap-1.5">
           <Select value={g.githubAccount || "__none"} onValueChange={(v) => { setSaved(false); setG({ ...g, githubAccount: v === "__none" ? "" : v }); }}>

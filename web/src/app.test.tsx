@@ -7,6 +7,7 @@ import { deriveFlow } from "@/lib/pipeline";
 import { JobDetail } from "@/pages/JobDetail";
 import { Settings } from "@/pages/Settings";
 import { Setup } from "@/pages/Setup";
+import { Board } from "@/pages/Board";
 import { Overview } from "@/pages/Overview";
 import type { Execution, Job, JobDetail as D, Overview as O } from "@/lib/types";
 
@@ -33,7 +34,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const app = (path: string) => render(
-  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
+  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="board" element={<Board />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
 );
 
 describe("flow derivation (from the stage history the factory already stores)", () => {
@@ -358,5 +359,50 @@ describe("settings and setup", () => {
     expect(box.getAllByLabelText("done")).toHaveLength(2); expect(box.getAllByLabelText("to do")).toHaveLength(1);
     await userEvent.click(within(nav).getByRole("button", { name: /Done/ }));
     expect(await screen.findByText("Ready: tickets will be picked up")).toBeInTheDocument();
+  });
+  const ticket = (o: object = {}) => ({ id: "i1", key: "ENG-418", title: "Fix the login redirect", url: "https://linear.app/x/issue/ENG-418", state: "Backlog", stateType: "backlog", labels: [], linearProject: "Alpha", projectId: "a", projectName: "Alpha", mode: "manual", job: null, canStart: true, reason: null, ...o });
+  const board = (items: object[], mode = "manual") => ({ mode, query: "", items, projects: [{ id: "a", name: "Alpha", mode }] });
+  it("shows tickets in a lane per Linear status, with the mode, and starts one on click", async () => {
+    routes = { "/api/overview": overview(), "/api/board": board([ticket(), ticket({ id: "i2", key: "ENG-7", title: "Speed up CI", state: "In progress", stateType: "started", job: { id: "j9", status: "running", stage: "IMPLEMENTATION" }, canStart: false, reason: "the factory is already working on it" })]), "/api/board/start": { ok: true, jobId: "j1" } };
+    app("/board");
+    expect(await screen.findByText(/Manual mode: nothing starts until you start it/)).toBeInTheDocument();
+    const backlog = within(await screen.findByRole("region", { name: "Backlog" }));
+    expect(backlog.getByText("Fix the login redirect")).toBeInTheDocument();
+    const progress = within(screen.getByRole("region", { name: "In progress" }));
+    expect(progress.getByText("the factory is already working on it")).toBeInTheDocument();      // why it cannot be started
+    expect(progress.queryByRole("button", { name: /Start/ })).toBeNull();
+    expect(progress.getByText("implementation")).toBeInTheDocument();                             // and what it is doing now
+    await userEvent.click(backlog.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(calls.find((c) => c.url === "/api/board/start")?.body).toBe(JSON.stringify({ issueId: "i1" })));
+    expect(await screen.findByText("Started ENG-418. It is queued and will begin shortly.")).toBeInTheDocument();
+    expect(calls.find((c) => c.url === "/api/board/start")!.headers).toMatchObject({ "X-Factory-UI": "1" });
+  });
+  it("searches by number: sends what was typed, shows matches as results, and explains an empty search", async () => {
+    routes = { "/api/overview": overview(), "/api/board": board([ticket()]), "/api/board?q=418": board([ticket()]), "/api/board?q=999": board([]) };
+    app("/board");
+    await screen.findByRole("region", { name: "Backlog" });
+    await userEvent.type(screen.getByLabelText("Search tickets"), "418");
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/board?q=418")).toBe(true));
+    expect(await screen.findByText("Fix the login redirect")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Backlog" })).toBeNull();                        // results, not lanes
+    await userEvent.clear(screen.getByLabelText("Search tickets")); await userEvent.type(screen.getByLabelText("Search tickets"), "999");
+    expect(await screen.findByText(/No ticket matches “999”/)).toBeInTheDocument();
+  });
+  it("shows why a ticket cannot be started and shows the server's error if starting fails", async () => {
+    routes = { "/api/overview": overview(), "/api/board": board([ticket({ canStart: false, reason: "the project is not onboarded yet (Settings → Projects)" }), ticket({ id: "i3", key: "ENG-5", title: "Another", state: "Todo", stateType: "unstarted" })], "automatic") };
+    app("/board");
+    expect(await screen.findByText(/Automatic mode: labelled tickets start on their own/)).toBeInTheDocument();
+    expect(screen.getByText(/the project is not onboarded yet/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start" })); // /api/board/start is not routed: 404 -> error
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+  });
+  it("sets the pickup mode for the profile and per project", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": { ...globalSettings, pickupMode: "automatic" }, "/api/settings/global ": {} };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Workflow" }));
+    await userEvent.click(await screen.findByRole("radio", { name: /Manual/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toBeTruthy());
+    expect(JSON.parse(calls.find((c) => c.method === "PUT")!.body!).pickupMode).toBe("manual");
   });
 });

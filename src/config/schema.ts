@@ -14,6 +14,8 @@ export const FactoryConfig = z.object({
   logLevel: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
   // The gh login this profile uses unless a project names its own. Lets e.g. a "home" and a "work" profile use different GitHub accounts.
   githubAccount: z.string().regex(/^[A-Za-z0-9-]{1,39}$/).optional(),
+  // automatic: tickets labelled factory:enabled in the pickup status are picked up on their own. manual: nothing starts until you start it from the Board.
+  pickupMode: z.enum(["automatic", "manual"]).default("automatic"),
   dryRun: z.boolean().default(false),
   maxRemediationAttempts: z.number().int().min(0).max(10).default(3),
   // Delivery is PR-only by decision: the factory opens pull requests and never merges them. `auto` does not exist yet.
@@ -69,6 +71,7 @@ export type ModelsConfig = z.infer<typeof ModelsConfig>;
 const RouteName = ["classification", "specification", "implementation", "independent_review", "final_review"] as const;
 /** Anything set here beats the global setting for this project only; anything left out follows the global one. */
 export const ProjectOverrides = z.object({
+  pickupMode: z.enum(["automatic", "manual"]).optional(),
   maxConcurrentJobs: z.number().int().min(1).max(8).optional(), // jobs of THIS project running at once (default 1: they share one repository clone)
   maxRemediationAttempts: z.number().int().min(0).max(10).optional(),
   models: z.object(Object.fromEntries(RouteName.map((r) => [r, ModelRoute.optional()])) as Record<(typeof RouteName)[number], z.ZodOptional<typeof ModelRoute>>)
@@ -172,3 +175,7 @@ export const LoadedConfig = z.object({
   configDir: z.string().optional(),
 });
 export type LoadedConfig = z.infer<typeof LoadedConfig>;
+
+/** How tickets of a project get started: its own override, else the profile's setting. */
+export const pickupModeOf = (project: { overrides?: { pickupMode?: "automatic" | "manual" } | undefined }, factory: { pickupMode: "automatic" | "manual" }): "automatic" | "manual" =>
+  project.overrides?.pickupMode ?? factory.pickupMode;

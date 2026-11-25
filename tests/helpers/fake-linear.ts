@@ -1,11 +1,11 @@
-import { LinearApiError, type IssueQuery, type LinearClient, type LinearIssue, type LinearIssueDetail, type LinearState } from "../../src/linear/client.js";
+import { LinearApiError, type BoardQuery, type IssueQuery, type LinearClient, type LinearIssue, type LinearIssueDetail, type LinearState } from "../../src/linear/client.js";
 
 export const STATE_NAMES = ["Backlog", "Ready for specification", "Specification review", "Ready for development", "In progress", "Ready for review", "Changes requested", "Merging", "Done", "Blocked"];
 export const LABEL_NAMES = ["factory:enabled", "factory:autonomous", "factory:bugfix", "factory:feature", "factory:maintenance", "factory:blocked"];
 
 /** In-memory Linear for tests. Records every call and can inject failures. */
 export class FakeLinear implements LinearClient {
-  states: LinearState[] = STATE_NAMES.map((name, i) => ({ id: `st-${i}`, name, type: "unstarted" }));
+  states: LinearState[] = STATE_NAMES.map((name, i) => ({ id: `st-${i}`, name, type: name === "Done" ? "completed" : name === "Backlog" ? "backlog" : name === "In progress" ? "started" : "unstarted" }));
   labelDefs = LABEL_NAMES.map((name, i) => ({ id: `lb-${i}`, name }));
   issues = new Map<string, LinearIssueDetail>();
   calls: string[] = [];
@@ -40,6 +40,15 @@ export class FakeLinear implements LinearClient {
     this.maybeFail("listIssues");
     return [...this.issues.values()].filter((i) =>
       i.team.key === q.teamKey && i.state.name === q.stateName && i.labels.some((l) => l.name === q.labelName) && (!q.projectId || i.project?.id === q.projectId) && (!q.projectName || i.project?.name === q.projectName));
+  }
+  async boardIssues(q: BoardQuery): Promise<LinearIssue[]> {
+    this.rec(`boardIssues:${q.teamKey}:${q.projectName ?? q.projectId ?? "-"}:${q.number ?? ""}:${q.title ?? ""}`);
+    this.maybeFail("boardIssues");
+    return [...this.issues.values()].filter((i) => i.team.key === q.teamKey
+      && (!q.projectName || i.project?.name === q.projectName) && (!q.projectId || i.project?.id === q.projectId)
+      && (!q.openOnly || !["completed", "canceled"].includes(i.state.type))
+      && (q.number === undefined || Number(i.identifier.split("-")[1]) === q.number)
+      && (!q.title || i.title.toLowerCase().includes(q.title.toLowerCase()))).slice(0, q.limit ?? 100).map((i) => structuredClone(i));
   }
   async getIssue(id: string) { this.rec(`getIssue:${id}`); this.maybeFail("getIssue"); const i = this.issues.get(id); if (!i) throw new LinearApiError("not found", false); return structuredClone(i); }
   async workflowStates() { return this.states; }

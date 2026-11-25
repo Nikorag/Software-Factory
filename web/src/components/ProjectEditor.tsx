@@ -19,10 +19,10 @@ import { startAction, TaskOutput } from "./TaskRunner";
 
 const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-export interface Form { conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
-const blank = (): Form => ({ conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", team: "", lproject: "", enabled: true, commands: {} });
+export interface Form { pickup: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
+const blank = (): Form => ({ pickup: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", team: "", lproject: "", enabled: true, commands: {} });
 const fromProject = (p: Project): Form => ({
-  conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
+  pickup: p.overrides?.pickupMode ?? "", conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
   id: p.id, name: p.name, source: p.managed ? "github" : "path", repo: p.githubRepo ?? "", path: p.managed ? "" : p.repository, account: p.githubAccount ?? "", branch: p.defaultBranch, autonomy: p.autonomy,
   team: p.linear?.teamKey ?? "", lproject: p.linear?.projectName ?? "", enabled: p.enabled, commands: Object.fromEntries(CMDS.map((k) => [k, p.commands[k] ?? ""])),
 });
@@ -54,7 +54,7 @@ export function ProjectEditor({ project, teams, globals, onSaved, onRemoved, onD
     const r = await send("PUT", `/api/settings/projects/${encodeURIComponent(id)}`, {
       name: f.name.trim(), defaultBranch: f.branch.trim() || "main", enabled: f.enabled, autonomy: f.autonomy, commands,
       ...(f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
-      overrides: { maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models },
+      overrides: { pickupMode: f.pickup || undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models },
       ...(f.team ? { linear: { teamKey: f.team, projectName: f.lproject || undefined } } : {}),
     });
     setBusy(false);
@@ -139,6 +139,9 @@ export function ProjectEditor({ project, teams, globals, onSaved, onRemoved, onD
 
       <Separator />
       <Section title="Overrides" hint="Leave a setting on “global” to follow Settings → Workflow. Anything you set here applies to this project only.">
+        <div className="grid gap-1.5"><Label>Ticket pickup</Label>
+          <Select value={f.pickup || "__global"} onValueChange={(v) => set("pickup", v === "__global" ? "" : v)}><SelectTrigger aria-label="ticket pickup" className="w-72"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="__global">{`profile default (${globals?.pickupMode ?? "automatic"})`}</SelectItem><SelectItem value="automatic">automatic</SelectItem><SelectItem value="manual">manual: I pick tickets on the Board</SelectItem></SelectContent></Select></div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5"><Label htmlFor="pe-conc">Concurrent jobs</Label>
             <div className="flex items-center gap-2"><Input id="pe-conc" type="number" min={1} max={8} className="w-24" value={f.conc} placeholder="1" onChange={(e) => set("conc", e.target.value)} />

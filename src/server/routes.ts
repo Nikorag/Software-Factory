@@ -16,6 +16,7 @@ import { readConversation } from "../agents/transcript.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
 import { onboardingOf, type CheckRecord } from "../repo/readiness.js";
 import type { RepoReport } from "../repo/inspect.js";
+import { registerBoardRoutes } from "./board-routes.js";
 import { registerProfileRoutes } from "./profile-routes.js";
 
 export interface ApiDeps {
@@ -175,6 +176,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     try { return { ok: true, job: jobRow(retryJob(db, req.params.id, actor)) }; }
     catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
   });
+  if (d.settings && d.config) registerBoardRoutes(app, { db, config: d.config, linear: d.settings.linear }, requireToken);
   if (d.profiles) registerProfileRoutes(app, d.profiles, requireToken);
   if (d.settings && d.config) registerSettingsRoutes(app, { ...d.settings, db, config: d.config }, requireToken);
 }

@@ -24,13 +24,13 @@ export function listJobs(db: FactoryDb, status?: JobRow["status"]): JobRow[] {
  */
 export function enqueue(
   db: FactoryDb,
-  input: { projectId: string; externalId: string; externalKey: string; workflow?: string; autonomous?: boolean; dryRun?: boolean },
+  input: { projectId: string; externalId: string; externalKey: string; workflow?: string; autonomous?: boolean; dryRun?: boolean; manual?: boolean },
 ): { job: JobRow; created: boolean } {
   const existing = db.select().from(jobs)
     .where(and(eq(jobs.projectId, input.projectId), eq(jobs.externalId, input.externalId), inArray(jobs.status, [...ACTIVE]))).get();
   if (existing) return { job: existing, created: false };
   const id = randomUUID();
-  db.insert(jobs).values({ id, ...input, autonomous: input.autonomous ?? false, dryRun: input.dryRun ?? false }).run();
+  db.insert(jobs).values({ id, ...input, autonomous: input.autonomous ?? false, dryRun: input.dryRun ?? false, manual: input.manual ?? false }).run();
   return { job: getJob(db, id)!, created: true };
 }
 

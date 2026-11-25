@@ -10,23 +10,25 @@ export interface Eligibility { eligible: boolean; reasons: string[]; workflow: W
  */
 export function evaluateEligibility(
   issue: LinearIssue, project: ProjectConfig, linear: LinearConfig,
-  ctx: { projectRunnable: boolean; existingJobStatus?: string },
+  ctx: { projectRunnable: boolean; existingJobStatus?: string; /** a person picked this ticket on the Board: that is the opt-in, so no label or status is required */ manual?: boolean },
 ): Eligibility {
   const names = new Set(issue.labels.map((l) => l.name.toLowerCase()));
   const has = (n: string) => names.has(n.toLowerCase());
   const reasons: string[] = [];
 
-  if (!has(linear.labels.enabled)) reasons.push(`missing label ${linear.labels.enabled}`);
-  if (issue.state.name.toLowerCase() !== linear.statuses.readyForSpecification.toLowerCase()) {
-    reasons.push(`status is "${issue.state.name}", not "${linear.statuses.readyForSpecification}"`);
-  }
-  if (has(linear.labels.blocked)) reasons.push(`has label ${linear.labels.blocked}`);
+  if (!ctx.manual) {
+    if (!has(linear.labels.enabled)) reasons.push(`missing label ${linear.labels.enabled}`);
+    if (issue.state.name.toLowerCase() !== linear.statuses.readyForSpecification.toLowerCase()) {
+      reasons.push(`status is "${issue.state.name}", not "${linear.statuses.readyForSpecification}"`);
+    }
+    if (has(linear.labels.blocked)) reasons.push(`has label ${linear.labels.blocked}`);
+  } else if (["completed", "canceled"].includes(issue.state.type)) reasons.push(`the ticket is already ${issue.state.name}`);
   if (!project.enabled || project.autonomy === "off") reasons.push(`project ${project.id} is disabled or autonomy is off`);
   if (!ctx.projectRunnable) reasons.push(`project ${project.id} has not passed validation`);
   if (ctx.existingJobStatus && ctx.existingJobStatus !== "cancelled") reasons.push(`already has a ${ctx.existingJobStatus} job`);
 
   const kinds = (["bugfix", "maintenance", "feature"] as const).filter((k) => has(linear.labels[k]));
-  if (kinds.length > 1) reasons.push(`conflicting type labels: ${kinds.join(", ")}`);
+  if (kinds.length > 1 && !ctx.manual) reasons.push(`conflicting type labels: ${kinds.join(", ")}`);
 
   // Autonomy needs both the issue's opt-in and the project's configuration.
   const autonomous = has(linear.labels.autonomous) && project.autonomy === "full";

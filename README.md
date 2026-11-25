@@ -37,6 +37,7 @@ It runs locally: your code, your Claude subscription, your GitHub and Linear acc
 
 - **Live pipeline flow chart** for every job, showing the running step, the fix loops that were actually taken, timings and attempts.
 - **Watch Claude work.** Open the full back-and-forth of any agent run (prompt, messages, tool calls and their output), live while it runs.
+- **Pick tickets yourself.** Set the factory to manual mode and choose what to work on from a board of your Linear tickets, searchable by number (`418`, `JAM-418`) or title. Or leave it automatic and let labelled tickets start on their own.
 - **Human in the loop.** When it needs you, it stops and tells you why. Answer in the dashboard and the job resumes with your answer.
 - **Profiles.** Run a "home" and a "work" factory side by side, each with its own projects, Linear workspace, GitHub account and data.
 - **Settings UI and setup wizard.** Connect your tools, add projects, set their test commands, pick models per workflow step, and set concurrency and fix-cycle limits, globally or per project. No config files to edit.
@@ -77,7 +78,7 @@ That starts the factory in the background, opens the app window and gives you yo
 2. connects Linear (your key is verified, then stored in your macOS keychain, never in a file) and offers to create the statuses and labels it needs;
 3. adds your first project: a GitHub repository, its Linear project, and the commands that run its tests.
 
-Then, in Linear, label a ticket **`factory:enabled`** and move it to **Ready for specification**. Open the app and watch it go.
+Then start a ticket one of two ways: in **automatic** mode, label it **`factory:enabled`** in Linear and move it to **Ready for specification**; in **manual** mode, open the **Board**, find it (search by number works) and press **Start**. A project must be fully onboarded first (Settings → Projects shows what is left). Open the app and watch it go.
 
 The factory keeps working after you close the window. Stop it with `software-factory shutdown`.
 
@@ -111,7 +112,7 @@ Switch profiles from the menu in the app (or the dropdown in the dashboard). Eac
 Everything is in **Settings** in the app:
 
 - **Projects**: repository, Linear binding, autonomy, and the install/build/typecheck/lint/test commands. Run *Clone*, *Validate*, *Run checks* and *Onboard Spec Kit* right from the editor.
-- **Workflow**: concurrent jobs, the fix-cycle limit, and which model handles each part of the workflow (triage, specification, implementation, independent review, Claude review). Any project can override these.
+- **Workflow**: ticket pickup (automatic or manual), concurrent jobs, the fix-cycle limit, and which model handles each part of the workflow (triage, specification, implementation, independent review, Claude review). Any project can override these.
 - **Integrations**: live status of every tool, and your Linear connection.
 - **Profiles**: add and manage them.
 

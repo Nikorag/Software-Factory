@@ -32,6 +32,7 @@ export const jobs = sqliteTable(
     leaseExpiresAt: ts("lease_expires_at"),
     autonomous: integer("autonomous", { mode: "boolean" }).notNull().default(false), // issue label AND project autonomy at pickup
     dryRun: integer("dry_run", { mode: "boolean" }).notNull().default(false),
+    manual: integer("manual", { mode: "boolean" }).notNull().default(false), // a person picked this ticket on the Board (no label or status required)
     prUrl: text("pr_url"),
     lastError: text("last_error"),
     createdAt: ts("created_at").notNull().default(now),

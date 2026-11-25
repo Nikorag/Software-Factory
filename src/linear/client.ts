@@ -13,6 +13,8 @@ export interface LinearIssue {
   labels: LinearLabel[];
 }
 export interface LinearIssueDetail extends LinearIssue { comments: LinearComment[] }
+/** What the Board asks for: a team (optionally one project), either open tickets or a search by ticket number / title. */
+export interface BoardQuery { teamKey: string; projectId?: string; projectName?: string; number?: number; title?: string; openOnly?: boolean; limit?: number }
 export interface IssueQuery { teamKey: string; projectId?: string; projectName?: string; stateName: string; labelName: string }
 
 /** Everything the factory needs from Linear. Real implementation below; tests supply a fake. */
@@ -20,6 +22,8 @@ export interface LinearClient {
   viewer(): Promise<{ id: string; name: string }>;
   listIssues(q: IssueQuery): Promise<LinearIssue[]>;
   getIssue(idOrKey: string): Promise<LinearIssueDetail>;
+  /** Read-only: tickets for the Board and its search. Never writes. */
+  boardIssues(q: BoardQuery): Promise<LinearIssue[]>;
   workflowStates(teamId: string): Promise<LinearState[]>;
   /** Workspace-level labels plus those belonging to the team. */
   labels(teamId: string): Promise<LinearLabel[]>;
@@ -144,6 +148,19 @@ export function createLinearClient(opts: HttpClientOptions): LinearClient {
         after = d.issues.pageInfo.hasNextPage ? d.issues.pageInfo.endCursor : null;
       } while (after);
       return out;
+    },
+    async boardIssues(q) {
+      const filter: Raw = { team: { key: { eq: q.teamKey } } };
+      if (q.projectId) filter.project = { id: { eq: q.projectId } };
+      else if (q.projectName) filter.project = { name: { eq: q.projectName } };
+      if (q.openOnly) filter.state = { type: { nin: ["completed", "canceled"] } };
+      if (q.number !== undefined) filter.number = { eq: q.number };
+      if (q.title) filter.title = { containsIgnoreCase: q.title };
+      const d = await request<Raw>(
+        `query($filter: IssueFilter, $first: Int) { issues(filter: $filter, first: $first, orderBy: updatedAt) { nodes { ${ISSUE_FIELDS} } } }`,
+        { filter, first: Math.min(q.limit ?? 100, 100) },
+      );
+      return d.issues.nodes.map(toIssue);
     },
     async getIssue(idOrKey) {
       const d = await request<Raw>(

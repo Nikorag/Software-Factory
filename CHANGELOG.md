@@ -4,6 +4,9 @@ Updates: `software-factory update` (add `--check` to only look). Releases are gi
 
 ## Unreleased
 
+- **Manual mode and the Board**: choose tickets from a board of your Linear tickets (search by number, key or title) instead of labelling them; the mode is set per profile and can be overridden per project.
+- Tickets of projects that are not fully onboarded are skipped, and each project shows an onboarding checklist.
+
 - **Profiles**: separate, isolated factories (own projects, Linear, GitHub account, data, port) that run side by side; `software-factory profile add|list|remove`, a switcher in the app, and a default GitHub account per profile.
 - **Desktop app**: `software-factory` starts every profile in the background, opens an Electron window and frees the terminal; `software-factory shutdown` stops it.
 - **Watch Claude work**: every agent run's conversation, live, in the dashboard.

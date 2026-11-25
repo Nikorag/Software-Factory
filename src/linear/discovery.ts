@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { Logger } from "pino";
-import type { LinearConfig, ProjectConfig } from "../config/schema.js";
+import { pickupModeOf, type LinearConfig, type ProjectConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { decisions, jobs } from "../db/schema.js";
 import { enqueue } from "../core/jobs.js";
@@ -23,12 +23,14 @@ const specificity = (p: ProjectConfig) => (p.linear?.projectId || p.linear?.proj
  */
 export async function discoverIssues(deps: {
   db: FactoryDb; client: LinearClient; linear: LinearConfig; projects: ProjectConfig[]; logger: Logger; dryRun?: boolean;
+  /** The profile's default pickup mode: projects in manual mode are never polled. */
+  pickupMode?: "automatic" | "manual";
   /** Skip tickets of projects whose onboarding is not complete (the service turns this on). */
   requireOnboarding?: boolean;
 }): Promise<DiscoveryReport> {
   const { db, client, linear, logger } = deps;
   const report: DiscoveryReport = { enqueued: [], skipped: [], errors: [] };
-  const bound = deps.projects.filter((p) => p.enabled && p.linear);
+  const bound = deps.projects.filter((p) => p.enabled && p.linear && pickupModeOf(p, { pickupMode: deps.pickupMode ?? "automatic" }) === "automatic"); // manual projects are started from the Board
 
   // Collect candidates per project; an issue may match several project bindings.
   const matches = new Map<string, { issue: LinearIssue; projects: ProjectConfig[] }>();

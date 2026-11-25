@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { usePoll } from "@/hooks/usePoll";
 import { cn } from "@/lib/utils";
 
-const NAV = [["/", "Overview"], ["/jobs", "Jobs"], ["/health", "Health"], ["/settings", "Settings"]] as const;
+const NAV = [["/", "Overview"], ["/board", "Board"], ["/jobs", "Jobs"], ["/health", "Health"], ["/settings", "Settings"]] as const;
 
 export function Shell() {
   const { data: o, error, reload } = usePoll(() => api<Overview>("/api/overview"), 3000);

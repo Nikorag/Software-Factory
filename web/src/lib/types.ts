@@ -27,7 +27,7 @@ export interface JobDetail {
   outbox: { id: number; kind: string; status: string; attempts: number; lastError: string | null }[];
 }
 export interface Project {
-  id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; overrides: { maxConcurrentJobs?: number; maxRemediationAttempts?: number; models?: Partial<import("./tasks").Routes> } | null;
+  id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; overrides: { pickupMode?: "automatic" | "manual"; maxConcurrentJobs?: number; maxRemediationAttempts?: number; models?: Partial<import("./tasks").Routes> } | null;
   linear: { teamKey: string; projectName?: string } | null; commands: Record<string, string | undefined>;
   validation: { ok: boolean; protection: string; findings: string[] } | null; activeJobs: number;
   onboarding?: { status: "ready" | "in-progress" | "not-started"; steps: { id: string; label: string; ok: boolean; detail: string }[] };
@@ -40,3 +40,8 @@ export interface TaskState { id: string; label: string; status: "running" | "ok"
 export interface UpdateInfo { current: string | null; latest: string | null; available: boolean; checkedAt: number | null }
 export interface ProfileInfo { name: string; port: number; url: string; current: boolean; running: boolean }
 export interface GhAccounts { accounts: { login: string; active: boolean }[]; defaultAccount: string | null }
+export interface BoardItem {
+  id: string; key: string; title: string; url: string; state: string; stateType: string; labels: string[]; linearProject: string | null;
+  projectId: string; projectName: string; mode: "automatic" | "manual"; job: { id: string; status: string; stage: string } | null; canStart: boolean; reason: string | null;
+}
+export interface Board { mode: "automatic" | "manual"; query: string; items: BoardItem[]; projects: { id: string; name: string; mode: "automatic" | "manual" }[] }

@@ -1,0 +1,1 @@
+ALTER TABLE `jobs` ADD `manual` integer DEFAULT false NOT NULL;
