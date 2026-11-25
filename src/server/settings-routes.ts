@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir } from "../config/load.js";
-import { applyProjects, ProjectSettings, removeProject, seedHomeConfig, upsertProject } from "../config/store.js";
+import { applyGlobal, applyProjects, globalSettingsOf, ProjectSettings, removeProject, seedHomeConfig, updateGlobalSettings, upsertProject } from "../config/store.js";
 import type { LoadedConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { auditTeam, type TeamAudit } from "../linear/check.js";
@@ -65,6 +65,12 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
       const r = await applySetup(client, d.config.linear, team, {});
       return { ok: r.failed.length === 0, created: r.created, failed: r.failed };
     } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
+  });
+
+  // ---- workflow settings: concurrency, fix-cycle limit, models per task ----
+  app.get("/api/settings/global", async () => globalSettingsOf(d.config));
+  app.put<{ Body: unknown }>("/api/settings/global", { preHandler: requireToken }, async (req, reply) => {
+    try { applyGlobal(d.config, updateGlobalSettings(req.body, writableDir(d.config))); return { ok: true, ...globalSettingsOf(d.config) }; } catch (e) { return fail(reply, e); }
   });
 
   // ---- projects ----

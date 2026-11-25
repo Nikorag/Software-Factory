@@ -1,0 +1,59 @@
+import { useEffect, useState } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ModelPicker } from "@/components/ModelPicker";
+import { send } from "@/lib/api";
+import { TASKS, type GlobalSettings } from "@/lib/tasks";
+
+/** A number box you can clear and retype: it only commits a value once something valid is typed, clamps to the range, and restores on blur if left empty. */
+function NumberField({ id, value, min, max, onChange }: { id: string; value: number; min: number; max: number; onChange: (n: number) => void }) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => { setText(String(value)); }, [value]);
+  return (
+    <Input id={id} type="number" min={min} max={max} className="w-28" value={text}
+      onChange={(e) => { const raw = e.target.value; if (raw === "") return setText(""); const n = Math.min(max, Math.max(min, Math.trunc(Number(raw)))); if (Number.isNaN(n)) return; setText(String(n)); onChange(n); }}
+      onBlur={() => setText(String(value))} />
+  );
+}
+
+/** Factory-wide defaults. Any project can override each of these in its own editor. Applies immediately, no restart. */
+export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | null; onSaved: () => void }) {
+  const [g, setG] = useState<GlobalSettings | null>(value);
+  const [err, setErr] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { if (value) setG(value); }, [value]);
+  if (!g || !value) return null;
+  const dirty = JSON.stringify(g) !== JSON.stringify(value);
+  const save = async () => { setErr(null); const r = await send("PUT", "/api/settings/global", g); if (r.ok) { setSaved(true); onSaved(); } else setErr(r.error); };
+  return (
+    <div className="grid gap-4">
+      <Card><CardHeader><CardTitle className="text-sm">Limits</CardTitle><CardDescription>Defaults for every project.</CardDescription></CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-1.5"><Label htmlFor="wf-conc">Concurrent jobs</Label>
+            <NumberField id="wf-conc" min={1} max={8} value={g.maxConcurrentJobs} onChange={(n) => { setSaved(false); setG({ ...g, maxConcurrentJobs: n }); }} />
+            <p className="text-xs text-muted-foreground">Tickets worked on at once, across all projects (1–8). Each Claude run uses real memory and subscription usage. A single project still runs one job at a time unless you raise it in that project's overrides, because its jobs share one repository clone.</p></div>
+          <div className="grid gap-1.5"><Label htmlFor="wf-fix">Fix cycle limit</Label>
+            <NumberField id="wf-fix" min={0} max={10} value={g.maxRemediationAttempts} onChange={(n) => { setSaved(false); setG({ ...g, maxRemediationAttempts: n }); }} />
+            <p className="text-xs text-muted-foreground">How many times reviews and failing checks may send work back for fixes before the job stops for you (0–10). Shared by spec fixes, review fixes and CI fixes.</p></div>
+        </CardContent></Card>
+      <Card><CardHeader><CardTitle className="text-sm">Models</CardTitle><CardDescription>Which model does each part of the workflow. <b>default</b> lets Claude Code choose; an alias tracks that family's latest; a full id pins one. Keep Independent review different from the model that wrote the work.</CardDescription></CardHeader>
+        <CardContent className="grid gap-4">
+          {TASKS.map((t) => (
+            <div key={t.id} className="grid gap-1.5 border-b pb-4 last:border-0 last:pb-0">
+              <div className="flex flex-wrap items-baseline gap-x-3"><b className="text-sm">{t.label}</b><span className="text-xs text-muted-foreground">{t.steps}</span></div>
+              <ModelPicker label={t.label} allowLocal={t.local} value={g.routes[t.id]} onChange={(v) => { setSaved(false); setG({ ...g, routes: { ...g.routes, [t.id]: v } }); }} />
+            </div>
+          ))}
+          {g.routes.independent_review.model === g.routes.specification.model && g.routes.independent_review.provider === g.routes.specification.provider
+            ? <Alert><AlertDescription>Independent review uses the same model as Specification, so it is partly marking its own work. Pick a different one for a genuinely independent review.</AlertDescription></Alert> : null}
+        </CardContent></Card>
+      <div className="flex flex-wrap items-center gap-3">
+        {err ? <p role="alert" className="flex-1 text-sm text-destructive">{err}</p> : <p className="flex-1 text-sm text-muted-foreground">{saved && !dirty ? "Saved. Applied immediately; running jobs pick it up at their next step." : dirty ? "Unsaved changes" : ""}</p>}
+        <Button variant="outline" disabled={!dirty} onClick={() => setG(value)}>Revert</Button><Button disabled={!dirty} onClick={() => void save()}>Save settings</Button>
+      </div>
+    </div>
+  );
+}

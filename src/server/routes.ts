@@ -88,6 +88,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     const id = job.id;
     return {
       job: jobRow(job),
+      remediationCap: d.engine?.remediationCap(job) ?? d.config?.projects.projects.find((p) => p.id === job.projectId)?.overrides?.maxRemediationAttempts ?? d.config?.factory.maxRemediationAttempts ?? 3,
       stageOrder: STAGES,
       executions: db.select().from(stageExecutions).where(eq(stageExecutions.jobId, id)).orderBy(asc(stageExecutions.id)).all()
         .map((e) => ({ id: e.id, stage: e.stage, attempt: e.attempt, outcome: e.outcome, error: clip(e.error), output: clip(e.outputJson, 1500), startedAt: ms(e.startedAt), finishedAt: ms(e.finishedAt) })),
@@ -118,7 +119,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
         const row = rows.find((r) => r.id === p.id);
         const report = row?.validationJson ? (JSON.parse(row.validationJson) as { ok?: boolean; findings?: { severity: string; code: string; message: string }[]; branchProtection?: { status: string } }) : null;
         return {
-          id: p.id, name: p.name, enabled: p.enabled, autonomy: p.autonomy, repository: p.repository, managed: p.managed, defaultBranch: p.defaultBranch, githubAccount: p.github.account ?? null,
+          id: p.id, name: p.name, enabled: p.enabled, autonomy: p.autonomy, repository: p.repository, managed: p.managed, defaultBranch: p.defaultBranch, githubAccount: p.github.account ?? null, overrides: p.overrides ?? null,
           linear: p.linear ?? null, githubRepo: p.github.repo ?? null, commands: p.commands,
           validation: report ? { ok: report.ok ?? false, at: ms(row?.lastValidatedAt), protection: report.branchProtection?.status ?? "unknown", findings: (report.findings ?? []).filter((f) => f.severity !== "info").map((f) => `${f.severity}: ${f.message}`) } : null,
           activeJobs: db.select().from(jobs).where(and(eq(jobs.projectId, p.id), inArray(jobs.status, ["queued", "running", "waiting"]))).all().length,

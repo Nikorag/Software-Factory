@@ -4,7 +4,7 @@ import { join } from "node:path";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { BUNDLED_CONFIG_DIR, loadConfig } from "../src/config/load.js";
-import { applyProjects, removeProject, seedHomeConfig, upsertProject } from "../src/config/store.js";
+import { applyGlobal, applyProjects, globalSettingsOf, removeProject, seedHomeConfig, updateGlobalSettings, upsertProject } from "../src/config/store.js";
 import { openDb } from "../src/db/client.js";
 import { buildServer } from "../src/server/app.js";
 import { TaskManager } from "../src/service/tasks.js";
@@ -135,5 +135,59 @@ describe("settings API", () => {
     const s = server();
     for (const key of ["", "hunter2", "lin_api_short", "sk-ant-" + "a".repeat(40)]) expect((await send(s.app, "POST", "/api/setup/linear-key", UI, { key })).statusCode).toBe(400);
     expect(s.saved).toEqual([]);
+  });
+});
+
+describe("workflow settings (global) and per-project overrides", () => {
+  const route = (model: string, provider = "anthropic") => ({ provider, model });
+  const global = (o: object = {}) => ({ maxConcurrentJobs: 2, maxRemediationAttempts: 5, routes: { classification: route("haiku"), specification: route("sonnet"), implementation: route("opus"), independent_review: route("haiku"), final_review: route("default") }, ...o });
+
+  it("writes concurrency, fix-cycle limit and a model per task, keeping comments, and the config reloads with them", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    const c = updateGlobalSettings(global(), dir);
+    expect(c.factory).toMatchObject({ maxConcurrentJobs: 2, maxRemediationAttempts: 5 });
+    expect(c.models.routes.implementation).toEqual({ provider: "anthropic", model: "opus" });
+    expect(readFileSync(join(dir, "models.yaml"), "utf8")).toContain("# Model routing."); // the shipped comments survive
+    expect(loadConfig(dir).models.routes.specification.model).toBe("sonnet");               // really on disk
+  });
+  it("refuses values outside the limits, or a local model for a stage that needs file tools, and writes nothing", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    const before = readFileSync(join(dir, "factory.yaml"), "utf8") + readFileSync(join(dir, "models.yaml"), "utf8");
+    expect(() => updateGlobalSettings(global({ maxConcurrentJobs: 0 }), dir)).toThrow();
+    expect(() => updateGlobalSettings(global({ maxConcurrentJobs: 9 }), dir)).toThrow();
+    expect(() => updateGlobalSettings(global({ maxRemediationAttempts: 11 }), dir)).toThrow();
+    expect(() => updateGlobalSettings(global({ routes: { ...global().routes, implementation: route("x", "local") } }), dir)).toThrow(/must use provider `anthropic`/);
+    expect(readFileSync(join(dir, "factory.yaml"), "utf8") + readFileSync(join(dir, "models.yaml"), "utf8")).toBe(before);
+  });
+  it("applies to the config object a running engine and router already hold", () => {
+    const dir = fixtureConfigDir();
+    const live = loadConfig(dir), routes = live.models.routes;
+    applyGlobal(live, updateGlobalSettings(global(), dir));
+    expect(live.factory.maxConcurrentJobs).toBe(2);
+    expect(routes.implementation.model).toBe("opus"); // same object the router holds
+  });
+  it("stores a project's overrides, and writes no overrides block at all when there are none", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    const c = upsertProject({ ...app1, overrides: { maxConcurrentJobs: 2, maxRemediationAttempts: 1, models: { implementation: route("opus") } } }, dir);
+    expect(c.projects.projects[0]!.overrides).toEqual({ maxConcurrentJobs: 2, maxRemediationAttempts: 1, models: { implementation: { provider: "anthropic", model: "opus" } } });
+    upsertProject({ ...app1, overrides: { models: {} } }, dir); // cleared in the editor
+    expect(readFileSync(join(dir, "projects.yaml"), "utf8")).not.toContain("overrides");
+    expect(loadConfig(dir).projects.projects[0]!.overrides).toBeUndefined();
+  });
+  it("rejects a bad project override", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    expect(() => upsertProject({ ...app1, overrides: { maxConcurrentJobs: 99 } }, dir)).toThrow();
+    expect(() => upsertProject({ ...app1, overrides: { models: { specification: route("m", "local") } } }, dir)).toThrow();
+  });
+  it("is served and saved through the API, live, from the dashboard", async () => {
+    const s = server();
+    const r0 = await send(s.app, "GET", "/api/settings/global", HOST);
+    expect(r0.json()).toMatchObject({ maxConcurrentJobs: 1, maxRemediationAttempts: 3 });
+    expect((await send(s.app, "PUT", "/api/settings/global", HOST, global())).statusCode).toBe(401);          // needs the dashboard origin or the token
+    const ok = await send(s.app, "PUT", "/api/settings/global", UI, global());
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(s.config.factory.maxConcurrentJobs).toBe(2);                                                         // applied to the live config
+    expect(globalSettingsOf(loadConfig(s.dir)).routes.implementation.model).toBe("opus");
+    expect((await send(s.app, "PUT", "/api/settings/global", UI, global({ maxConcurrentJobs: 50 }))).statusCode).toBe(400);
   });
 });

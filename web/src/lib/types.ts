@@ -21,13 +21,13 @@ export interface Execution { id: number; stage: string; attempt: number; outcome
 export interface Decision { id: number; kind: string; decision: string; rationale: string | null; actor: string; at: number | null }
 export interface Invocation { id: number; agent: string; model: string | null; exitCode: number | null; durationMs: number | null; usage: { denials?: number } | null; hasLog: boolean; at: number | null }
 export interface JobDetail {
-  job: Job; stageOrder: string[]; executions: Execution[]; decisions: Decision[]; invocations: Invocation[];
+  job: Job; remediationCap?: number; stageOrder: string[]; executions: Execution[]; decisions: Decision[]; invocations: Invocation[];
   artifacts: { kind: string; path: string; bytes: number | null; at: number | null }[];
   worktree: { path: string; state: string; branch: string } | null;
   outbox: { id: number; kind: string; status: string; attempts: number; lastError: string | null }[];
 }
 export interface Project {
-  id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean;
+  id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; overrides: { maxConcurrentJobs?: number; maxRemediationAttempts?: number; models?: Partial<import("./tasks").Routes> } | null;
   linear: { teamKey: string; projectName?: string } | null; commands: Record<string, string | undefined>;
   validation: { ok: boolean; protection: string; findings: string[] } | null; activeJobs: number;
 }

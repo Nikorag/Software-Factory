@@ -8,6 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checks, LinearSetup } from "@/components/Integrations";
 import { ProjectEditor } from "@/components/ProjectEditor";
 import { api } from "@/lib/api";
+import { WorkflowSettings } from "@/pages/WorkflowSettings";
+import type { GlobalSettings } from "@/lib/tasks";
 import type { Project, SetupInfo, TeamAudit } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
 import { cn } from "@/lib/utils";
@@ -15,7 +17,7 @@ import { cn } from "@/lib/utils";
 const NEW = "__new";
 
 /** Projects: a list on the left, a full-height editor on the right. */
-function ProjectsPane({ projects, teams, reload }: { projects: Project[]; teams: TeamAudit[]; reload: () => void }) {
+function ProjectsPane({ projects, teams, globals, reload }: { projects: Project[]; teams: TeamAudit[]; globals: GlobalSettings | null; reload: () => void }) {
   const [params] = useSearchParams();
   const [sel, setSel] = useState<string | null>(params.get("project"));
   const [dirty, setDirty] = useState(false);
@@ -43,7 +45,7 @@ function ProjectsPane({ projects, teams, reload }: { projects: Project[]; teams:
       </CardContent></Card>
       <Card className="min-w-0 overflow-hidden"><CardContent className="min-w-0 p-5">
         {sel === null && projects.length === 0 ? <p className="text-sm text-muted-foreground">Add a project to get started.</p> : (
-          <ProjectEditor key={sel ?? "none"} project={current} teams={teams} onDirty={onDirty}
+          <ProjectEditor key={sel ?? "none"} project={current} teams={teams} globals={globals} onDirty={onDirty}
             onSaved={(id) => { reload(); if (sel === NEW) setSel(id); }} onRemoved={() => { reload(); setSel(null); }} />
         )}
       </CardContent></Card>
@@ -59,12 +61,14 @@ export function Settings() {
   const { data, reload } = usePoll(() => api<{ projects: Project[] }>("/api/projects"), 15000);
   const { data: info, reload: reloadInfo } = usePoll(() => api<SetupInfo>("/api/setup"), 30000);
   const [teams, setTeams] = useState<TeamAudit[]>([]);
+  const { data: globals, reload: reloadGlobals } = usePoll(() => api<GlobalSettings>("/api/settings/global"), 60000);
   // Teams power the editor's Linear pickers; load them once a key exists (the Integrations tab refreshes them).
   usePoll(async () => { if (!info?.linear.keyPresent) return null; const r = await api<{ teams: TeamAudit[] }>("/api/setup/linear"); setTeams(r.teams); return r; }, 300000, [info?.linear.keyPresent]);
   return (
     <Tabs defaultValue="projects">
-      <TabsList><TabsTrigger value="projects">Projects</TabsTrigger><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="system">System</TabsTrigger></TabsList>
-      <TabsContent value="projects"><ProjectsPane projects={data?.projects ?? []} teams={teams} reload={() => { void reload(); void reloadInfo(); }} /></TabsContent>
+      <TabsList><TabsTrigger value="projects">Projects</TabsTrigger><TabsTrigger value="workflow">Workflow</TabsTrigger><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="system">System</TabsTrigger></TabsList>
+      <TabsContent value="projects"><ProjectsPane projects={data?.projects ?? []} teams={teams} globals={globals} reload={() => { void reload(); void reloadInfo(); }} /></TabsContent>
+      <TabsContent value="workflow"><WorkflowSettings value={globals} onSaved={() => void reloadGlobals()} /></TabsContent>
       <TabsContent value="integrations" className="grid gap-4">
         <Card><CardHeader><CardTitle className="text-sm">Status</CardTitle></CardHeader><CardContent><Checks /></CardContent></Card>
         <Card><CardHeader><CardTitle className="text-sm">Linear</CardTitle></CardHeader><CardContent><LinearSetup info={info} onKey={() => void reloadInfo()} onTeams={setTeams} /></CardContent></Card>

@@ -34,7 +34,7 @@ export function JobDetail() {
   const run = async (path: string, body?: unknown) => { const err = await post(path, body); setMsg(err); if (!err) { setAnswer(""); void reload(); } };
   const node = sel ? NODE[sel] : null;
   const execs = node ? d.executions.filter((e) => e.stage === node.stage) : d.executions;
-  const cycles = j.remediationAttempts;
+  const cycles = j.remediationAttempts, cap = d.remediationCap ?? 3;
 
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
@@ -53,8 +53,8 @@ export function JobDetail() {
           </div>
         </div>
         <div>
-          <div className="text-xs text-muted-foreground"><b className="block text-base text-foreground tabular-nums">{cycles} of 3</b>fix cycles used (the cap is 3, shared by every review and CI)</div>
-          <div className="mt-2 flex gap-1" aria-hidden="true">{[0, 1, 2].map((i) => <i key={i} className={cn("h-2 flex-1 rounded-sm bg-border", i < cycles && (cycles >= 3 ? "bg-destructive" : "bg-loop"))} />)}</div>
+          <div className="text-xs text-muted-foreground"><b className="block text-base text-foreground tabular-nums">{cycles} of {cap}</b>fix cycles used (the cap is {cap} for this project, shared by every review and CI)</div>
+          <div className="mt-2 flex gap-1" aria-hidden="true">{Array.from({ length: Math.max(1, cap) }, (_, i) => <i key={i} className={cn("h-2 flex-1 rounded-sm bg-border", i < cycles && (cycles >= cap ? "bg-destructive" : "bg-loop"))} />)}</div>
         </div>
         <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground"><div><b className="block text-base text-foreground tabular-nums">{dur(flow.elapsedMs)}</b>elapsed</div><div><b className="block text-base text-foreground tabular-nums">{dur(flow.agentMs)}</b>agent time</div></div>
       </CardContent></Card>

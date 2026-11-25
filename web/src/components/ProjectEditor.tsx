@@ -10,13 +10,16 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { send } from "@/lib/api";
 import type { Project, TeamAudit } from "@/lib/types";
+import { TASKS, type GlobalSettings, type Routes, type RouteCfg, type TaskId } from "@/lib/tasks";
+import { ModelPicker } from "./ModelPicker";
 import { startAction, TaskOutput } from "./TaskRunner";
 
 const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-export interface Form { id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
-const blank = (): Form => ({ id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", team: "", lproject: "", enabled: true, commands: {} });
+export interface Form { conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
+const blank = (): Form => ({ conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", team: "", lproject: "", enabled: true, commands: {} });
 const fromProject = (p: Project): Form => ({
+  conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
   id: p.id, name: p.name, source: p.managed ? "github" : "path", repo: p.githubRepo ?? "", path: p.managed ? "" : p.repository, account: p.githubAccount ?? "", branch: p.defaultBranch, autonomy: p.autonomy,
   team: p.linear?.teamKey ?? "", lproject: p.linear?.projectName ?? "", enabled: p.enabled, commands: Object.fromEntries(CMDS.map((k) => [k, p.commands[k] ?? ""])),
 });
@@ -27,7 +30,7 @@ const Section = ({ title, hint, children }: { title: string; hint?: string; chil
 );
 
 /** The whole editor for one project (or a new one). Server-side validation (duplicate repos, shared Linear targets, bad ids) is shown verbatim. */
-export function ProjectEditor({ project, teams, onSaved, onRemoved, onDirty }: { project: Project | null; teams: TeamAudit[]; onSaved: (id: string) => void; onRemoved?: () => void; onDirty?: (d: boolean) => void }) {
+export function ProjectEditor({ project, teams, globals, onSaved, onRemoved, onDirty }: { project: Project | null; teams: TeamAudit[]; globals?: GlobalSettings | null; onSaved: (id: string) => void; onRemoved?: () => void; onDirty?: (d: boolean) => void }) {
   const initial = useMemo(() => (project ? fromProject(project) : blank()), [project]);
   const [f, setF] = useState<Form>(initial);
   const [err, setErr] = useState<string | null>(null);
@@ -47,6 +50,7 @@ export function ProjectEditor({ project, teams, onSaved, onRemoved, onDirty }: {
     const r = await send("PUT", `/api/settings/projects/${encodeURIComponent(id)}`, {
       name: f.name.trim(), defaultBranch: f.branch.trim() || "main", enabled: f.enabled, autonomy: f.autonomy, commands,
       ...(f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
+      overrides: { maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models },
       ...(f.team ? { linear: { teamKey: f.team, projectName: f.lproject || undefined } } : {}),
     });
     setBusy(false);
@@ -108,6 +112,30 @@ export function ProjectEditor({ project, teams, onSaved, onRemoved, onDirty }: {
       <Section title="Commands" hint="Run by the factory in a throwaway worktree, sandboxed. A test command is required before it will implement anything: use the project's own CI as the guide, then press “Run checks” to prove they work.">
         <div className="grid gap-3 sm:grid-cols-2">{CMDS.map((k) => <div key={k} className="grid gap-1.5"><Label htmlFor={`pe-c-${k}`} className="capitalize">{k}</Label><Input id={`pe-c-${k}`} className="font-mono text-xs" value={f.commands[k] ?? ""} onChange={(e) => set("commands", { ...f.commands, [k]: e.target.value })} placeholder={k === "test" ? "npm test" : ""} /></div>)}</div>
         {noTest ? <p className="text-sm text-loop">No test command: the factory will not implement changes here yet.</p> : null}
+      </Section>
+
+      <Separator />
+      <Section title="Overrides" hint="Leave a setting on “global” to follow Settings → Workflow. Anything you set here applies to this project only.">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-1.5"><Label htmlFor="pe-conc">Concurrent jobs</Label>
+            <div className="flex items-center gap-2"><Input id="pe-conc" type="number" min={1} max={8} className="w-24" value={f.conc} placeholder="1" onChange={(e) => set("conc", e.target.value)} />
+              <span className="text-xs text-muted-foreground">{f.conc ? <button type="button" className="underline" onClick={() => set("conc", "")}>use default (1)</button> : "default: 1 (its jobs share one clone)"}</span></div></div>
+          <div className="grid gap-1.5"><Label htmlFor="pe-fix">Fix cycle limit</Label>
+            <div className="flex items-center gap-2"><Input id="pe-fix" type="number" min={0} max={10} className="w-24" value={f.fix} placeholder={String(globals?.maxRemediationAttempts ?? 3)} onChange={(e) => set("fix", e.target.value)} />
+              <span className="text-xs text-muted-foreground">{f.fix !== "" ? <button type="button" className="underline" onClick={() => set("fix", "")}>use global ({globals?.maxRemediationAttempts ?? 3})</button> : `global: ${globals?.maxRemediationAttempts ?? 3}`}</span></div></div>
+        </div>
+        <div className="grid gap-3">
+          {TASKS.map((t) => {
+            const own = f.models[t.id], glob = globals?.routes[t.id];
+            return (
+              <div key={t.id} className="grid gap-1.5"><div className="flex flex-wrap items-baseline gap-x-3"><Label>{t.label} model</Label>
+                {own ? <button type="button" className="text-xs underline" onClick={() => { const m = { ...f.models }; delete m[t.id]; set("models", m); }}>use global ({glob?.model ?? "…"})</button> : <span className="text-xs text-muted-foreground">global: {glob?.model ?? "…"}</span>}</div>
+                {own ? <ModelPicker label={`${t.label} override`} allowLocal={t.local} value={own} onChange={(v: RouteCfg) => set("models", { ...f.models, [t.id as TaskId]: v })} />
+                  : <div><Button type="button" size="sm" variant="outline" onClick={() => set("models", { ...f.models, [t.id]: glob ?? { provider: "anthropic", model: "default" } })}>Override for this project</Button></div>}
+              </div>
+            );
+          })}
+        </div>
       </Section>
 
       {project ? (<>

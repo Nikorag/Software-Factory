@@ -8,7 +8,6 @@ import { JobDetail } from "@/pages/JobDetail";
 import { Settings } from "@/pages/Settings";
 import { Setup } from "@/pages/Setup";
 import { Overview } from "@/pages/Overview";
-import { Projects } from "@/pages/Projects";
 import type { Execution, Job, JobDetail as D, Overview as O } from "@/lib/types";
 
 const XSS = `<img src=x onerror="window.__pwned=1"><script>window.__pwned=1</script>`;
@@ -34,7 +33,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const app = (path: string) => render(
-  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="projects" element={<Projects />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
+  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
 );
 
 describe("flow derivation (from the stage history the factory already stores)", () => {
@@ -227,21 +226,50 @@ describe("settings and setup", () => {
     expect(await screen.findByText("Connect Linear")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled(); // no key yet
   });
-  it("lists projects as rows with the facts that matter, and links each to its editor", async () => {
-    routes = { "/api/overview": overview(), "/api/projects": { projects: [
-      { ...proj, validation: { ok: true, protection: "protected", findings: [] }, activeJobs: 1 },
-      { ...proj, id: "bare", name: "Bare", githubRepo: "me/bare", commands: {}, enabled: true } ] } };
-    app("/projects");
-    expect(await screen.findByText("My App")).toBeInTheDocument();
-    expect(screen.getByText("Validated")).toBeInTheDocument();
-    expect(screen.getByText("(npm test)")).toBeInTheDocument();
-    expect(screen.getByText(/No test command: the factory will not implement changes yet/)).toBeInTheDocument();
-    const links = screen.getAllByRole("link", { name: /Edit/ });
-    expect(links[0]).toHaveAttribute("href", "/settings?project=my-app");
-  });
   it("opens the editor for the project named in the link", async () => {
     routes = { "/api/overview": overview(), "/api/projects": { projects: [proj, { ...proj, id: "bare", name: "Bare", githubRepo: "me/bare", commands: {} }] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] } };
     app("/settings?project=bare");
     expect(await screen.findByDisplayValue("Bare")).toBeInTheDocument();
+  });
+  const globalSettings = { maxConcurrentJobs: 1, maxRemediationAttempts: 3, routes: {
+    classification: { provider: "anthropic", model: "haiku" }, specification: { provider: "anthropic", model: "default" }, implementation: { provider: "anthropic", model: "default" },
+    independent_review: { provider: "anthropic", model: "haiku" }, final_review: { provider: "anthropic", model: "default" } } };
+  it("edits the workflow defaults: concurrency, fix-cycle limit and a model per task, saved in one request", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Workflow" }));
+    const conc = await screen.findByLabelText("Concurrent jobs");
+    expect(conc).toHaveValue(1);
+    expect(screen.getByRole("button", { name: "Save settings" })).toBeDisabled(); // nothing changed yet
+    await userEvent.clear(conc); await userEvent.type(conc, "3");
+    await userEvent.clear(screen.getByLabelText("Fix cycle limit")); await userEvent.type(screen.getByLabelText("Fix cycle limit"), "5");
+    const impl = within(screen.getByRole("group", { name: "Implementation model presets" }));
+    await userEvent.click(impl.getByRole("button", { name: "opus" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")?.url).toBe("/api/settings/global"));
+    expect(JSON.parse(calls.find((c) => c.method === "PUT")!.body!)).toMatchObject({ maxConcurrentJobs: 3, maxRemediationAttempts: 5, routes: { implementation: { provider: "anthropic", model: "opus" }, classification: { model: "haiku" } } });
+  });
+  it("keeps concurrency inside 1-8 and warns when the reviewer is the same model as the writer", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Workflow" }));
+    const conc = await screen.findByLabelText("Concurrent jobs");
+    await userEvent.clear(conc); await userEvent.type(conc, "99");
+    expect(conc).toHaveValue(8);
+    await userEvent.click(within(screen.getByRole("group", { name: "Independent review model presets" })).getByRole("button", { name: "default" }));
+    expect(await screen.findByText(/partly marking its own work/)).toBeInTheDocument();
+  });
+  it("a project can override a setting, and one it leaves alone is not sent", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings, "/api/settings/projects/my-app": { ok: true } };
+    app("/settings");
+    expect(await screen.findByText("global: 3")).toBeInTheDocument(); // the fix-cycle default is shown beside the field
+    await userEvent.type(screen.getByLabelText("Fix cycle limit"), "1");
+    const row = screen.getByText("Implementation model").closest("div")!.parentElement!;
+    await userEvent.click(within(row).getByRole("button", { name: "Override for this project" }));
+    await userEvent.click(within(screen.getByRole("group", { name: "Implementation override model presets" })).getByRole("button", { name: "opus" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toBeTruthy());
+    const sent = JSON.parse(calls.find((c) => c.method === "PUT")!.body!);
+    expect(sent.overrides).toEqual({ maxRemediationAttempts: 1, models: { implementation: { provider: "anthropic", model: "opus" } } }); // concurrency + other models: follow global
   });
 });
