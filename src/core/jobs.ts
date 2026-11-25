@@ -128,9 +128,9 @@ export function retryJob(db: FactoryDb, id: string, actor: string, resumeAt?: St
 }
 
 /**
- * A human's answer to a held job. Recorded durably, then the job resumes. Answers to the specification's own
- * open questions resume at remediation (so the spec-writer actually applies them); re-validating the same
- * spec would just block on the same questions again.
+ * A human's answer to a held job. Recorded durably, together with what was asked (the held job's reason), then the job
+ * resumes. Answers to the specification's own open questions resume at remediation (so the spec-writer actually applies
+ * them); re-validating the same spec would just block on the same questions again.
  */
 export function answerJob(db: FactoryDb, id: string, text: string, actor: string): JobRow {
   const answer = text.trim();
@@ -138,14 +138,33 @@ export function answerJob(db: FactoryDb, id: string, text: string, actor: string
   if (answer.length > 8000) throw new JobError("answer too long (max 8000 characters)");
   const job = getJob(db, id);
   if (!job) throw new JobError(`no such job ${id}`);
+  const heldAt = job.heldFromStage ?? job.stage;
   const resumeAt = job.heldFromStage === "SPECIFICATION_VALIDATION" ? "SPECIFICATION_REMEDIATION" as StageName : undefined;
+  const questions = askedQuestions(job.lastError); // read before retryJob clears lastError
   const retried = retryJob(db, id, actor, resumeAt);
-  db.insert(decisions).values({ jobId: id, kind: "human.answer", decision: `answered while held at ${job.heldFromStage ?? job.stage}`, rationale: answer, actor }).run();
+  db.insert(decisions).values({ jobId: id, kind: "human.answer", decision: `${ANSWERED_AT}${heldAt}${questions ? `\n\n${questions}` : ""}`, rationale: answer, actor }).run();
   return retried;
 }
 
+const ANSWERED_AT = "answered while held at ";
+
+/** The question part of a held job's reason: drops the trailing "Answer in the ticket, then retry" advice. */
+function askedQuestions(lastError: string | null): string {
+  return (lastError ?? "").replace(/\n\n+Answer\b[^\n]*$/, "").trim().slice(0, 4000);
+}
+
+/** A human answer with the stage that asked and the question(s) it answers (empty for answers recorded before questions were kept). */
+export interface HumanAnswer { stage: string; questions: string; answer: string }
+
+export function humanQAs(db: FactoryDb, jobId: string): HumanAnswer[] {
+  return db.select().from(decisions).where(and(eq(decisions.jobId, jobId), eq(decisions.kind, "human.answer"))).orderBy(asc(decisions.id)).all().map((r) => {
+    const [head = "", ...rest] = r.decision.split("\n");
+    return { stage: head.startsWith(ANSWERED_AT) ? head.slice(ANSWERED_AT.length).trim() : "", questions: rest.join("\n").trim(), answer: r.rationale ?? "" };
+  });
+}
+
 export function humanAnswers(db: FactoryDb, jobId: string): string[] {
-  return db.select().from(decisions).where(and(eq(decisions.jobId, jobId), eq(decisions.kind, "human.answer"))).orderBy(asc(decisions.id)).all().map((r) => r.rationale ?? "");
+  return humanQAs(db, jobId).map((a) => a.answer);
 }
 
 const FINISHED = ["done", "failed", "cancelled"];

@@ -11,6 +11,7 @@ Updates: `software-factory update` (add `--check` to only look). Releases are gi
   - Cancelling a held job, then retrying it, resumes the real work instead of leaving a job stuck "running" in a held stage. Jobs already stuck that way are released when next claimed.
   - Retrying an archived job unarchives it. A retry records the error it clears and the job's lifetime fix cycles, and a later "fix cycles exhausted" stop says how many cycles and retries the job has had.
   - Cancel, emergency stop and timeouts wait (up to 15 s) for the agent to actually stop before the job is released, and the job is not run again until it has, so a quick retry cannot start a second agent in the same worktree.
+- **Answering a held job's questions works end to end.** Answering a specification's open questions now runs the spec-writer with the questions and your answer (it used to skip remediation, leave the spec unchanged and block on the same questions again, or re-send already-fixed review findings). Answering in the ticket and retrying also goes through remediation once; if the questions are still unresolved the job blocks again instead of looping. Every answer is stored with the questions it answers and the stage that asked, and agents see question → answer pairs (the requirements analyst treats them as resolved).
 
 - **Bitbucket Cloud support** as an alternative to GitHub, chosen per project, with named token credentials (access tokens or Atlassian API tokens) in the keychain. See docs/bitbucket.md.
 

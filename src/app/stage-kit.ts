@@ -13,11 +13,21 @@ import type { GitFn } from "../repo/git.js";
 import { WorktreeError, type WorktreeInfo, type WorktreeManager } from "../repo/worktrees.js";
 import { featureDirFor } from "../speckit/artifacts.js";
 import { ticketBlock } from "../speckit/prompts.js";
-import { humanAnswers } from "../core/jobs.js";
-
-const withAnswers = (ticket: string, answers: string[]) =>
-  answers.length ? `${ticket}\n\nAnswers from the human to your open questions (authoritative, apply them):\n${answers.map((a, i) => `${i + 1}. ${a}`).join("\n")}` : ticket;
+import { humanQAs, type HumanAnswer } from "../core/jobs.js";
 import { toJsonSchema } from "../speckit/schemas.js";
+
+/** One answer, with what was asked and which stage asked it (a fresh agent never saw the question). */
+export const formatAnswer = (a: HumanAnswer, i: number): string => [
+  `Answer ${i + 1}${a.stage ? ` (to questions asked at ${a.stage})` : ""}:`,
+  a.questions ? `Questions:\n${a.questions}` : "Questions: (not recorded)",
+  `Human's answer:\n${a.answer}`,
+].join("\n");
+
+/** The ticket followed by every human answer so far, as question -> answer pairs. */
+export const withAnswers = (ticket: string, answers: HumanAnswer[]): string =>
+  answers.length
+    ? `${ticket}\n\nAnswers from the human to open questions (authoritative: they resolve those questions, apply them and do not ask them again):\n\n${answers.map(formatAnswer).join("\n\n")}`
+    : ticket;
 
 export interface StageKitDeps {
   db: FactoryDb;
@@ -69,7 +79,7 @@ export function createStageKit(d: StageKitDeps) {
       if (e instanceof LinearApiError && !e.retryable) return { ok: false, stop: { kind: "blocked", reason: `cannot read the Linear issue: ${e.message}` } };
       throw e;
     }
-    return { ok: true, info, issue, ticket: withAnswers(ticketBlock(issue), humanAnswers(d.db, job.id)), featureDir: featureDirFor(job.externalKey, issue.title), cwd: info.path };
+    return { ok: true, info, issue, ticket: withAnswers(ticketBlock(issue), humanQAs(d.db, job.id)), featureDir: featureDirFor(job.externalKey, issue.title), cwd: info.path };
   }
 
   const record = (jobId: string, kind: string, decision: string, rationale?: string) =>
