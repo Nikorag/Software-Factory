@@ -5,7 +5,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { api, getToken, post } from "@/lib/api";
+import { api, post } from "@/lib/api";
 import type { Overview } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
 import { cn } from "@/lib/utils";
@@ -24,7 +24,6 @@ export function Shell() {
         {o ? <Badge variant="outline" className={cn("font-semibold", stop ? "border-destructive/50 text-destructive" : paused ? "border-loop/50 text-loop" : "border-ok/50 text-ok")}>{stop ? "EMERGENCY STOP" : paused ? "PAUSED" : "RUNNING"}</Badge> : <Badge variant="outline">…</Badge>}
         {o ? <Badge variant="secondary">{o.mergeMode === "pr-only" ? "PR-only: never merges" : o.mergeMode}{o.dryRun ? " · DRY RUN" : ""}</Badge> : null}
         <span className="flex-1" />
-        <span className="text-xs text-muted-foreground">{getToken() ? "controls enabled" : "read-only (no token: use `pnpm factory dashboard --open`)"}</span>
         {o && !paused && !stop ? <Button variant="outline" size="sm" onClick={() => void act("pause")}><Pause />Pause</Button> : null}
         {o && paused && !stop ? <Button variant="outline" size="sm" onClick={() => void act("resume")}><Play />Resume</Button> : null}
         {o && !stop ? (

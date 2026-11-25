@@ -282,11 +282,11 @@ program
 
 program
   .command("dashboard")
-  .description("Print the dashboard URL (with the control token in the #fragment, which is never sent to the server)")
+  .description("Print the dashboard URL")
   .option("--open", "open it in the default browser")
   .action((opts: { open?: boolean }) => {
     const config = loadConfig();
-    const url = `http://127.0.0.1:${config.factory.server.port}/#token=${loadOrCreateToken(config.factory.dataDir)}`;
+    const url = `http://127.0.0.1:${config.factory.server.port}/`;
     console.log(url);
     if (opts.open) execFileSync("open", [url]);
   });

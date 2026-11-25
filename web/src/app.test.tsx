@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { Shell } from "@/components/Shell";
-import { loadToken } from "@/lib/api";
 import { deriveFlow } from "@/lib/pipeline";
 import { JobDetail } from "@/pages/JobDetail";
 import { Overview } from "@/pages/Overview";
@@ -28,7 +27,6 @@ beforeEach(() => {
     const body = routes[url];
     return new Response(JSON.stringify(body ?? {}), { status: body === undefined ? 404 : 200, headers: { "content-type": "application/json" } });
   }));
-  sessionStorage.clear();
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -103,32 +101,20 @@ describe("dashboard", () => {
     expect(screen.getByText("Filtered to Run checks.")).toBeInTheDocument();
     expect(screen.queryByText("LOCAL_MODEL_REVIEW")).toBeNull();
   });
-  it("controls send the bearer token, and a missing token never sends a request", async () => {
+  it("controls work with no token and no read-only mode, sending the same-origin header", async () => {
     routes = { "/api/overview": overview(), "/api/control/pause": { ok: true } };
-    sessionStorage.setItem("factory-token", "k".repeat(64));
     app("/");
     await userEvent.click(await screen.findByRole("button", { name: /Pause/ }));
-    await waitFor(() => expect(calls.some((c) => c.url === "/api/control/pause" && c.method === "POST" && c.headers?.Authorization === `Bearer ${"k".repeat(64)}`)).toBe(true));
-    expect(screen.getByText("controls enabled")).toBeInTheDocument();
-    cleanup(); calls = []; sessionStorage.clear();
-    app("/");
-    await userEvent.click(await screen.findByRole("button", { name: /Pause/ }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Controls need the control token");
-    expect(calls.some((c) => c.method === "POST")).toBe(false);
-    expect(screen.getByText(/read-only/)).toBeInTheDocument();
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/control/pause" && c.method === "POST" && c.headers?.["X-Factory-UI"] === "1")).toBe(true));
+    expect(calls.some((c) => c.headers?.Authorization)).toBe(false);
+    expect(screen.queryByText(/read-only|token/i)).toBeNull();
   });
   it("posts an answer with the token, then asks the API to resume", async () => {
     const j = job({ stage: "BLOCKED", status: "waiting", heldFromStage: "REQUIREMENTS_ANALYSIS" });
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j), "/api/jobs/j1/answer": { ok: true } };
-    sessionStorage.setItem("factory-token", "t".repeat(64));
     app("/jobs/j1");
     await userEvent.type(await screen.findByPlaceholderText(/Your answer/), "Use port 7777");
     await userEvent.click(screen.getByRole("button", { name: /Answer & resume/ }));
     await waitFor(() => expect(calls.find((c) => c.url === "/api/jobs/j1/answer")?.body).toBe(JSON.stringify({ answer: "Use port 7777" })));
-  });
-  it("takes the token from the URL fragment and removes it from the address bar", () => {
-    window.location.hash = `#token=${"a".repeat(64)}`;
-    expect(loadToken()).toBe("a".repeat(64));
-    expect(window.location.hash).not.toContain("token");
   });
 });

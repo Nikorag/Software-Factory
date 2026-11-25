@@ -59,9 +59,18 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     reply.header("Cache-Control", "no-store").header("X-Content-Type-Options", "nosniff").header("Referrer-Policy", "no-referrer").header("X-Frame-Options", "DENY");
   });
 
+  // Two ways to make a change:
+  //  - the dashboard itself: a same-origin browser request (our own Origin, the X-Factory-UI header, and no cross-site Sec-Fetch-Site).
+  //    A page on another origin cannot set that header without a CORS preflight, which this server never grants, and browsers
+  //    attach Origin / Sec-Fetch-Site themselves so a web page cannot forge them. No token to paste, no read-only mode.
+  //  - the CLI and scripts: the bearer token from <dataDir>/control-token.
+  // Not defended: another process on this machine can forge those headers. That is the accepted trade-off for a tokenless dashboard.
   const requireToken = async (req: FastifyRequest, reply: FastifyReply) => {
     const m = /^Bearer (.+)$/.exec(req.headers.authorization ?? "");
-    if (!deps.controlToken || !m || !sameToken(m[1]!, deps.controlToken)) return reply.code(401).send({ error: "control token required" });
+    if (deps.controlToken && m && sameToken(m[1]!, deps.controlToken)) return;
+    const origin = req.headers.origin, site = req.headers["sec-fetch-site"];
+    if (origin && hostOk(origin.replace(/^https?:\/\//, "")) && req.headers["x-factory-ui"] === "1" && (site === undefined || site === "same-origin")) return;
+    return reply.code(401).send({ error: "this request is not from the dashboard and has no valid control token" });
   };
 
   app.get("/health", async () => {

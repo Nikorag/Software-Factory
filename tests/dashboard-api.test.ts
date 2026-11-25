@@ -54,6 +54,21 @@ describe("dashboard API security", () => {
     expect((await s.app.inject({ method: "GET", url: "/api/jobs", headers: HOST, remoteAddress: "127.0.0.1" })).statusCode).toBe(200);
     expect(getJob(s.db, j.id)!.status).toBe("queued"); // nothing happened
   });
+  it("the dashboard itself needs no token, but only for genuine same-origin browser requests", async () => {
+    const s = setup(); const j = s.job();
+    const UI = { ...HOST, origin: "http://127.0.0.1:4780", "x-factory-ui": "1" };
+    expect((await post(s.app, "/api/control/pause", UI)).statusCode).toBe(200);
+    expect((await post(s.app, "/api/control/resume", { ...UI, "sec-fetch-site": "same-origin" })).statusCode).toBe(200);
+    // every way a page on another site, or a bare request, could try
+    const no = async (h: Record<string, string>) => expect((await post(s.app, `/api/jobs/${j.id}/cancel`, h)).statusCode).toBeGreaterThanOrEqual(401);
+    await no({ ...HOST, "x-factory-ui": "1" });                                          // no Origin: not a browser fetch
+    await no({ ...HOST, origin: "http://127.0.0.1:4780" });                              // no UI header
+    await no({ ...UI, "sec-fetch-site": "cross-site" });                                 // another site
+    await no({ ...UI, "sec-fetch-site": "same-site" });                                  // a sibling origin
+    await no({ ...UI, origin: "http://evil.example" });                                  // foreign Origin
+    await no({ ...UI, host: "evil.example" });                                           // DNS rebinding
+    expect(getJob(s.db, j.id)!.status).toBe("queued");
+  });
   it("without a configured token, controls are refused outright", async () => {
     const { db } = openDb(":memory:");
     const app = buildServer({ db, logger: pino({ level: "silent" }), port: 4780 });
