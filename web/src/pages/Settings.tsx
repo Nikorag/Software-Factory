@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checks } from "@/components/Integrations";
 import { TrackerSetup } from "@/components/TrackerSetup";
+import { UpdateCheck } from "@/components/UpdateCheck";
 import { BitbucketSetup } from "@/components/BitbucketSetup";
 import { ProjectEditor } from "@/components/ProjectEditor";
 import { api } from "@/lib/api";
@@ -62,6 +63,8 @@ function ProjectsPane({ projects, teams, globals, tracker, reload }: { projects:
 }
 
 export function Settings() {
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") ?? "projects"; // #/settings?tab=system opens straight to a tab (the app menu uses it for "Check for Updates…")
   const { data, reload } = usePoll(() => api<{ projects: Project[] }>("/api/projects"), 15000);
   const { data: info, reload: reloadInfo } = usePoll(() => api<SetupInfo>("/api/setup"), 30000);
   const [teams, setTeams] = useState<TeamAudit[]>([]);
@@ -69,7 +72,7 @@ export function Settings() {
   // Teams power the editor's Linear pickers; load them once a key exists (the Integrations tab refreshes them).
   usePoll(async () => { if (!info?.linear.keyPresent) return null; const r = await api<{ teams: TeamAudit[] }>("/api/setup/linear"); setTeams(r.teams); return r; }, 300000, [info?.linear.keyPresent]);
   return (
-    <Tabs defaultValue="projects">
+    <Tabs value={tab} onValueChange={(v) => setParams((p) => { const n = new URLSearchParams(p); n.set("tab", v); return n; }, { replace: true })}>
       <TabsList><TabsTrigger value="projects">Projects</TabsTrigger><TabsTrigger value="workflow">Workflow</TabsTrigger><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="profiles">Profiles</TabsTrigger><TabsTrigger value="system">System</TabsTrigger></TabsList>
       <TabsContent value="projects"><ProjectsPane projects={data?.projects ?? []} teams={teams} globals={globals} tracker={info?.tracker.kind} reload={() => { void reload(); void reloadInfo(); }} /></TabsContent>
       <TabsContent value="workflow"><WorkflowSettings value={globals} onSaved={() => void reloadGlobals()} /></TabsContent>
@@ -79,7 +82,8 @@ export function Settings() {
         <Card><CardHeader><CardTitle className="text-sm">Issue tracker</CardTitle></CardHeader><CardContent><TrackerSetup info={info} onChanged={() => void reloadInfo()} onKey={() => void reloadInfo()} onTeams={setTeams} /></CardContent></Card>
       </TabsContent>
       <TabsContent value="profiles"><ProfilesSettings /></TabsContent>
-      <TabsContent value="system"><Card><CardContent className="grid gap-1 text-sm">
+      <TabsContent value="system" className="grid gap-4"><Card><CardHeader><CardTitle className="text-sm">Updates</CardTitle></CardHeader><CardContent><UpdateCheck /></CardContent></Card>
+        <Card><CardContent className="grid gap-1 text-sm">
         <div>Your settings are stored in <span className="font-mono text-xs">{info?.configDir ?? info?.homeConfigDir}</span></div>
         <div className="text-muted-foreground">{info?.usingDefaults ? "Using the shipped defaults until you change a setting." : "These are your own files: you can also edit projects.yaml by hand."}</div>
         <div className="text-muted-foreground">Delivery is pull-request only: the factory never merges.</div>
