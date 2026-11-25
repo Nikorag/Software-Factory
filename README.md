@@ -128,7 +128,7 @@ Your settings live in `~/.software-factory/config/` as plain YAML, edited with c
 | `software-factory shutdown` | Stop the background factory (all profiles, or `--profile <name>`) |
 | `software-factory status` | What is running, and what it is doing |
 | `software-factory profile list\|add\|remove` | Manage profiles |
-| `software-factory update [--check]` | Update to the newest release |
+| `software-factory update [--check\|--wait\|--force]` | Update to the newest release (stops, backs up and restarts the factory for you) |
 | `software-factory doctor` | Check your tools and configuration |
 | `software-factory jobs` | List jobs |
 | `software-factory job:retry <id>` / `job:cancel <id>` | Retry or cancel a job |
@@ -153,8 +153,12 @@ The factory runs AI-written code, so it is built to be boringly cautious. In sho
 ```sh
 software-factory update --check   # is there a newer release?
 software-factory update           # install it (your settings and data are untouched)
-software-factory shutdown && software-factory   # restart to use it
+software-factory update --wait    # jobs are running: update as soon as they finish (--force: now, redoing their stage)
 ```
+
+`update` refuses while jobs are running (use `--wait` or `--force`). Otherwise it stops every running profile (and the LaunchAgent, if you installed one), backs up each profile's database to `<data dir>/database/backups/` (the newest 5 are kept), installs the new version, and starts again exactly what was running. If installing fails it rolls back to the version you had and reinstalls that; if it is interrupted, the next `software-factory update` finishes the job rather than reporting "up to date".
+
+The `software-factory` command, the LaunchAgent and the app's "Start all profiles" all run the install through `~/.software-factory/app/bin/factory`, which uses the Node.js the install was built with (recorded in `app/node_modules/.factory-node`), so switching Node with nvm or upgrading it with Homebrew does not break them. If the recorded Node is gone, the factory uses the `node` on your PATH and rebuilds its SQLite module for it once, automatically. Set `FACTORY_NODE=/path/to/node` to choose one yourself.
 
 The app shows a notice when a newer release exists. To uninstall, run `software-factory shutdown`, then delete `~/.software-factory/app` and `~/.local/bin/software-factory`. Your data stays in `~/.software-factory` until you delete it.
 

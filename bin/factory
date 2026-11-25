@@ -1,0 +1,30 @@
+#!/bin/sh
+# The stable way to run this install's CLI. The launcher (~/.local/bin/software-factory), the LaunchAgent and the desktop app all
+# call this file, so nothing outside the install has a Node version, a Homebrew Cellar path or a pnpm-store path baked in:
+# those are resolved here, every time, and keep working after `software-factory update` or a Node switch.
+#
+# Node: $FACTORY_NODE, else the Node the dependencies were installed with (node_modules/.factory-node, written by the installer
+# and by `update`, so the native SQLite module matches it), else `node` on PATH, else the usual Homebrew locations. Node 22+ only.
+set -eu
+APP="$(cd "$(dirname "$0")/.." && pwd -P)"
+
+usable() { [ -n "$1" ] && [ -x "$1" ] && "$1" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' >/dev/null 2>&1; }
+NODE=""
+RECORDED="$(cat "$APP/node_modules/.factory-node" 2>/dev/null || true)"
+for c in "${FACTORY_NODE:-}" "$RECORDED" "$(command -v node 2>/dev/null || true)" /opt/homebrew/bin/node /usr/local/bin/node; do
+  if usable "$c"; then NODE="$c"; break; fi
+done
+if [ -z "$NODE" ]; then
+  echo "software-factory: no Node.js 22 or newer found (looked at ${RECORDED:-the recorded Node}, PATH, /opt/homebrew/bin, /usr/local/bin). Install it (brew install node) or set FACTORY_NODE." >&2
+  exit 127
+fi
+if [ ! -e "$APP/node_modules/tsx" ]; then
+  echo "software-factory: dependencies are missing in $APP. Run: pnpm --dir \"$APP\" install --frozen-lockfile" >&2
+  exit 1
+fi
+
+# pnpm (used by `update`) and anything else the CLI starts should run on the same Node.
+PATH="$(dirname "$NODE"):$PATH"
+export PATH
+cd "$APP"
+exec "$NODE" --import tsx "$APP/src/cli.ts" "$@"

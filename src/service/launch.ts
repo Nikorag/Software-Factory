@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../config/load.js";
 import { type Profile } from "../config/profiles.js";
-import { agentServes, bootoutAgent, serveCommand, startAgent } from "./launchd.js";
+import { agentServes, stopAgent, serveCommand, startAgent } from "./launchd.js";
 import { brandElectron } from "./branding.js";
 import { lockHolder } from "./lock.js";
 import { reapOrphans } from "../agents/children.js";
@@ -30,7 +30,7 @@ export interface LaunchdOps {
 }
 const realLaunchd: LaunchdOps = {
   status: (p) => agentServes(p.home, { profile: p.name }), // only this install's agent, never another install's with the same label
-  bootout: (p) => bootoutAgent({ profile: p.name }),
+  bootout: (p) => stopAgent({ profile: p.name }),
   start: (p) => startAgent({ profile: p.name }),
 };
 const noLaunchd: LaunchdOps = { status: () => ({ installed: false, loaded: false }), bootout: () => false, start: () => {} };

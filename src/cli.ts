@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
@@ -28,7 +28,9 @@ import { loadOrCreateToken } from "./server/app.js";
 import { applyUpdate, planUpdate } from "./service/update.js";
 import { activateProfile, addProfile, DEFAULT_PROFILE, factoryRoot, getProfile, listProfiles, ProfileError, removeProfile } from "./config/profiles.js";
 import { desktopEntry, isUp, openDesktop, pidOf, startService as launchService, stopService, urlOf } from "./service/launch.js";
-import { agentStatus, installAgent, uninstallAgent } from "./service/launchd.js";
+import { agentServes, agentStatus, installAgent, refreshAgent, uninstallAgent } from "./service/launchd.js";
+import { repairNativeModules } from "./service/native.js";
+import { backupDatabase, profileDbFile, runUpdate, UpdateRefused } from "./service/update-run.js";
 import { LockHeldError } from "./service/lock.js";
 import { installCrashHandlers, shutdownController } from "./agents/children.js";
 
@@ -289,7 +291,11 @@ program
     const root = factoryRoot();
     const chosen = getProfile(program.opts<{ profile?: string }>().profile ?? DEFAULT_PROFILE, root);
     for (const p of listProfiles(root)) {
+      // An older install may have written version-specific paths into this profile's LaunchAgent: re-render it, then (startService)
+      // hand the profile to launchd if it has one, rather than starting an unsupervised copy.
+      try { refreshAgent({ profile: p.name }); } catch { /* a LaunchAgent this version cannot read: launchd:status / launchd:install say so */ }
       const r = await launchService(p, root);
+      if (r.error) process.exitCode = 1; // the desktop app's "Start all profiles" reports a failure from this
       console.log(`${r.error ? "✗" : "✓"} ${p.name.padEnd(12)} ${r.error ?? (r.started ? `started  ${urlOf(p)}` : `already running  ${urlOf(p)}`)}`);
     }
     if (!opts.window) return;
@@ -371,23 +377,35 @@ program
 
 program
   .command("update")
-  .description("Update this install to the newest release (or --ref <tag|branch>), reinstall dependencies and rebuild the dashboard. Your settings and data are never touched.")
+  .description("Update this install to the newest release (or --ref <tag|branch>), reinstall dependencies and rebuild the dashboard. Stops the running factory first (backing up each profile's database) and restarts it after. Your settings and data are never touched.")
   .option("--check", "only report whether an update is available")
   .option("--ref <ref>", "a release tag or branch instead of the newest release")
-  .action(async (opts: { check?: boolean; ref?: string }) => {
+  .option("--wait", "if jobs are running, wait for them to finish, then update")
+  .option("--force", "update even while jobs are running (they are stopped and their stage is redone after the restart)")
+  .action(async (opts: { check?: boolean; ref?: string; wait?: boolean; force?: boolean }) => {
     const plan = await planUpdate({ ref: opts.ref });
     const where = plan.targetIsTag ? `release ${plan.target}` : plan.target;
     if (plan.upToDate) { console.log(`up to date (${plan.current})`); return; }
-    console.log(`${plan.current}  ->  ${where}  (${plan.behind} new commit(s))${plan.latestTag ? "" : "  [no releases yet: following main]"}`);
-    if (opts.check) { console.log("run `software-factory update` to apply it"); return; }
-    await applyUpdate(plan, { log: (l) => console.log(l) });
-    console.log(`updated to ${where}.`);
-    const config = loadConfig();
+    if (plan.behind > 0) console.log(`${plan.current}  ->  ${where}  (${plan.behind} new commit(s))${plan.latestTag ? "" : "  [no releases yet: following main]"}`);
+    if (plan.pending) console.log(`an earlier update did not finish installing (started ${new Date(plan.pending.startedAt).toLocaleString()}): ${opts.check ? "`software-factory update` finishes it" : "finishing it now"}`);
+    if (opts.check) { if (plan.behind > 0) console.log("run `software-factory update` to apply it"); return; }
+    const root = factoryRoot();
     try {
-      const o = (await (await fetch(`http://127.0.0.1:${config.factory.server.port}/api/overview`, { signal: AbortSignal.timeout(2000) })).json()) as { counts: { byStatus: Record<string, number> } };
-      const running = o.counts.byStatus.running ?? 0;
-      console.log(`The factory is running and still has the old code. Restart it (software-factory shutdown, then software-factory) to use the update (${running ? `${running} job(s) are running right now: a restart redoes the stage in progress, so wait for a quiet moment` : "no jobs are running, so it is safe now"}).`);
-    } catch { console.log("Start it with `software-factory`."); }
+      const { restarted } = await runUpdate(plan, { wait: opts.wait, force: opts.force }, {
+        profiles: () => listProfiles(root), isUp: (p) => isUp(p), stop: (p) => stopService(p), start: (p) => launchService(p, root),
+        runningJobs: async (p) => { try { return ((await (await fetch(urlOf(p, "/api/overview"), { signal: AbortSignal.timeout(2000) })).json()) as { counts: { byStatus: Record<string, number> } }).counts.byStatus.running ?? 0; } catch { return 0; } },
+        // Stopping goes through stopService (bootout of this install's LaunchAgent, then the control API, then a verified signal).
+        agent: { loaded: (p) => process.platform === "darwin" && agentServes(p.home, { profile: p.name }).loaded, refresh: (p, load) => refreshAgent({ profile: p.name, load }) },
+        backup: async (p, tag) => backupDatabase(profileDbFile(p), tag),
+        apply: (pl) => applyUpdate(pl, { log: (l) => console.log(l) }),
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)), log: (l) => console.log(l),
+      });
+      console.log(`updated to ${where}.`);
+      console.log(restarted.length ? `restarted: ${restarted.join(", ")}` : "Start it with `software-factory`.");
+    } catch (e) {
+      console.error(e instanceof UpdateRefused ? e.message : `update failed: ${(e as Error).message}`);
+      process.exitCode = 1;
+    }
   });
 
 program
@@ -425,4 +443,9 @@ program
 program.command("launchd:uninstall").description("Stop and remove this profile's LaunchAgent").action(() => console.log(uninstallAgent({ profile: currentProfile() }).removed ? "removed" : "was not installed"));
 program.command("launchd:status").description("Is this profile's LaunchAgent installed and running?").action(() => console.log(JSON.stringify(agentStatus({ profile: currentProfile() }), null, 2)));
 
-await program.parseAsync();
+// A Node switch leaves the native SQLite module built for the old one: rebuild it once and start again in a fresh process.
+if (repairNativeModules() === "rebuilt") {
+  const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], { stdio: "inherit" });
+  for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => child.kill(sig));
+  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+} else await program.parseAsync();

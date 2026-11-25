@@ -1,9 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { findBinary } from "../speckit/tools.js";
 
 export const LABEL = "com.software-factory.agent";
@@ -76,12 +75,14 @@ export function servicePath(extra: string[] = []): string {
   return [...dirs].join(":");
 }
 
-/** How to run `factory serve`: compiled JS if built, else the TypeScript source through tsx. Absolute paths throughout. */
+/**
+ * How to run `factory serve`: the install's own bin/factory, through /bin/sh. Nothing version-specific (a Node version, a Homebrew Cellar
+ * path, a tsx path inside the pnpm store) is baked into the LaunchAgent or the desktop app: bin/factory resolves those every time, so an
+ * update or a Node switch never leaves them pointing at something that is gone. (The TypeScript source always runs through tsx: a
+ * compiled dist/ is not used, because the code finds package.json, migrations, config and the dashboard relative to the source tree.)
+ */
 export function serveCommand(repoRoot: string): string[] {
-  const built = join(repoRoot, "dist", "src", "cli.js");
-  if (existsSync(built)) return [process.execPath, built, "serve"];
-  const tsx = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
-  return [process.execPath, "--import", tsx, join(repoRoot, "src", "cli.ts"), "serve"];
+  return ["/bin/sh", join(repoRoot, "bin", "factory"), "serve"];
 }
 
 export interface InstallOptions {
@@ -92,8 +93,10 @@ export interface InstallOptions {
 
 const defaultRun = (f: string, a: string[]) => execFileSync(f, a, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 
+const repoRootOf = (r?: string) => r ?? resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
 export function buildPlist(o: Pick<InstallOptions, "repoRoot" | "configDir" | "dataDir" | "home" | "profile" | "root">): string {
-  const repoRoot = o.repoRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const repoRoot = repoRootOf(o.repoRoot);
   const profile = o.profile ?? "default";
   return renderPlist({
     label: labelFor(profile),
@@ -127,12 +130,41 @@ export function installAgent(o: InstallOptions): { path: string; loaded: boolean
   return { path, loaded };
 }
 
-type AgentRef = { home?: string; run?: InstallOptions["run"]; profile?: string };
-const target = (profile?: string) => `gui/${process.getuid?.() ?? 501}/${labelFor(profile)}`;
+export type AgentRef = { home?: string; run?: InstallOptions["run"]; profile?: string; repoRoot?: string };
+const domain = () => `gui/${process.getuid?.() ?? 501}`;
+const target = (profile?: string) => `${domain()}/${labelFor(profile)}`;
+const unesc = (s: string) => s.replace(/&quot;/g, "\"").replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
+
+/**
+ * The installed plist for this profile, if it is this install's. Two checks, because the label is per profile name and so shared by
+ * every install on the machine: WorkingDirectory is this checkout (a development checkout must never stop or repoint the real one),
+ * and, when a data dir is given, the plist logs under it (another FACTORY_ROOT, e.g. a test, must not touch the real profile's).
+ */
+function ownPlist(o: AgentRef & { dataDir?: string }): ((k: string) => string | undefined) | null {
+  let xml: string;
+  try { xml = readFileSync(plistPath(o.home, labelFor(o.profile)), "utf8"); } catch { return null; }
+  const field = (k: string) => { const m = new RegExp(`<key>${k}</key>\\s*<string>([^<]*)</string>`).exec(xml); return m ? unesc(m[1]!) : undefined; };
+  if (field("WorkingDirectory") !== repoRootOf(o.repoRoot)) return null;
+  if (o.dataDir && !(field("StandardOutPath") ?? "").startsWith(join(o.dataDir, "logs") + "/")) return null;
+  return field;
+}
+
+/** Is the installed LaunchAgent (of this profile) this install's? */
+export const isOwnAgent = (o: AgentRef & { dataDir?: string } = {}): boolean => ownPlist(o) !== null;
+
+/**
+ * This install's LaunchAgent for the factory whose data lives in `dataDir`: installed (see ownPlist), and loaded. What launchd has
+ * loaded is checked too (its stdout path), in case the file was replaced by another install after it was loaded.
+ */
+export function agentServes(dataDir: string, o: AgentRef = {}): { installed: boolean; loaded: boolean } {
+  const installed = isOwnAgent({ ...o, dataDir });
+  if (!installed) return { installed, loaded: false };
+  const s = agentStatus(o);
+  return { installed, loaded: s.loaded && (!s.stdoutPath || s.stdoutPath.startsWith(join(dataDir, "logs") + "/")) };
+}
 
 export function uninstallAgent(o: AgentRef = {}): { removed: boolean } {
-  const run = o.run ?? defaultRun;
-  try { run("/bin/launchctl", ["bootout", target(o.profile)]); } catch { /* not loaded */ }
+  stopAgent(o);
   const path = plistPath(o.home, labelFor(o.profile));
   const had = existsSync(path);
   rmSync(path, { force: true });
@@ -148,29 +180,37 @@ export function agentStatus(o: AgentRef = {}): { installed: boolean; loaded: boo
 }
 
 /**
- * Stops a loaded LaunchAgent for good (until the next login, or until it is started again): `bootout` unloads it, so launchd
- * does not restart it, however the process ends. A plain kill would not stick: KeepAlive restarts it after anything but a clean exit.
+ * THE way to stop a LaunchAgent's service (used by `shutdown`, `update` and uninstall, through stopService where a profile is
+ * involved): `bootout` unloads it, so launchd does not restart it however the process ends; a plain kill would not stick, because
+ * KeepAlive restarts anything but a clean exit. The plist stays: it starts again at the next login, `start`, or after `update`.
  */
-export function bootoutAgent(o: AgentRef = {}): boolean {
+export function stopAgent(o: AgentRef = {}): boolean {
   try { (o.run ?? defaultRun)("/bin/launchctl", ["bootout", target(o.profile)]); return true; } catch { return false; }
 }
 
-/** Starts an installed LaunchAgent: load it if it is not loaded, else kick it (it may be waiting out its restart throttle). */
+/**
+ * Starts an installed LaunchAgent from the plist as it is on disk now (`start` has just re-rendered it): unload it first if it is
+ * loaded (it is only called when the service is not answering), then load it.
+ */
 export function startAgent(o: AgentRef = {}): void {
   const run = o.run ?? defaultRun;
-  if (agentStatus(o).loaded) run("/bin/launchctl", ["kickstart", target(o.profile)]);
-  else run("/bin/launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 501}`, plistPath(o.home, labelFor(o.profile))]);
+  if (agentStatus(o).loaded) stopAgent(o);
+  run("/bin/launchctl", ["bootstrap", domain(), plistPath(o.home, labelFor(o.profile))]);
 }
 
 /**
- * Is this LaunchAgent the one for the factory whose data lives in `dataDir`? The label is per profile name, not per
- * install, so a second install (another FACTORY_ROOT, a test) must not stop or start the real one: the plist's log paths,
- * which are under the data dir, tell them apart.
+ * Re-renders an installed LaunchAgent for the current code (same profile, root, data dir and config dir as when it was installed),
+ * and loads it again when `load` is set. Does nothing (installed: false) if this profile has none, or if it belongs to another install.
+ * `start` and `update` call it so the plist never keeps paths from an older install.
  */
-export function agentServes(dataDir: string, o: AgentRef = {}): { installed: boolean; loaded: boolean } {
-  const logs = join(dataDir, "logs") + "/";
-  let installed = false;
-  try { installed = readFileSync(plistPath(o.home, labelFor(o.profile)), "utf8").includes(`<string>${esc(logs)}launchd.out.log</string>`); } catch { /* not installed */ }
-  const s = agentStatus(o);
-  return { installed, loaded: s.loaded && (s.stdoutPath ? s.stdoutPath.startsWith(logs) : installed) };
+export function refreshAgent(o: AgentRef & { load?: boolean } = {}): { installed: boolean; changed: boolean; loaded: boolean } {
+  const path = plistPath(o.home, labelFor(o.profile));
+  const field = ownPlist(o);
+  if (!field) return { installed: false, changed: false, loaded: false };
+  const out = field("StandardOutPath");
+  if (!out) throw new Error(`${path} is not one this version understands: reinstall it with \`software-factory launchd:install\``);
+  const opts = { repoRoot: o.repoRoot, home: o.home, dataDir: dirname(dirname(out)), configDir: field("FACTORY_CONFIG_DIR"), root: field("FACTORY_ROOT"), profile: o.profile };
+  const changed = buildPlist(opts) !== readFileSync(path, "utf8");
+  if (changed || o.load) installAgent({ ...opts, load: o.load, run: o.run });
+  return { installed: true, changed, loaded: !!o.load };
 }
