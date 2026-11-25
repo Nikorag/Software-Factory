@@ -20,6 +20,8 @@ export const FactoryConfig = z.object({
   pickupMode: z.enum(["automatic", "manual"]).default("automatic"),
   dryRun: z.boolean().default(false),
   maxRemediationAttempts: z.number().int().min(0).max(10).default(3),
+  // How many implement-then-check-against-the-spec rounds one implementation stage may take before it stops for a person. (Not the fix cycle limit: that is review and CI fixes.)
+  maxImplementationPasses: z.number().int().min(1).max(10).default(3),
   // Delivery is PR-only by decision: the factory opens pull requests and never merges them. `auto` does not exist yet.
   mergeMode: z.literal("pr-only").default("pr-only"),
   maxConcurrentJobs: z.number().int().min(1).default(1),
@@ -76,6 +78,7 @@ export const ProjectOverrides = z.object({
   pickupMode: z.enum(["automatic", "manual"]).optional(),
   maxConcurrentJobs: z.number().int().min(1).max(8).optional(), // jobs of THIS project running at once (default 1: they share one repository clone)
   maxRemediationAttempts: z.number().int().min(0).max(10).optional(),
+  maxImplementationPasses: z.number().int().min(1).max(10).optional(),
   models: z.object(Object.fromEntries(RouteName.map((r) => [r, ModelRoute.optional()])) as Record<(typeof RouteName)[number], z.ZodOptional<typeof ModelRoute>>)
     .refine((m) => (m.specification?.provider ?? "anthropic") === "anthropic" && (m.implementation?.provider ?? "anthropic") === "anthropic", {
       message: "specification and implementation need file and shell tools, so they must use provider `anthropic` (Claude Code)",

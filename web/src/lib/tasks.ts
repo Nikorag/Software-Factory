@@ -2,7 +2,7 @@ export type TaskId = "classification" | "specification" | "implementation" | "in
 export interface RouteCfg { provider: "anthropic" | "local"; model: string }
 export type Routes = Record<TaskId, RouteCfg>;
 export type PickupMode = "automatic" | "manual";
-export interface GlobalSettings { pickupMode?: PickupMode; githubAccount?: string; maxConcurrentJobs: number; maxRemediationAttempts: number; routes: Routes }
+export interface GlobalSettings { maxImplementationPasses?: number; pickupMode?: PickupMode; githubAccount?: string; maxConcurrentJobs: number; maxRemediationAttempts: number; routes: Routes }
 
 /** The five model choices the factory makes, and the workflow steps each one drives (as drawn on the job's flow chart). */
 export const TASKS: { id: TaskId; label: string; steps: string; local: boolean }[] = [

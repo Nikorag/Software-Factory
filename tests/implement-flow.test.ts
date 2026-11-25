@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createContext } from "../src/app/context.js";
 import { Engine } from "../src/core/engine.js";
+import { retryJob } from "../src/core/jobs.js";
 import { artifacts, decisions, jobs, stageExecutions } from "../src/db/schema.js";
 import { SandboxUnavailable } from "../src/exec/commands.js";
 import { sandboxAvailable } from "../src/exec/sandbox.js";
@@ -261,7 +262,31 @@ describe.skipIf(!sandboxAvailable())("completeness: converge loop", () => {
     await h.engine.tick();
     expect(job(h)).toMatchObject({ stage: "NEEDS_ATTENTION" });
     expect(job(h).lastError).toMatch(/did not converge.*3 passes/);
+    expect(job(h).lastError).toMatch(/Implementation passes.*Settings.*retry/);                       // and says what to do about it
     expect(impl(h).filter((c) => /speckit-implement/.test(c.prompt))).toHaveLength(3);
+  });
+  it("the number of passes is a setting: a higher limit gets the extra passes, and a project's own limit beats the profile's", async () => {
+    const wide = await harness({ passes: 5 });
+    wide.claude.b.converge = () => ({ converged: false, appendedTasks: 1, summary: "still gaps" });
+    await wide.engine.tick();
+    expect(job(wide).lastError).toMatch(/after 5 passes/);
+    expect(impl(wide).filter((c) => /speckit-implement/.test(c.prompt))).toHaveLength(5);
+    const narrow = await harness({ passes: 8, projectPasses: 2 });
+    narrow.claude.b.converge = () => ({ converged: false, appendedTasks: 1, summary: "still gaps" });
+    await narrow.engine.tick();
+    expect(job(narrow).lastError).toMatch(/after 2 passes/);
+    expect(impl(narrow).filter((c) => /speckit-implement/.test(c.prompt))).toHaveLength(2);
+  });
+  it("converging on a later pass stops there, and retrying after raising the limit resumes instead of starting over", async () => {
+    const h = await harness();
+    let calls = 0;
+    h.claude.b.converge = () => (++calls >= 5 ? { converged: true, appendedTasks: 0, summary: "done" } : { converged: false, appendedTasks: 1, summary: "gaps" });
+    await h.engine.tick();
+    expect(job(h)).toMatchObject({ stage: "NEEDS_ATTENTION", heldFromStage: "IMPLEMENTATION" });   // 3 passes were not enough
+    h.ctx.config.factory.maxImplementationPasses = 6;                                                    // the user raises it in Settings (applied live)
+    retryJob(h.ctx.handle.db, h.jobId, "test");
+    await h.engine.tick();
+    expect(h.stages()).toContain("FINAL_VALIDATION");                                                    // it carried on and finished the work
   });
 });
 

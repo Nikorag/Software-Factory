@@ -56,6 +56,9 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
           <div className="grid gap-1.5"><Label htmlFor="wf-conc">Concurrent jobs</Label>
             <NumberField id="wf-conc" min={1} max={8} value={g.maxConcurrentJobs} onChange={(n) => { setSaved(false); setG({ ...g, maxConcurrentJobs: n }); }} />
             <p className="text-xs text-muted-foreground">Tickets worked on at once, across all projects (1–8). Each Claude run uses real memory and subscription usage. A single project still runs one job at a time unless you raise it in that project's overrides, because its jobs share one repository clone.</p></div>
+          <div className="grid gap-1.5"><Label htmlFor="wf-passes">Implementation passes</Label>
+            <NumberField id="wf-passes" min={1} max={10} value={g.maxImplementationPasses ?? 3} onChange={(n) => { setSaved(false); setG({ ...g, maxImplementationPasses: n }); }} />
+            <p className="text-xs text-muted-foreground">How many times the factory may implement, then check the result against the spec and add tasks for any gaps, before it stops for you (1–10, default 3). Raise it for large tickets. This is separate from the fix cycle limit, which counts review and CI fixes.</p></div>
           <div className="grid gap-1.5"><Label htmlFor="wf-fix">Fix cycle limit</Label>
             <NumberField id="wf-fix" min={0} max={10} value={g.maxRemediationAttempts} onChange={(n) => { setSaved(false); setG({ ...g, maxRemediationAttempts: n }); }} />
             <p className="text-xs text-muted-foreground">How many times reviews and failing checks may send work back for fixes before the job stops for you (0–10). Shared by spec fixes, review fixes and CI fixes.</p></div>

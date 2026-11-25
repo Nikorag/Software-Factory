@@ -19,9 +19,10 @@ import { startAction, TaskOutput } from "./TaskRunner";
 
 const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-export interface Form { pickup: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
-const blank = (): Form => ({ pickup: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", team: "", lproject: "", enabled: true, commands: {} });
+export interface Form { passes: string; pickup: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
+const blank = (): Form => ({ passes: "", pickup: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", team: "", lproject: "", enabled: true, commands: {} });
 const fromProject = (p: Project): Form => ({
+  passes: p.overrides?.maxImplementationPasses?.toString() ?? "",
   pickup: p.overrides?.pickupMode ?? "", conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
   id: p.id, name: p.name, source: p.managed ? "github" : "path", repo: p.githubRepo ?? "", path: p.managed ? "" : p.repository, account: p.githubAccount ?? "", branch: p.defaultBranch, autonomy: p.autonomy,
   team: p.linear?.teamKey ?? "", lproject: p.linear?.projectName ?? "", enabled: p.enabled, commands: Object.fromEntries(CMDS.map((k) => [k, p.commands[k] ?? ""])),
@@ -54,7 +55,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
     const r = await send("PUT", `/api/settings/projects/${encodeURIComponent(id)}`, {
       name: f.name.trim(), defaultBranch: f.branch.trim() || "main", enabled: f.enabled, autonomy: f.autonomy, commands,
       ...(f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
-      overrides: { pickupMode: f.pickup || undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models },
+      overrides: { maxImplementationPasses: f.passes ? Number(f.passes) : undefined, pickupMode: f.pickup || undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models },
       ...(f.team ? { linear: { teamKey: f.team, projectName: f.lproject || undefined } } : {}),
     });
     setBusy(false);
@@ -146,6 +147,9 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
           <div className="grid gap-1.5"><Label htmlFor="pe-conc">Concurrent jobs</Label>
             <div className="flex items-center gap-2"><Input id="pe-conc" type="number" min={1} max={8} className="w-24" value={f.conc} placeholder="1" onChange={(e) => set("conc", e.target.value)} />
               <span className="text-xs text-muted-foreground">{f.conc ? <button type="button" className="underline" onClick={() => set("conc", "")}>use default (1)</button> : "default: 1 (its jobs share one clone)"}</span></div></div>
+          <div className="grid gap-1.5"><Label htmlFor="pe-passes">Implementation passes</Label>
+            <div className="flex items-center gap-2"><Input id="pe-passes" type="number" min={1} max={10} className="w-24" value={f.passes} placeholder={String(globals?.maxImplementationPasses ?? 3)} onChange={(e) => set("passes", e.target.value)} />
+              <span className="text-xs text-muted-foreground">{f.passes ? <button type="button" className="underline" onClick={() => set("passes", "")}>use global ({globals?.maxImplementationPasses ?? 3})</button> : `global: ${globals?.maxImplementationPasses ?? 3}`}</span></div></div>
           <div className="grid gap-1.5"><Label htmlFor="pe-fix">Fix cycle limit</Label>
             <div className="flex items-center gap-2"><Input id="pe-fix" type="number" min={0} max={10} className="w-24" value={f.fix} placeholder={String(globals?.maxRemediationAttempts ?? 3)} onChange={(e) => set("fix", e.target.value)} />
               <span className="text-xs text-muted-foreground">{f.fix !== "" ? <button type="button" className="underline" onClick={() => set("fix", "")}>use global ({globals?.maxRemediationAttempts ?? 3})</button> : `global: ${globals?.maxRemediationAttempts ?? 3}`}</span></div></div>

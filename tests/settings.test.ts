@@ -159,6 +159,19 @@ describe("workflow settings (global) and per-project overrides", () => {
     expect(() => updateGlobalSettings(global({ routes: { ...global().routes, implementation: route("x", "local") } }), dir)).toThrow(/must use provider `anthropic`/);
     expect(readFileSync(join(dir, "factory.yaml"), "utf8") + readFileSync(join(dir, "models.yaml"), "utf8")).toBe(before);
   });
+  it("saves the number of implementation passes, live, and rejects values outside 1-10", () => {
+    const dir = fixtureConfigDir();
+    const live = loadConfig(dir);
+    expect(live.factory.maxImplementationPasses).toBe(3);                                         // the default
+    applyGlobal(live, updateGlobalSettings(global({ maxImplementationPasses: 8 }), dir));
+    expect(live.factory.maxImplementationPasses).toBe(8);
+    expect(loadConfig(dir).factory.maxImplementationPasses).toBe(8);                               // really on disk
+    expect(globalSettingsOf(live).maxImplementationPasses).toBe(8);
+    expect(() => updateGlobalSettings(global({ maxImplementationPasses: 0 }), dir)).toThrow();
+    expect(() => updateGlobalSettings(global({ maxImplementationPasses: 11 }), dir)).toThrow();
+    const c = upsertProject({ ...app1, overrides: { maxImplementationPasses: 6 } }, seedHomeConfig(join(tmpDir(), "config")));
+    expect(c.projects.projects[0]!.overrides!.maxImplementationPasses).toBe(6);
+  });
   it("applies to the config object a running engine and router already hold", () => {
     const dir = fixtureConfigDir();
     const live = loadConfig(dir), routes = live.models.routes;
