@@ -1,2 +1,19 @@
-# Enrolled repositories. Empty until a project is onboarded and validated.
-projects: []
+# Enrolled repositories. One Linear project <-> one repository, all under the Nikorag GitHub account.
+# New projects start `supervised`; raise to `full` only once validation passes cleanly (see docs/integrations.md).
+projects:
+  - id: zonto-hub
+    name: Zonto Hub
+    repository: ~/projects/personal/Zonto/Zonto-Hub
+    defaultBranch: main
+    enabled: true
+    specKit: true
+    autonomy: supervised
+    github: { account: Nikorag }
+    linear: { teamKey: JAM, projectName: "Zonto Hub" }
+
+  # Proposed mappings, not enrolled (no local checkout yet). Uncomment with `repository:` set once cloned.
+  #   Brotherly Love -> Nikorag/Brotherly-Love    Blobs -> Nikorag/Blobs           Cycic Citizen -> Nikorag/CycicCitizen
+  #   Hungry Birds   -> Nikorag/HungryBirds       Iron -> Nikorag/Iron             Meaven In Space -> Nikorag/Meaven-In-Space
+  #   Pine           -> Nikorag/pine              Static -> Nikorag/static         Time Sheriff -> Nikorag/Time-Sheriff
+  #   Zonto Kart     -> Nikorag/Zonto-Kart        Carve the Fate -> Nikorag/Carve-The-Fate
+  #   No obvious repo: Fruit Heist (heist?), Peggy!, Tin Can, Quad Bikes, Animorphs
