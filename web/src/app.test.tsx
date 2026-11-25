@@ -353,7 +353,7 @@ describe("settings and setup", () => {
     expect(within(nav).getByRole("img", { name: "onboarding: in-progress" })).toBeInTheDocument();
     expect(within(nav).getByRole("img", { name: "onboarding: ready" })).toBeInTheDocument();
     const box = within(await screen.findByLabelText("Onboarding"));
-    expect(box.getByText("Almost there")).toBeInTheDocument();
+    expect(box.getByText(/Almost there: tickets are skipped until all of this is done/)).toBeInTheDocument();
     expect(box.getByText(/merge it, then press Validate/)).toBeInTheDocument();      // it says what to do next
     expect(box.getAllByLabelText("done")).toHaveLength(2); expect(box.getAllByLabelText("to do")).toHaveLength(1);
     await userEvent.click(within(nav).getByRole("button", { name: /Done/ }));

@@ -4,6 +4,8 @@ import { join, resolve } from "node:path";
 import { Command } from "commander";
 import { loadConfig } from "./config/load.js";
 import { openDb } from "./db/client.js";
+import { eq } from "drizzle-orm";
+import { projects } from "./db/schema.js";
 import { runDoctor } from "./doctor/checks.js";
 import { createLogger } from "./logging/logger.js";
 import { cancelJob, listJobs, retryJob } from "./core/jobs.js";
@@ -248,6 +250,7 @@ program
       dataDir: config.factory.dataDir, sandbox: config.factory.sandbox, timeoutMs: config.factory.commandTimeoutSeconds * 1000, skipInstall: !opts.install, keep: opts.keep,
       onResult: (r) => console.log(`${r.ok ? "✓" : "✗"} ${r.kind.padEnd(9)} ${Math.round(r.durationMs / 1000)}s${r.sandboxed ? "" : " (UNSANDBOXED)"}  ${r.command}${r.ok ? "" : `\n${r.tail.slice(-1800).split("\n").map((l) => `    ${l}`).join("\n")}`}`),
     });
+    { const { handle } = openFactoryDb(); syncProjects(handle.db, config.projects.projects); handle.db.update(projects).set({ checkJson: JSON.stringify({ ok: report.ok, at: Date.now(), missingTest: report.missingTest }) }).where(eq(projects.id, id)).run(); handle.close(); } // counts towards onboarding
     if (report.missingTest) console.log("! no `test` command is configured: the factory will not implement changes for this project");
     console.log(report.ok ? `\n✓ ${id}: all configured commands pass on ${report.baseRef}` : `\n✗ ${id}: not ready`);
     if (opts.keep) console.log(`  worktree kept at ${report.worktree}`);

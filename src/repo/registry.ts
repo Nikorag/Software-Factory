@@ -1,3 +1,4 @@
+import { onboardingOf, type CheckRecord, type Onboarding } from "./readiness.js";
 import { eq } from "drizzle-orm";
 import { expandHome } from "../config/load.js";
 import type { ProjectConfig } from "../config/schema.js";
@@ -47,3 +48,9 @@ export const repoPathOf = (db: FactoryDb, id: string): string => {
   if (!cfg) throw new Error(`unknown project ${id}`);
   return expandHome(cfg.repository);
 };
+
+/** The project's onboarding status from what the factory has recorded (its last validation and last command check). */
+export function onboardingFor(db: FactoryDb, project: ProjectConfig): Onboarding {
+  const row = db.select().from(projects).where(eq(projects.id, project.id)).get();
+  return onboardingOf(project, row?.validationJson ? (JSON.parse(row.validationJson) as RepoReport) : null, row?.checkJson ? (JSON.parse(row.checkJson) as CheckRecord) : null);
+}

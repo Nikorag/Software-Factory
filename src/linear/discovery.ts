@@ -4,7 +4,7 @@ import type { LinearConfig, ProjectConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { decisions, jobs } from "../db/schema.js";
 import { enqueue } from "../core/jobs.js";
-import { isRunnable } from "../repo/registry.js";
+import { isRunnable, onboardingFor } from "../repo/registry.js";
 import type { LinearClient, LinearIssue } from "./client.js";
 import { enqueueOutbox } from "./outbox.js";
 import { evaluateEligibility } from "./eligibility.js";
@@ -23,6 +23,8 @@ const specificity = (p: ProjectConfig) => (p.linear?.projectId || p.linear?.proj
  */
 export async function discoverIssues(deps: {
   db: FactoryDb; client: LinearClient; linear: LinearConfig; projects: ProjectConfig[]; logger: Logger; dryRun?: boolean;
+  /** Skip tickets of projects whose onboarding is not complete (the service turns this on). */
+  requireOnboarding?: boolean;
 }): Promise<DiscoveryReport> {
   const { db, client, linear, logger } = deps;
   const report: DiscoveryReport = { enqueued: [], skipped: [], errors: [] };
@@ -58,6 +60,14 @@ export async function discoverIssues(deps: {
     const project = best[0]!;
     const prior = db.select().from(jobs).where(and(eq(jobs.projectId, project.id), eq(jobs.externalId, issue.id))).orderBy(desc(jobs.createdAt)).limit(1).get();
     const verdict = evaluateEligibility(issue, project, linear, { projectRunnable: isRunnable(db, project.id), existingJobStatus: prior?.status });
+    if (verdict.eligible && deps.requireOnboarding) {
+      const ob = onboardingFor(db, project);
+      if (ob.status !== "ready") {
+        const todo = ob.steps.filter((x) => !x.ok).map((x) => x.label.toLowerCase());
+        if (!prior) report.skipped.push({ key: issue.identifier, projectId: project.id, reasons: [`project ${project.id} is not onboarded yet (still to do: ${todo.join("; ")}): finish it in Settings > Projects`] });
+        continue;
+      }
+    }
     if (!verdict.eligible) {
       // An issue already being processed is expected on every poll; only report genuinely new rejections.
       if (!prior || prior.status === "cancelled") report.skipped.push({ key: issue.identifier, projectId: project.id, reasons: verdict.reasons });

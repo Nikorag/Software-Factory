@@ -31,7 +31,7 @@ export function Overview() {
         </CardContent></Card>
         <Card><CardHeader><CardTitle className="text-sm">Scheduler</CardTitle></CardHeader><CardContent className="space-y-1 text-sm">
           {sch ? <>
-            <div>Linear poll: {sch.lastDiscovery ? <span className={sch.lastDiscovery.ok ? "text-ok" : "text-destructive"}>{sch.lastDiscovery.ok ? "ok" : "error"} {ago(sch.lastDiscovery.at)}</span> : "not yet"}{sch.lastDiscovery ? ` · ${sch.lastDiscovery.enqueued} new` : ""}</div>
+            <div>Linear poll: {sch.lastDiscovery ? <span className={sch.lastDiscovery.ok ? "text-ok" : "text-destructive"}>{sch.lastDiscovery.ok ? "ok" : "error"} {ago(sch.lastDiscovery.at)}</span> : "not yet"}{sch.lastDiscovery ? ` · ${sch.lastDiscovery.enqueued} new` : ""}{sch.lastDiscovery?.skipped ? <span title="Tickets ignored this poll: usually a project that is not onboarded yet (see Settings → Projects), or a ticket that is not labelled for the factory."> · {sch.lastDiscovery.skipped} skipped</span> : null}</div>
             {sch.lastDiscovery?.error ? <div className="text-destructive">{sch.lastDiscovery.error.slice(0, 160)}</div> : null}
             <div>Write-back: {sch.lastFlush ? `${sch.lastFlush.sent} sent, ${sch.lastFlush.pending} pending, ${sch.lastFlush.failed} failed (${ago(sch.lastFlush.at)})` : "not yet"}</div>
             <div className="text-muted-foreground">Backlog: {o.counts.outbox.pending} pending, {o.counts.outbox.failed} failed Linear writes</div>

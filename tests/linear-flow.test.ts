@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { FactoryConfig, LinearConfig, ProjectConfig, WorkflowsConfig } from "../src/config/schema.js";
 import { openDb, type DbHandle } from "../src/db/client.js";
-import { decisions, jobs, linearOutbox } from "../src/db/schema.js";
+import { decisions, jobs, linearOutbox, projects } from "../src/db/schema.js";
 import { Engine, type HandlerRegistry } from "../src/core/engine.js";
 import { enqueue, getJob, retryJob } from "../src/core/jobs.js";
 import { simulatedHandlers } from "../src/core/simulation.js";
@@ -61,6 +61,39 @@ describe("discovery", () => {
     await validateProjects(h.db, [p], { gh: async (path) => ({ status: /branches/.test(path) ? 404 : 200, body: {} }) });
   });
   const P = () => proj({ repository: repo });
+
+  describe("onboarding gate (what the service turns on)", () => {
+    const gated = (projects = [proj({ repository: repo, commands: { test: "npm test" } })]) => discoverIssues({ db: h.db, client: fake, linear, projects, logger, requireOnboarding: true });
+    it("skips tickets of a project whose onboarding is incomplete, saying exactly what is left", async () => {
+      fake.addIssue({ key: "ENG-1" });
+      const r = await gated();                                   // validated, but Spec Kit is not on the default branch and checks never ran
+      expect(r.enqueued).toEqual([]);
+      expect(r.skipped).toHaveLength(1);
+      expect(r.skipped[0]!.reasons[0]).toMatch(/not onboarded yet.*spec kit set up on the default branch.*commands verified.*Settings > Projects/);
+      expect(h.db.select().from(jobs).all()).toEqual([]);       // no job was created, so nothing waits in a blocked state
+    });
+    it("picks the ticket up on the next poll once onboarding is complete", async () => {
+      fake.addIssue({ key: "ENG-1" });
+      const p = proj({ repository: repo, commands: { test: "npm test" }, linear: { teamKey: "ENG" } });
+      await gated([p]);
+      const row = h.db.select().from(projects).where(eq(projects.id, "p")).get()!;
+      const report = JSON.parse(row.validationJson!);
+      h.db.update(projects).set({ validationJson: JSON.stringify({ ...report, hasSpecKit: true }), checkJson: JSON.stringify({ ok: true, at: Date.now() }) }).where(eq(projects.id, "p")).run();
+      const r = await gated([p]);
+      expect(r.enqueued.map((e) => e.key)).toEqual(["ENG-1"]);
+    });
+    it("a failed command check keeps the project skipped", async () => {
+      fake.addIssue({ key: "ENG-1" });
+      const p = proj({ repository: repo, commands: { test: "npm test" }, linear: { teamKey: "ENG" } });
+      const row = h.db.select().from(projects).where(eq(projects.id, "p")).get()!;
+      h.db.update(projects).set({ validationJson: JSON.stringify({ ...JSON.parse(row.validationJson!), hasSpecKit: true }), checkJson: JSON.stringify({ ok: false, at: Date.now() }) }).where(eq(projects.id, "p")).run();
+      expect((await gated([p])).enqueued).toEqual([]);
+    });
+    it("without the gate (tests, dry runs of the old behaviour) nothing changes", async () => {
+      fake.addIssue({ key: "ENG-1" });
+      expect((await run([P()])).enqueued).toHaveLength(1);
+    });
+  });
 
   it("creates one job per eligible issue and is idempotent across polls", async () => {
     fake.addIssue({ key: "ENG-1" }); fake.addIssue({ key: "ENG-2", labels: [] });

@@ -81,7 +81,7 @@ export function ProjectEditor({ project, teams, globals, onSaved, onRemoved, onD
         <section className="grid gap-2 rounded-lg border bg-muted/20 p-4" aria-label="Onboarding">
           <div className="flex items-center gap-2"><h3 className="text-sm font-semibold">Onboarding</h3>
             <Badge variant="outline" className={cn(project.onboarding.status === "ready" ? "border-ok/40 text-ok" : project.onboarding.status === "in-progress" ? "border-loop/40 text-loop" : "text-muted-foreground")}>
-              {project.onboarding.status === "ready" ? "Ready: tickets will be picked up" : project.onboarding.status === "in-progress" ? "Almost there" : "Not started"}</Badge></div>
+              {project.onboarding.status === "ready" ? "Ready: tickets will be picked up" : project.onboarding.status === "in-progress" ? "Almost there: tickets are skipped until all of this is done" : "Not started: tickets are skipped until all of this is done"}</Badge></div>
           <ul className="grid gap-1.5 text-sm">
             {project.onboarding.steps.map((st) => (
               <li key={st.id} className="flex items-start gap-2">

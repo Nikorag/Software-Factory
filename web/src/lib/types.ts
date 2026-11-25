@@ -9,7 +9,7 @@ export interface SystemInfo {
   disk: { freeBytes: number; totalBytes: number } | null; load: number[];
 }
 export interface Scheduler {
-  lastDiscovery: { ok: boolean; at: number; enqueued: number; error?: string } | null;
+  lastDiscovery: { ok: boolean; at: number; enqueued: number; skipped?: number; error?: string } | null;
   lastFlush: { sent: number; pending: number; failed: number; at: number } | null;
 }
 export interface Overview {
