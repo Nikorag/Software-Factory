@@ -27,6 +27,12 @@ const AUTOMATED = [
   "Run each Spec Kit helper script (.specify/scripts/bash/*.sh) as its own single command exactly as the skill shows it, with no `cd`, `export`, inline environment variables, pipes or chaining: they find the feature through .specify/feature.json, and chained commands are refused by the sandbox.",
 ].join(" ");
 
+/**
+ * The human-deferral rule (ADR 0012): the run is autonomous until the pull request, so work only a person can do is tagged
+ * and listed on the PR, never looped on. The `[HUMAN]` tag keeps the task unticked (it is not done) without blocking.
+ */
+export const HUMAN_ONLY_TASKS = "Some tasks can only be done by a person: manual or visual testing, a walkthrough in a real browser, window or app, real devices or hardware, external servers, accounts or credentials, or anything else that cannot run in a sandbox with no network. Tag each such task `[HUMAN]` straight after its id, e.g. `- [ ] T023 [HUMAN] Walk through quickstart.md in a real browser`. The factory never waits for these: it lists them on the pull request for a person to verify. Never tag work an agent can do (code, automated tests, docs).";
+
 /** Runs a Spec Kit skill by reading its SKILL.md (skills are not auto-registered because repo settings are ignored on purpose). */
 export function skillPrompt(step: string, featureDir: string, extra = ""): string {
   return [

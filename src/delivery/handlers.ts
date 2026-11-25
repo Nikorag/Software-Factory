@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
-import { and, asc, eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, asc, desc, eq, gt } from "drizzle-orm";
 import type { StageHandler, StageResult } from "../core/engine.js";
-import { artifacts, jobs, stageExecutions } from "../db/schema.js";
+import { artifacts, decisions, jobs, stageExecutions } from "../db/schema.js";
 import { createStageKit, type StageKitDeps } from "../app/stage-kit.js";
 import type { ProjectConfig } from "../config/schema.js";
 import type { Hosts } from "../host/index.js";
@@ -11,6 +12,8 @@ import { checkBranchProtection, createGhApi, parseRemote } from "../repo/inspect
 import { git as realGit, GitError, type GitFn } from "../repo/git.js";
 import { pushBranch, PushRejected } from "../repo/push.js";
 import { WorktreeError } from "../repo/worktrees.js";
+import { deferrals, openTasks, triage } from "../implement/history.js";
+import { readSpecBundle } from "../speckit/artifacts.js";
 
 export interface DeliveryTiming { ciPollMs: number; ciMaxMs: number; noCiGraceMs: number; mergePollMs: number; mergeMaxMs: number }
 export const DEFAULT_TIMING: DeliveryTiming = { ciPollMs: 30_000, ciMaxMs: 60 * 60_000, noCiGraceMs: 3 * 60_000, mergePollMs: 10 * 60_000, mergeMaxMs: 14 * 24 * 3600_000 };
@@ -40,6 +43,21 @@ export async function repoSlug(project: ProjectConfig, git: GitFn = realGit): Pr
   return `${gh.owner}/${gh.repo}`;
 }
 
+/** One line per thing only a person can verify: deferrals recorded during the run, and tasks the spec tagged [HUMAN]. */
+export function humanItems(o: { deferred: { id: string; what: string; reason: string }[]; tasksMd: string }): string[] {
+  const items: string[] = [];
+  const covered = new Set<string>();
+  const tasks = openTasks(o.tasksMd);
+  for (const x of o.deferred) {
+    const task = tasks.find((t) => t.id === x.id);
+    items.push(`- [ ] **${x.id}**${task ? ` ${task.text.replace(/\[HUMAN\b[^\]]*\]\s*/i, "")}` : `: ${x.what}`}${x.reason ? `\n  _Why a human:_ ${x.reason}` : ""}`);
+    covered.add(x.id);
+  }
+  for (const t of tasks.filter((t) => t.human && !covered.has(t.id))) items.push(`- [ ] **${t.id}** ${t.text.replace(/\[HUMAN\b[^\]]*\]\s*/i, "")}`);
+  return items;
+}
+const HUMAN_HEADING = "## Needs human verification\nThe factory runs autonomously until this PR and cannot do these itself (manual or visual checks, real devices or servers, or a disputed finding it would otherwise loop on). Please verify them before merging:";
+
 const FOOTER = (key: string, url: string) => `\n\n---\n**Raised by the Software Factory** for [${key}](${url}). It is **not** merged automatically: a human reviews and merges this PR.`;
 
 /**
@@ -54,11 +72,33 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
   const t: DeliveryTiming = { ...DEFAULT_TIMING, ...d.timing };
   const { prepare, record } = createStageKit(d);
 
-  /** How long this job has been in a stage, from its first attempt (waits create many attempts). */
+  /**
+   * How long this job has been in a stage since the branch was last pushed (waits create many attempts). Measured from the latest
+   * PULL_REQUEST_CREATION, not the first attempt ever: after a fix cycle re-pushes, CI on the new head starts from zero, and the
+   * grace window for "no checks yet" must not already be used up by the previous round.
+   */
   const waitedMs = (jobId: string, stage: string): number => {
-    const first = d.db.select().from(stageExecutions).where(and(eq(stageExecutions.jobId, jobId), eq(stageExecutions.stage, stage))).orderBy(asc(stageExecutions.id)).limit(1).get();
-    return first ? now().getTime() - first.startedAt.getTime() : 0;
+    const push = d.db.select().from(stageExecutions).where(and(eq(stageExecutions.jobId, jobId), eq(stageExecutions.stage, "PULL_REQUEST_CREATION"), eq(stageExecutions.outcome, "succeeded"))).orderBy(desc(stageExecutions.id)).limit(1).get();
+    const since = push ? (push.finishedAt ?? push.startedAt) : undefined;
+    const first = d.db.select().from(stageExecutions).where(and(eq(stageExecutions.jobId, jobId), eq(stageExecutions.stage, stage), ...(push ? [gt(stageExecutions.id, push.id)] : []))).orderBy(asc(stageExecutions.id)).limit(1).get();
+    const from = since ?? first?.startedAt;
+    return from ? now().getTime() - from.getTime() : 0;
   };
+
+  /** Posts on the PR any human-verification items not posted before (each item once, recorded as a decision). */
+  const postHumanItems = async (gh: GitHubClient, repo: string, number: number, jobId: string, items: string[]): Promise<number> => {
+    const key = (i: string) => createHash("sha256").update(i).digest("hex").slice(0, 16);
+    const posted = new Set(d.db.select().from(decisions).where(and(eq(decisions.jobId, jobId), eq(decisions.kind, "pr.human-items"))).all().map((r) => r.decision));
+    const fresh = items.filter((i) => !posted.has(key(i)));
+    if (fresh.length === 0) return 0;
+    await gh.commentOnPr(repo, number, `${HUMAN_HEADING}\n${fresh.join("\n")}`);
+    for (const i of fresh) record(jobId, "pr.human-items", key(i), i.split("\n")[0]);
+    return fresh.length;
+  };
+  const markPosted = (jobId: string, items: string[]) => {
+    for (const i of items) record(jobId, "pr.human-items", createHash("sha256").update(i).digest("hex").slice(0, 16), i.split("\n")[0]);
+  };
+  const itemsFor = (jobId: string, cwd: string, featureDir: string) => humanItems({ deferred: deferrals(d.db, jobId), tasksMd: readSpecBundle(cwd, featureDir).files["tasks.md"] ?? "" });
   const ghStop = (e: unknown): StageResult | undefined => {
     if (e instanceof GitHubError) return e.retryable ? { kind: "retry", reason: `GitHub: ${e.message}` } : { kind: "needs_attention", reason: `GitHub refused the request: ${e.message}` };
     if (e instanceof WorktreeError) return { kind: "blocked", reason: e.message };
@@ -86,16 +126,20 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
       if (existing && existing.state !== "OPEN") {
         return { kind: "needs_attention", reason: `A pull request for ${p.info.branch} already exists and is ${existing.state} (${existing.url}). The factory will not reopen or replace it.` };
       }
+      const human = itemsFor(ctx.job.id, p.cwd, p.featureDir);
       let pr: PrInfo;
       if (existing) {
         pr = existing; // idempotent: a retry, or new commits after remediation
         await gh.commentOnPr(repo, pr.number, `Updated by the Software Factory (head ${p.info.branch}@${(await git(p.cwd, ["rev-parse", "--short", "HEAD"]))}).`);
+        await postHumanItems(gh, repo, pr.number, ctx.job.id, human);
       } else {
-        pr = await gh.createPr(repo, { head: p.info.branch, base: project.defaultBranch, title: `${p.issue.identifier}: ${p.issue.title}`, body: `${report || `Implements ${p.issue.identifier}.`}${FOOTER(p.issue.identifier, p.issue.url)}` });
+        const humanSection = human.length ? `\n\n${HUMAN_HEADING}\n${human.join("\n")}` : "";
+        pr = await gh.createPr(repo, { head: p.info.branch, base: project.defaultBranch, title: `${p.issue.identifier}: ${p.issue.title}`, body: `${report || `Implements ${p.issue.identifier}.`}${humanSection}${FOOTER(p.issue.identifier, p.issue.url)}` });
+        markPosted(ctx.job.id, human);
       }
       d.db.update(jobs).set({ prUrl: pr.url }).where(eq(jobs.id, ctx.job.id)).run();
       enqueueOutbox(d.db, ctx.job.id, p.issue.id, { kind: "link_pr", url: pr.url, title: `${p.issue.identifier}: ${p.issue.title}` }, `${ctx.job.id}:pr:link:${pr.number}`);
-      enqueueOutbox(d.db, ctx.job.id, p.issue.id, { kind: "comment", body: `**Pull request raised:** ${pr.url}\n\nChecks run in a sandbox and passed; independent and final reviews approved. It is **not auto-merged**: please review and merge it.` }, `${ctx.job.id}:pr:comment:${pr.number}`);
+      enqueueOutbox(d.db, ctx.job.id, p.issue.id, { kind: "comment", body: `**Pull request raised:** ${pr.url}\n\nChecks run in a sandbox and passed; independent and final reviews approved.${human.length ? ` ${human.length} item(s) need human verification (listed on the PR).` : ""} It is **not auto-merged**: please review and merge it.` }, `${ctx.job.id}:pr:comment:${pr.number}`);
       return { kind: "ok", output: { url: pr.url, number: pr.number, reused: Boolean(existing) } };
     } catch (e) {
       if (e instanceof PushRejected) return { kind: "needs_attention", reason: e.message };
@@ -132,6 +176,7 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
       // Only GitHub Actions checks have logs the agent can read and a workflow it can fix. Anything else (Vercel, external CI,
       // deploy previews) is reported to the human, never looped on: remediation would burn every attempt on something it cannot see.
       const actionable = bad.filter((c) => /\/actions\/runs\/\d+/.test(c.link));
+      let deferredFailing: string[] = [];
       const external = bad.filter((c) => !actionable.includes(c));
       if (actionable.length > 0) {
         const findings = [];
@@ -139,15 +184,20 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
           const log = await gh.failedLog(repo, c);
           findings.push({ id: `ci:${c.workflow ? `${c.workflow}/` : ""}${c.name}`, severity: "blocker", file: c.workflow || c.name, line: null, issue: `CI check "${c.name}" ${c.bucket === "cancel" ? "was cancelled" : "failed"} (${c.link})${log ? `\n--- log tail ---\n${log}` : ""}`, fix: "Fix the cause so this check passes. Do not disable, skip or weaken the check." });
         }
-        return { kind: "remediate", reason: `CI failed: ${actionable.map((c) => c.name).join(", ")}`, output: { findings, checks: summarise(checks), externalFailing: summarise(external) } };
+        // A CI failure the implementer deferred (it needs a person: a secret, a runner, an external service) is not looped on.
+        const t = await triage({ db: d.db, jobId: ctx.job.id, cwd: p.cwd, git, findings });
+        if (t.keep.length > 0) return { kind: "remediate", reason: `CI failed: ${t.keep.map((f) => f.id).join(", ")}`, output: { findings: t.keep, checks: summarise(checks), externalFailing: summarise(external), deferred: t.deferred } };
+        await postHumanItems(gh, repo, number, ctx.job.id, itemsFor(ctx.job.id, p.cwd, p.featureDir));
+        deferredFailing = [...t.deferred, ...t.settled].map((f) => f.id);
+        record(ctx.job.id, "ci.deferred-failing", deferredFailing.join(", "), "deferred to a human on the PR: another fix cycle would only repeat itself");
       }
       if (external.length > 0) {
         const names = external.map((c) => `${c.workflow ? `${c.workflow}/` : ""}${c.name}`).join(", ");
         record(ctx.job.id, "ci.external-failing", names, "not a GitHub Actions check: the factory cannot read its log or fix it");
         enqueueOutbox(d.db, ctx.job.id, p.issue.id, { kind: "comment", body: `**Heads-up:** these checks are failing and the factory cannot act on them (they are not GitHub Actions runs): ${names}. Please look before merging.` }, `${ctx.job.id}:ci:external`);
-        return { kind: "ok", output: { checks: summarise(checks), externalFailing: summarise(external) } };
+        return { kind: "ok", output: { checks: summarise(checks), externalFailing: summarise(external), ...(deferredFailing.length ? { deferredFailing } : {}) } };
       }
-      return { kind: "ok", output: { checks: summarise(checks) } };
+      return { kind: "ok", output: { checks: summarise(checks), ...(deferredFailing.length ? { deferredFailing } : {}) } };
     } catch (e) {
       const s = ghStop(e);
       if (s) return s;
