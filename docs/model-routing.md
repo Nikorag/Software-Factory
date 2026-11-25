@@ -2,14 +2,21 @@
 
 `config/models.yaml` maps each task (`classification`, `specification`, `implementation`, `independent_review`, `final_review`) to a provider and model. Changing it needs no code change. `ModelRouter` (`src/agents/router.ts`) dispatches by provider and injects the model id.
 
-| Provider | Adapter | Used for | Tools |
-|---|---|---|---|
-| `anthropic` | `ClaudeCodeAgent`: the `claude` CLI, your logged-in subscription, no API key | specification, implementation, final review | yes, under a permission profile |
-| `local` | `LocalModelClient`: OpenAI-compatible HTTP (Bionic / LM Studio style) | classification, independent review | none: read-only requests only |
+Default routing (`config/models.yaml`), all through your Claude subscription, no local model required:
 
-`specification` and `implementation` must be `anthropic` (config validation enforces it). A `local` route whose model is `UNCONFIGURED-*` is refused at call time with a pointer to `pnpm factory doctor`, which lists what the server actually has loaded and checks each local route against it. Model id `default` on an `anthropic` route means "let Claude Code pick".
+| Task | Model | Why |
+|---|---|---|
+| `classification` | `haiku` | fast, cheap, advisory |
+| `independent_review` | `haiku` | a *different* model from the author, so the reviewer is not marking its own work |
+| `specification`, `implementation`, `final_review` | `default` (Claude Code's choice) | the heavy engineering work |
 
-## Local model rules
+A local Qwen model was judged too slow on this machine, so it is not the default. The `local` provider (`LocalModelClient`, OpenAI-compatible, strictly sequential) is still supported for anyone who wants it, but nothing uses it unless a route says `provider: local`.
+
+Model names: `default` lets Claude Code choose; an alias (`haiku`, `sonnet`, `opus`) tracks that family's latest (verified: `haiku` resolves to `claude-haiku-5-5`); a full id pins it. `pnpm factory doctor` warns if `independent_review` is the same model as `specification`.
+
+`specification` and `implementation` must be `anthropic` (config validation enforces it).
+
+## Local model rules (only if you route to `local`)
 - **Strictly sequential**: one request at a time (a FIFO queue in the client), because 32 GB of unified memory cannot host parallel local inference. Queued requests can be cancelled.
 - Structured output: requests a strict `json_schema` `response_format`; if the server rejects it, falls back to instructing JSON in the prompt; invalid JSON is re-asked up to twice, then `invalid_output`. `<think>…</think>` blocks are stripped.
 - Failures are classified: `transient` (unreachable, 5xx, 429), `timeout`, `cancelled`, `invalid_output`, `error`.

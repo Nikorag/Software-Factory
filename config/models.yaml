@@ -1,16 +1,21 @@
-# Model routing. `pnpm factory doctor` lists what the local server actually has loaded.
+# Model routing.
 #
 # provider `anthropic` = Claude Code CLI using your logged-in subscription (no API key).
-#   model `default` means "let Claude Code choose"; otherwise a model id passed as --model.
-# provider `local` = the Bionic/LM Studio-style server below. The model id must match what the server reports.
-#   UNCONFIGURED-* values make the router refuse to call the local model until you set a real id.
+#   model `default` = let Claude Code choose; an alias (`haiku`, `sonnet`, `opus`) tracks that family's latest;
+#   a full id (e.g. claude-haiku-5-5) pins it.
+# provider `local` = an OpenAI-compatible server (Bionic / LM Studio). Not used by default: a local model was too slow here.
+#   If you route to it, the model id must match what `pnpm factory doctor` reports.
 # specification and implementation must stay `anthropic` (they need file and shell tools).
+#
+# independent_review should be a DIFFERENT model from `specification` so the reviewer is not marking its own work;
+# `pnpm factory doctor` warns if they match.
 local:
-  baseUrl: http://127.0.0.1:1234/v1   # UNVERIFIED for Bionic: start its API server, then run `pnpm factory doctor`
+  baseUrl: http://127.0.0.1:1234/v1
   requestTimeoutSeconds: 300
+independentReviewFallback: claude   # only applies if independent_review is routed to a local model that is unavailable
 routes:
-  classification:     { provider: local,     model: UNCONFIGURED-QWEN }
+  classification:     { provider: anthropic, model: haiku }
   specification:      { provider: anthropic, model: default }
   implementation:     { provider: anthropic, model: default }
-  independent_review: { provider: local,     model: UNCONFIGURED-QWEN }
+  independent_review: { provider: anthropic, model: haiku }
   final_review:       { provider: anthropic, model: default }

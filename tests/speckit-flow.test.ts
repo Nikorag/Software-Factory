@@ -18,7 +18,7 @@ import { makeRepo, sh } from "./helpers/git-fixture.js";
 interface Harness { ctx: Context; claude: ScriptedAgent; local: ScriptedAgent; linear: FakeLinear; repo: string; jobId: string; engine: Engine; stages: () => string[]; hist: () => string[] }
 
 function harness(o: { initialised?: boolean; localModel?: string; fallback?: "claude" | "block"; noLinear?: boolean } = {}): Harness {
-  const { repo } = makeRepo(o.initialised === false ? { "README.md": "x" } : { "README.md": "x", ".specify/init-options.json": "{}", ".claude/skills/speckit-specify/SKILL.md": "skill" });
+  const { repo } = makeRepo(o.initialised === false ? { "README.md": "x" } : { "README.md": "x", ".specify/init-options.json": "{}", ".specify/.gitignore": "feature.json\n", ".claude/skills/speckit-specify/SKILL.md": "skill" });
   const base = loadConfig("config");
   const project = ProjectConfig.parse({ id: "p", name: "P", repository: repo, linear: { teamKey: "JAM" }, commands: { test: "npm test" } });
   const route = (provider: string, model: string) => ({ provider, model });
@@ -29,8 +29,9 @@ function harness(o: { initialised?: boolean; localModel?: string; fallback?: "cl
     models: ModelsConfig.parse({
       independentReviewFallback: o.fallback ?? "claude",
       routes: {
-        classification: route("local", o.localModel ?? "qwen-x"), specification: route("anthropic", "default"), implementation: route("anthropic", "default"),
-        independent_review: route("local", o.localModel ?? "qwen-x"), final_review: route("anthropic", "default"),
+        // default: Claude Haiku does classification and the independent review; `localModel` switches those two to a local route
+        classification: o.localModel ? route("local", o.localModel) : route("anthropic", "haiku"), specification: route("anthropic", "default"), implementation: route("anthropic", "default"),
+        independent_review: o.localModel ? route("local", o.localModel) : route("anthropic", "haiku"), final_review: route("anthropic", "default"),
       },
     }),
   };
@@ -71,16 +72,31 @@ describe("specification pipeline (real engine, handlers, git; scripted agents)",
     expect(sh(wt(h), "status", "--porcelain")).toBe("");
     expect(sh(h.repo, "status", "--porcelain")).toBe(""); // the original checkout is untouched
   });
+  it("never commits Spec Kit's machine-local .specify/feature.json (gitignored by Spec Kit itself)", async () => {
+    await h.engine.tick();
+    expect(exists(wt(h), ".specify/feature.json")).toBe(true);
+    expect(sh(wt(h), "ls-files", ".specify/feature.json")).toBe("");
+    expect(sh(wt(h), "status", "--porcelain")).toBe("");
+  });
   it("records artefact references, agent invocations and the independent review", async () => {
     await h.engine.tick();
     const kinds = new Set(h.ctx.handle.db.select().from(artifacts).all().map((a) => a.kind));
     for (const k of ["spec", "plan", "tasks", "checklist", "step:specify", "step:clarify", "step:plan", "step:tasks"]) expect(kinds).toContain(k);
     const agents = h.ctx.handle.db.select().from(agentInvocations).all().map((a) => a.agent);
-    expect(agents.filter((a) => a === "local/classifier")).toHaveLength(1);
+    expect(agents.filter((a) => a === "anthropic/classifier")).toHaveLength(1);
     expect(agents.filter((a) => a === "anthropic/spec-writer")).toHaveLength(4);
-    expect(agents).toContain("local/spec-reviewer"); // genuinely independent: a different model reviewed it
+    expect(agents.filter((a) => a === "anthropic/spec-reviewer")).toHaveLength(2); // independent review + analyze
     expect(decisionKinds(h)).toContain("review.result");
     expect(decisionKinds(h)).not.toContain("review.degraded");
+  });
+  it("reviews with a different, cheaper model (Haiku) than the one that wrote the spec", async () => {
+    await h.engine.tick();
+    const reviewCall = h.claude.calls.find((c) => c.role === "spec-reviewer" && "verdict" in ((c.jsonSchema?.properties ?? {}) as object))!;
+    expect(reviewCall.model).toBe("haiku");
+    expect(reviewCall.profile).toBe("read-only"); // a reviewer can never edit
+    expect(h.claude.calls.filter((c) => c.role === "spec-writer").every((c) => c.model === "default")).toBe(true);
+    expect(h.claude.calls.find((c) => c.role === "classifier")!.model).toBe("haiku");
+    expect(h.ctx.handle.db.select().from(decisions).where(eq(decisions.kind, "review.result")).get()!.rationale).toBe("haiku");
   });
   it("gives every spec-writing agent the ticket as fenced data, a pinned feature dir, and project commands", async () => {
     await h.engine.tick();
@@ -127,7 +143,15 @@ describe("requirements analysis", () => {
     expect(h.stages()).toEqual(["DISCOVERED", "ELIGIBILITY_CHECK", "REQUIREMENTS_ANALYSIS"]);
     expect(h.ctx.handle.db.select().from(linearOutbox).all().some((o) => o.kind === "comment" && o.payloadJson.includes("Which database?"))).toBe(true);
   });
-  it("carries on without the local classifier when no local model is configured (advisory only)", async () => {
+  it("a failing Claude/Haiku reviewer is an ordinary stage failure, never a silent fallback", async () => {
+    const h = harness();
+    const orig = h.claude.run.bind(h.claude);
+    h.claude.run = async (req) => (req.model === "haiku" && req.jsonSchema && "verdict" in (req.jsonSchema.properties as object) ? { ok: false, text: "", denials: [], exitCode: 1, durationMs: 1, failure: "timeout", error: "slow" } : orig(req));
+    await h.engine.tick();
+    expect(decisionKinds(h)).not.toContain("review.degraded");
+    expect(h.hist()).toContain("SPECIFICATION_REVIEW:failed");
+  });
+  it("carries on without the classifier when a local one is configured but missing (advisory only)", async () => {
     const h = harness({ localModel: "UNCONFIGURED-QWEN" });
     await h.engine.tick();
     expect(decisionKinds(h)).toContain("classification.skipped");
@@ -135,7 +159,7 @@ describe("requirements analysis", () => {
   });
 });
 
-describe("independent review fallback", () => {
+describe("independent review fallback (only for a local route)", () => {
   it("falls back to a fresh Claude reviewer, and says so, when the local model is not configured", async () => {
     const h = harness({ localModel: "UNCONFIGURED-QWEN" });
     await h.engine.tick();
@@ -149,8 +173,8 @@ describe("independent review fallback", () => {
     expect(job(h)).toMatchObject({ stage: "BLOCKED", heldFromStage: "SPECIFICATION_REVIEW" });
     expect(job(h).lastError).toMatch(/fallback is "block"/);
   });
-  it("falls back when the local server errors, not only when unconfigured", async () => {
-    const h = harness();
+  it("falls back when a configured local server errors, not only when unconfigured", async () => {
+    const h = harness({ localModel: "qwen-x" });
     h.local.run = async () => ({ ok: false, text: "", denials: [], exitCode: null, durationMs: 1, failure: "transient", error: "unreachable" });
     h.local.b = defaults();
     await h.engine.tick();
@@ -162,7 +186,7 @@ describe("review -> remediation loop", () => {
   it("fixes blocking findings, records rejected ones with their reasons, and tells the agent exactly what to fix", async () => {
     const h = harness();
     let reviews = 0;
-    h.local.b.review = () => (++reviews === 1
+    h.claude.b.review = () => (++reviews === 1
       ? { verdict: "changes_required", findings: [{ id: "R1", severity: "blocker", section: "FR-002", issue: "Date format is ambiguous", fix: "Specify ISO 8601" }, { id: "R2", severity: "major", section: "SC-001", issue: "Not measurable", fix: "Add a number" }, { id: "R3", severity: "minor", section: "x", issue: "typo", fix: "fix" }] }
       : { verdict: "approve", findings: [] });
     h.claude.b.remediation = () => ({ accepted: ["R1"], rejected: [{ id: "R2", reason: "SC-001 already states 100%" }], summary: "ok" });
@@ -270,6 +294,26 @@ describe("preconditions and failure handling", () => {
     expect(stepsRun.filter((s) => s === "plan")).toHaveLength(2); // failed once, then succeeded
     expect(h.hist()).toContain("SPECIFICATION_GENERATION:failed");
     expect(h.stages()).toContain("SPECIFICATION_VALIDATION");
+  });
+  it("reruns a step once, in the same attempt, when it finishes without writing its file (seen live)", async () => {
+    const h = harness();
+    h.claude.b.skipWrite = (step, n) => step === "tasks" && n === 1;
+    await h.engine.tick();
+    expect(h.claude.calls.filter((c) => /speckit-tasks\//.test(c.prompt))).toHaveLength(2);
+    expect(h.hist()).not.toContain("SPECIFICATION_GENERATION:failed"); // recovered inside one attempt: no stage retry, no backoff
+    expect(h.stages()).toContain("SPECIFICATION_VALIDATION");
+    const d = h.ctx.handle.db.select().from(decisions).where(eq(decisions.kind, "speckit.step.rerun")).get()!;
+    expect(d.decision).toContain("tasks");
+    expect(d.rationale).toContain("Write"); // what was denied is recorded
+  });
+  it("fails the stage (retryably, naming what was denied) when a step is empty twice", async () => {
+    const h = harness();
+    h.claude.b.skipWrite = (step) => step === "tasks";
+    await h.engine.tick();
+    expect(h.hist()).toContain("SPECIFICATION_GENERATION:failed");
+    expect(job(h).lastError).toMatch(/tasks\.md|missing or empty/);
+    expect(h.ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.stage, "SPECIFICATION_GENERATION")).get()!.error).toMatch(/denied: Write/);
+    expect(h.claude.calls.filter((c) => /speckit-specify\//.test(c.prompt))).toHaveLength(1); // earlier steps stay checkpointed
   });
   it("is dry-run safe: read-only analysis runs, but nothing is generated or committed", async () => {
     const h = harness();

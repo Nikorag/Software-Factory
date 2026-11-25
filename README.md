@@ -4,9 +4,9 @@ A local-first, standalone TypeScript orchestrator that turns Linear tickets into
 using Claude Code as the engineering agent, GitHub SpecKit for specifications, and a local model (via Bionic)
 for independent review. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Status: Milestones 1–5 complete.** Config, logging, SQLite schema, doctor, loopback service skeleton, and the
+**Status: Milestones 1–6 complete.** Config, logging, SQLite schema, doctor, loopback service skeleton, and the
 durable job engine (state machine, retries, remediation cap, cancellation, crash recovery, dry-run, pause and
-emergency stop), plus the project registry, read-only repository validation and isolated git worktrees, Linear discovery with a durable write-back outbox, and the Claude Code and local-model adapters with enforced permission profiles. Real stage handlers, integrations and the dashboard are not built yet.
+emergency stop), plus the project registry, read-only repository validation and isolated git worktrees, Linear discovery with a durable write-back outbox, the Claude Code and local-model adapters with enforced permission profiles, and the Spec Kit specification pipeline (ticket → reviewed, validated spec). Implementation, delivery and the dashboard are not built yet.
 Try `pnpm factory simulate` (in-memory, no side effects).
 
 ## Quick start
@@ -19,6 +19,8 @@ pnpm factory config:check    # validate config/*.yaml
 pnpm factory project:sync       # clone factory-managed repos (idempotent)
 pnpm factory project:validate   # inspect enrolled repos (read-only)
 pnpm factory linear:check       # verify LINEAR_API_KEY and configured statuses/labels (read-only)
+pnpm factory project:onboard <id>   # add Spec Kit + constitution on a local review branch
+pnpm factory work               # run claimable jobs once (real agents, uses your subscription)
 pnpm factory serve           # loopback service on 127.0.0.1:4780 (GET /health)
 pnpm typecheck && pnpm lint && pnpm test
 ```

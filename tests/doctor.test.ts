@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkLocalModels, checkLocalRoutes } from "../src/doctor/checks.js";
+import { checkLocalModels, checkLocalRoutes, reviewerIndependence } from "../src/doctor/checks.js";
 import { loadConfig } from "../src/config/load.js";
 
 const respond = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
@@ -20,18 +20,36 @@ describe("checkLocalModels", () => {
   });
 });
 
-describe("checkLocalRoutes", () => {
-  const cfg = () => loadConfig("config");
-  it("warns while routes still hold the UNCONFIGURED placeholder", async () => {
-    const r = await checkLocalRoutes(cfg(), respond(200, { data: [{ id: "qwen-a" }] }));
+describe("checkLocalRoutes / local checks", () => {
+  const withLocal = (cls: string, rev: string) => {
+    const c = loadConfig("config");
+    c.models.routes.classification = { provider: "local", model: cls };
+    c.models.routes.independent_review = { provider: "local", model: rev };
+    return c;
+  };
+  it("returns nothing when no route uses a local model (the default: Claude only)", async () => {
+    expect(await checkLocalRoutes(loadConfig("config"), respond(200, { data: [] }))).toEqual([]);
+  });
+  it("warns while a local route still holds the UNCONFIGURED placeholder", async () => {
+    const r = await checkLocalRoutes(withLocal("UNCONFIGURED-QWEN", "UNCONFIGURED-QWEN"), respond(200, { data: [{ id: "qwen-a" }] }));
     expect(r.map((x) => x.status)).toEqual(["warn", "warn"]);
   });
-  it("passes when the configured model is loaded and fails when it is not", async () => {
-    const c = cfg();
-    c.models.routes.classification.model = "qwen-a";
-    c.models.routes.independent_review.model = "qwen-missing";
-    const r = await checkLocalRoutes(c, respond(200, { data: [{ id: "qwen-a" }] }));
+  it("passes when the configured local model is loaded and fails when it is not", async () => {
+    const r = await checkLocalRoutes(withLocal("qwen-a", "qwen-missing"), respond(200, { data: [{ id: "qwen-a" }] }));
     expect(r.find((x) => x.name === "route classification")?.status).toBe("ok");
     expect(r.find((x) => x.name === "route independent_review")).toMatchObject({ status: "fail", detail: expect.stringContaining("qwen-a") });
+  });
+});
+
+describe("reviewerIndependence", () => {
+  it("is ok when the reviewer is a different model from the author (shipped config: haiku vs default)", () => {
+    const [r] = reviewerIndependence(loadConfig("config"));
+    expect(r).toMatchObject({ status: "ok" });
+    expect(r!.detail).toContain("haiku");
+  });
+  it("warns when the reviewer is the same model as the author", () => {
+    const c = loadConfig("config");
+    c.models.routes.independent_review = { ...c.models.routes.specification };
+    expect(reviewerIndependence(c)[0]).toMatchObject({ status: "warn", detail: expect.stringContaining("same model") });
   });
 });

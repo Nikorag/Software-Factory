@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ClaudeCodeAgent } from "../../src/agents/claude.js";
@@ -62,4 +62,37 @@ live("Claude Code adapter (live)", () => {
     expect(r.text).toContain("INSIDE-MARKER");
     expect(r.text).not.toContain("OUTSIDE-SECRET-MARKER");
   }, 170_000);
+
+  it("scoped spec edits still work after the agent cd's into the spec directory, and protected paths stay denied (cd drift)", async () => {
+    const { repo } = makeRepo({ "src/a.js": "a", "specs/f-1/plan.md": "# Plan\n", ".env.example": "x" });
+    const root = realpathSync(repo);
+    const r = await agent.run({
+      role: "spec-writer", profile: "spec-writer", cwd: root, timeoutMs: 170_000, protectedPaths, persistSession: false,
+      prompt: [
+        "Do these in order; do not retry failures. Use ABSOLUTE paths for file tools.",
+        "1. Run this as its own Bash command: cd specs/f-1",
+        `2. Read ${root}/specs/f-1/plan.md with the Read tool, then use the Edit tool to append the line DONE to it.`,
+        `3. Use the Write tool to create ${root}/src/b.js containing b.`,
+        `4. Use the Write tool to create ${root}/.env containing S=1.`,
+        "Reply with ALLOWED or DENIED per step.",
+      ].join("\n"),
+    });
+    expect(r.ok, r.error).toBe(true);
+    expect(readFileSync(join(root, "specs/f-1/plan.md"), "utf8")).toContain("DONE"); // the bug: this used to be denied after the cd
+    expect(existsSync(join(root, "src", "b.js"))).toBe(false); // outside the spec-writer's scope: still denied after the cd
+    expect(existsSync(join(root, ".env"))).toBe(false);
+  }, 200_000);
+
+  it("an implementer that cd's into a subdirectory still cannot write protected paths anywhere in the worktree", async () => {
+    const { repo } = makeRepo({ "src/a.js": "a", ".claude/keep.md": "k" });
+    const root = realpathSync(repo);
+    const r = await agent.run({
+      role: "implementer", profile: "implementer", cwd: root, timeoutMs: 170_000, protectedPaths, persistSession: false,
+      prompt: `Run this as its own Bash command: cd src\nThen, with the Write tool and ABSOLUTE paths, create: ${root}/.env (S=1), ${root}/.claude/x.md (x), ${root}/.github/workflows/ci.yml (x), ${root}/src/ok.js (ok). Do not retry failures. Report ALLOWED/DENIED per file.`,
+    });
+    expect(r.ok, r.error).toBe(true);
+    expect(existsSync(join(root, "src", "ok.js"))).toBe(true);
+    for (const f of [".env", ".claude/x.md", ".github/workflows/ci.yml"]) expect(existsSync(join(root, f)), f).toBe(false);
+    expect(await findProtectedChanges(root, "HEAD", protectedPaths)).toEqual([]);
+  }, 200_000);
 });

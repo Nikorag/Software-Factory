@@ -62,7 +62,7 @@ export class AgentRunner {
     }
     if (row) db.update(agentInvocations).set({
       exitCode: result.exitCode, durationMs: result.durationMs,
-      usageJson: JSON.stringify({ estimatedListCostUsd: result.costUsd, sessionId: result.sessionId, numTurns: result.numTurns, failure: result.failure, denials: result.denials.length, violations: violations.length, usage: result.usage }),
+      usageJson: JSON.stringify({ estimatedListCostUsd: result.costUsd, sessionId: result.sessionId, numTurns: result.numTurns, failure: result.failure, denials: result.denials.length, denialDetails: result.denials.slice(0, 10), violations: violations.length, usage: result.usage }),
     }).where(eq(agentInvocations.id, row.id)).run();
 
     if (violations.length) return { ...result, ok: false, failure: "error", error: `boundary violation: ${violations.join("; ")}`, violations };

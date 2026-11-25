@@ -31,6 +31,10 @@ export interface LinearClient {
   /** `id` is client-chosen (a UUID) so retries cannot create duplicates. */
   createComment(issueId: string, body: string, id: string): Promise<void>;
   linkPullRequest(issueId: string, url: string, title?: string): Promise<void>;
+  /** Used only by `linear:setup`. Creates; never edits or deletes. `type` is one of triage|backlog|unstarted|started|completed|canceled. */
+  createWorkflowState(teamId: string, name: string, type: string, color: string): Promise<{ id: string }>;
+  /** Team-scoped label (visible only in that team). */
+  createLabel(teamId: string, name: string, color: string): Promise<{ id: string }>;
 }
 
 export class LinearApiError extends Error {
@@ -177,6 +181,16 @@ export function createLinearClient(opts: HttpClientOptions): LinearClient {
       mutate(`mutation($id: String!, $l: String!) { issueUpdate(id: $id, input: { removedLabelIds: [$l] }) { success } }`, { id: issueId, l: labelId }, "issueUpdate"),
     createComment: (issueId, body, id) =>
       mutate(`mutation($input: CommentCreateInput!) { commentCreate(input: $input) { success } }`, { input: { issueId, body, id } }, "commentCreate"),
+    async createWorkflowState(teamId, name, type, color) {
+      const d = await request<Raw>(`mutation($input: WorkflowStateCreateInput!) { workflowStateCreate(input: $input) { success workflowState { id } } }`, { input: { teamId, name, type, color } });
+      if (!d.workflowStateCreate?.success) throw new LinearApiError(`Linear refused to create status "${name}"`, false);
+      return { id: d.workflowStateCreate.workflowState.id };
+    },
+    async createLabel(teamId, name, color) {
+      const d = await request<Raw>(`mutation($input: IssueLabelCreateInput!) { issueLabelCreate(input: $input) { success issueLabel { id } } }`, { input: { teamId, name, color } });
+      if (!d.issueLabelCreate?.success) throw new LinearApiError(`Linear refused to create label "${name}"`, false);
+      return { id: d.issueLabelCreate.issueLabel.id };
+    },
     linkPullRequest: (issueId, prUrl, title) =>
       mutate(`mutation($issueId: String!, $url: String!, $title: String) { attachmentLinkGitHubPR(issueId: $issueId, url: $url, title: $title) { success } }`, { issueId, url: prUrl, title }, "attachmentLinkGitHubPR"),
   };

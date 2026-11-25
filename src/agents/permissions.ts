@@ -1,6 +1,27 @@
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import type { PermissionProfile } from "./types.js";
 
 export interface ToolPolicy { tools: string[]; allow: string[]; deny: string[] }
+
+/**
+ * Absolute spellings of the worktree root. Claude Code's shell keeps `cd` between calls, and relative path rules
+ * resolve against the *current* directory, so after `cd specs/x` a rule `Edit(specs/**)` silently stops matching
+ * (found live: it made spec edits "denied" whenever the agent had cd'd first). Rules therefore also carry absolute
+ * forms, for the lexical and canonical path (macOS: /var vs /private/var, which Claude Code does not equate).
+ */
+export function pathRoots(cwd: string): string[] {
+  const roots = new Set([resolve(cwd)]);
+  try {
+    const real = realpathSync(cwd);
+    roots.add(real);
+    if (/^\/private\/(var|tmp|etc)\//.test(real)) roots.add(real.slice("/private".length));
+  } catch { /* cwd may not exist yet (tests): the lexical form is still emitted */ }
+  return [...roots];
+}
+// `//path` means "absolute from the filesystem root" in Claude Code rules.
+const absRule = (root: string, pattern: string) => `//${root.replace(/^\/+/, "")}/${pattern.replace(/^\/+/, "")}`;
+const editRules = (patterns: string[], roots: string[]) => patterns.flatMap((p) => [`Edit(${p})`, ...roots.map((r) => `Edit(${absRule(r, p)})`)]);
 
 // Verified against Claude Code 2.1.332 (see docs/integrations.md):
 //  - a deny rule beats a broad allow;
@@ -21,8 +42,9 @@ const ALWAYS_DENY_BASH = [
 const SPECKIT_SCRIPTS = [".specify/scripts/bash/check-prerequisites.sh", ".specify/scripts/bash/resolve-template.sh", ".specify/scripts/bash/setup-plan.sh", ".specify/scripts/bash/setup-tasks.sh"];
 const bash = (prefix: string) => `Bash(${prefix}:*)`;
 
-export function toolPolicy(profile: PermissionProfile, opts: { protectedPaths?: string[]; bashAllow?: string[] } = {}): ToolPolicy {
+export function toolPolicy(profile: PermissionProfile, opts: { protectedPaths?: string[]; bashAllow?: string[]; roots?: string[] } = {}): ToolPolicy {
   const protectedPaths = opts.protectedPaths ?? [];
+  const roots = opts.roots ?? [];
   const readOnly = GIT_READ.map(bash); // file reads are allowed by default, confined to the worktree
   switch (profile) {
     case "read-only":
@@ -32,14 +54,14 @@ export function toolPolicy(profile: PermissionProfile, opts: { protectedPaths?: 
       // but cannot edit them, the skills, or the templates (those are the instruction set it executes).
       return {
         tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash"],
-        allow: [...readOnly, "Edit(specs/**)", "Edit(.specify/memory/**)", "Edit(.specify/feature.json)", ...SPECKIT_SCRIPTS.map(bash), bash("mkdir -p specs/")],
-        deny: [...protectedPaths.map((p) => `Edit(${p})`), ...ALWAYS_DENY_BASH.map(bash)],
+        allow: [...readOnly, ...editRules(["specs/**", ".specify/memory/**", ".specify/feature.json"], roots), ...SPECKIT_SCRIPTS.map(bash), bash("mkdir -p specs/")],
+        deny: [...editRules(protectedPaths, roots), ...ALWAYS_DENY_BASH.map(bash)],
       };
     case "implementer":
       return {
         tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash"],
         allow: [...readOnly, "Write", "Edit", ...GIT_WRITE.map(bash), ...(opts.bashAllow ?? []).map(bash)],
-        deny: [...protectedPaths.map((p) => `Edit(${p})`), ...ALWAYS_DENY_BASH.map(bash)],
+        deny: [...editRules(protectedPaths, roots), ...ALWAYS_DENY_BASH.map(bash)],
       };
   }
 }

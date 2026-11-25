@@ -14,3 +14,6 @@ Layout: `<dataDir>/workspaces/<projectId>/<ISSUE-KEY>` on branch `factory/<ISSUE
 A project with `github.repo` and no `repository` is cloned to `<dataDir>/projects/<id>` by `pnpm factory project:sync` and owned by the factory; your own checkouts are never used for these. `project:sync` is idempotent and refuses to touch a directory that is not a clone of the configured repo.
 Network access (clone, fetch, later push) authenticates over HTTPS as the project's `github.account`: the token is read from `gh`'s keyring and handed to the single git process through `GIT_CONFIG_*` environment variables, so it is never in `ps` output, the repo's `.git/config`, the database or logs (verified after the first real clone). Clone origins are plain `https://github.com/<owner>/<repo>.git`.
 Projects with an explicit `repository:` (e.g. `zonto-hub`) keep using that checkout as the *origin of worktrees*; its working tree is never touched.
+
+## Live verification
+`FACTORY_LIVE=1 pnpm vitest run tests/live` runs the real `claude` and `specify` (uses subscription quota; a full pipeline is about 4-6 minutes and ~9 agent calls). `tests/live/speckit.live.test.ts` takes a ticket through a validated, committed specification and writes a per-agent timing report (`FACTORY_LIVE_REPORT=<path>`). Last verified: 259 agent-seconds, one remediation cycle, Haiku for classification and review.

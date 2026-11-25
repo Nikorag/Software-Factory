@@ -27,3 +27,8 @@ Jobs are leased (`leaseOwner`/`leaseExpiresAt`, renewed by a heartbeat). `recove
 `pause` stops new jobs; running jobs hold at the next stage boundary. `stop` (emergency) also aborts active agents; those jobs hold as `PAUSED`.
 `clear-stop` does not resume; run `resume` afterwards. Jobs held as `PAUSED` re-queue automatically once the factory is running again.
 CLI: `factory jobs | job:cancel | job:retry | pause | resume | stop | clear-stop | simulate [--dry-run]`.
+
+## Where things happen (as built)
+- The job worktree is created idempotently by the first stage that needs files (`REQUIREMENTS_ANALYSIS`), not at `IMPLEMENTATION_PREPARATION`, because specifications are committed on the job branch. `IMPLEMENTATION_PREPARATION` (Milestone 7) will verify cleanliness, install dependencies and run baseline checks.
+- Handlers that exist today: `DISCOVERED`, `ELIGIBILITY_CHECK`, `REQUIREMENTS_ANALYSIS`, `SPECIFICATION_GENERATION`, `SPECIFICATION_REVIEW`, `SPECIFICATION_REMEDIATION`, `SPECIFICATION_VALIDATION`. A job that reaches a stage with no handler blocks with "no handler registered", which is the honest stop until Milestones 7-8.
+- `pnpm factory work` runs claimable jobs once with real agents. Production code never uses the simulated handlers.

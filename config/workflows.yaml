@@ -5,7 +5,7 @@ workflows:
   feature:
     stages:
       REQUIREMENTS_ANALYSIS: { timeoutSeconds: 900, maxRetries: 2 }
-      SPECIFICATION_GENERATION: { timeoutSeconds: 2400, maxRetries: 1 }   # specify + clarify + plan + tasks
+      SPECIFICATION_GENERATION: { timeoutSeconds: 2400, maxRetries: 2 }   # specify + clarify + plan + tasks
       SPECIFICATION_REVIEW: { timeoutSeconds: 900, maxRetries: 2 }
       SPECIFICATION_REMEDIATION: { timeoutSeconds: 1200, maxRetries: 1 }
       SPECIFICATION_VALIDATION: { timeoutSeconds: 900, maxRetries: 2 }

@@ -64,7 +64,8 @@ export function openQuestions(b: SpecBundle): string[] {
   for (const m of text.matchAll(/^#{1,4}[ \t]*Open questions requiring a human[ \t]*$([\s\S]*?)(?=^#{1,4}[ \t]|$(?![\s\S]))/gim)) {
     for (const line of m[1]!.split("\n")) {
       const q = line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim();
-      if (q && !/^(none|n\/a|-|—)\.?$/i.test(q)) out.push(q);
+      // "None.", "N/A", "No open questions", and parenthetical/"Note:" asides mean there is no question.
+      if (q && !/^(none|n\/a|nothing|no (open )?questions?)\b/i.test(q) && !/^[(\[]|^note\b/i.test(q) && !/^[-—–.]+$/.test(q)) out.push(q);
     }
   }
   return out;

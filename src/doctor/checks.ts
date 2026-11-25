@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { totalmem } from "node:os";
 import type { LoadedConfig } from "../config/schema.js";
+import { findBinary } from "../speckit/tools.js";
 import { createLinearClient, type LinearClient } from "../linear/client.js";
 
 const run = promisify(execFile);
@@ -64,6 +65,22 @@ export async function checkLocalRoutes(config: LoadedConfig, fetchImpl: typeof f
   });
 }
 
+const usesLocal = (c: LoadedConfig) => Object.values(c.models.routes).some((r) => r.provider === "local");
+
+/** The local model server is only checked (and only required) when a route actually uses it. */
+async function localChecks(config: LoadedConfig, fetchImpl: typeof fetch): Promise<CheckResult[]> {
+  if (!usesLocal(config)) return [{ name: "local models", status: "ok", detail: "no route uses a local model (Claude only)" }];
+  return [...(await checkLocalModels(config.models.local.baseUrl, fetchImpl)), ...(await checkLocalRoutes(config, fetchImpl))];
+}
+
+/** A reviewer that is the same model as the author is not independent. */
+export function reviewerIndependence(config: LoadedConfig): CheckResult[] {
+  const { specification: a, independent_review: r } = config.models.routes;
+  return a.provider === r.provider && a.model === r.model
+    ? [{ name: "reviewer independence", status: "warn", detail: `independent_review uses the same model as specification (${r.model}); pick a different one` }]
+    : [{ name: "reviewer independence", status: "ok", detail: `${r.provider}/${r.model} reviews ${a.provider}/${a.model}` }];
+}
+
 /** Read-only: asks Linear who the key belongs to. Reports the account name, never the key. */
 export async function checkLinear(config: LoadedConfig, clientOverride?: LinearClient): Promise<CheckResult> {
   const key = process.env[config.linear.apiKeyEnv];
@@ -86,9 +103,9 @@ export async function runDoctor(config: LoadedConfig, fetchImpl: typeof fetch = 
     await tool("gh", "gh", ["--version"]),
     await checkGitHubAuth(),
     await tool("claude", "claude", ["--version"]),
-    await tool("specify (SpecKit)", "specify", ["version"], false),
-    ...(await checkLocalModels(config.models.local.baseUrl, fetchImpl)),
-    ...(await checkLocalRoutes(config, fetchImpl)),
+    await tool("specify (SpecKit)", findBinary("specify") ?? "specify", ["--version"], false),
+    ...(await localChecks(config, fetchImpl)),
+    ...reviewerIndependence(config),
   ];
   results.push(await checkLinear(config));
   return results;

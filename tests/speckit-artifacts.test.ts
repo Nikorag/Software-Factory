@@ -56,6 +56,15 @@ describe("validateSpecArtifacts (against real Spec Kit output)", () => {
     const b: SpecBundle = { dir: "d", files: { "spec.md": "# S\n\n## Open questions requiring a human\n\n1. Which region?\n2) Which currency?" } };
     expect(openQuestions(b)).toEqual(["Which region?", "Which currency?"]);
   });
+  it("treats the agent's real 'None. (Note: …)' answer as no questions (found by the live run)", () => {
+    const real = "## Open questions requiring a human\n\nNone. (Note: shell access was unavailable in this run, so `setup-plan.sh` and extension-hook checks could not be executed; the plan template was read and filled directly.)\n";
+    for (const body of [real, "## Open questions requiring a human\n\nNone\n", "## Open questions requiring a human\n\n- N/A\n", "## Open questions requiring a human\n\nNo open questions.\n", "## Open questions requiring a human\n\n(Note: nothing to ask)\n"]) {
+      const b: SpecBundle = { dir: "d", files: { "plan.md": "# Plan\n\n" + body } };
+      expect(openQuestions(b)).toEqual([]);
+    }
+    const mixed: SpecBundle = { dir: "d", files: { "spec.md": "## Open questions requiring a human\n\nNone.\n- Which region?\n" } };
+    expect(openQuestions(mixed)).toEqual(["Which region?"]); // a genuine question beside a 'None.' is still caught
+  });
   it("treats 'None' under that heading as no questions", () => {
     const b = without(real(), "spec.md", (s) => s + "\n\n## Open questions requiring a human\n\nNone.\n");
     expect(openQuestions(b)).toEqual([]);
@@ -105,6 +114,13 @@ describe("schemas and prompts", () => {
     expect(p).toContain(".claude/skills/speckit-plan/SKILL.md");
     expect(p).toContain("SPECIFY_FEATURE_DIRECTORY=specs/jam-1-x");
     expect(p).toContain("nobody can answer questions");
+  });
+  it("tells the analyst to block only on WHAT is wanted, never on HOW to build it (design choices become risks)", async () => {
+    const { analysisPrompt } = await import("../src/speckit/prompts.js");
+    const { rolePrompt } = await import("../src/agents/roles.js");
+    expect(analysisPrompt("<ticket/>")).toMatch(/design choices.*not questions/i);
+    expect(rolePrompt("requirements-analyst")).toMatch(/Do NOT ask about HOW/);
+    expect(rolePrompt("requirements-analyst")).toMatch(/API shape/);
   });
   it("extractJson still handles structured replies", () => { expect(extractJson('{"a":1}')).toEqual({ a: 1 }); });
 });

@@ -12,6 +12,8 @@ import { syncProjects, validateProjects } from "./repo/registry.js";
 import { ensureClone } from "./repo/clone.js";
 import { createLinearClient, type LinearClient } from "./linear/client.js";
 import { discoverIssues } from "./linear/discovery.js";
+import { auditTeam, SUGGESTED_STATUS_TYPE } from "./linear/check.js";
+import { applySetup, planSetup } from "./linear/setup.js";
 import { flushOutbox } from "./linear/outbox.js";
 import { createContext } from "./app/context.js";
 import { onboardProject } from "./speckit/onboard.js";
@@ -125,17 +127,45 @@ program
       console.log(`  Linear projects in ${t.key}: ${ps.length ? "" : "(none)"}`);
       for (const p of ps) console.log(`    ${p.name}  [${p.id}]`);
     }
-    let missing = 0;
+    let bad = 0;
     for (const key of keys) {
       const team = teams.find((t) => t.key === key);
-      if (!team) { console.log(`✗ team ${key} not found or not visible to this key`); missing++; continue; }
-      const states = (await client.workflowStates(team.id)).map((s) => s.name.toLowerCase());
-      const labels = (await client.labels(team.id)).map((l) => l.name.toLowerCase());
-      for (const n of Object.values(config.linear.statuses)) if (!states.includes(n.toLowerCase())) { console.log(`✗ ${key}: status "${n}" missing`); missing++; }
-      for (const n of Object.values(config.linear.labels)) if (!labels.includes(n.toLowerCase())) { console.log(`✗ ${key}: label "${n}" missing`); missing++; }
-      console.log(`${missing ? "!" : "✓"} team ${key} checked`);
+      if (!team) { console.log(`✗ team ${key} not found or not visible to this key`); bad++; continue; }
+      const a = await auditTeam(client, config.linear, team);
+      const line = (g: { name: string; required: boolean }, what: string) => console.log(`  ${g.required ? "✗ REQUIRED" : "- optional"}  ${what} "${g.name}" is missing`);
+      for (const g of a.statuses) line(g, "status");
+      for (const g of a.labels) line(g, "label");
+      if (!a.ok) bad++;
+      console.log(`${a.ok ? "✓" : "✗"} team ${key}: ${a.ok ? "everything the factory writes today exists" : "required items missing"}`);
+      if (a.statuses.length || a.labels.length) {
+        console.log(`  existing statuses in ${key}: ${a.existingStatuses.join(", ")}`);
+        console.log(`  suggested types when creating a status: ${a.statuses.map((g) => `${g.name} = ${SUGGESTED_STATUS_TYPE[g.key as keyof typeof SUGGESTED_STATUS_TYPE]}`).join("; ") || "-"}`);
+      }
     }
-    process.exitCode = missing ? 1 : 0;
+    process.exitCode = bad ? 1 : 0;
+  });
+
+program
+  .command("linear:setup")
+  .description("Create the Linear statuses and labels the factory needs (dry run unless --apply; creates only, never edits or deletes)")
+  .option("--apply", "actually create them (default: show the plan)")
+  .option("--include-optional", "also create the optional labels/statuses (autonomous, bugfix, feature, maintenance, ...)")
+  .action(async (opts: { apply?: boolean; includeOptional?: boolean }) => {
+    const config = loadConfig();
+    const client = linearClient(config);
+    const teams = await client.teams();
+    const keys = [...new Set(config.projects.projects.flatMap((p) => (p.linear ? [p.linear.teamKey] : [])))];
+    for (const key of keys) {
+      const team = teams.find((t) => t.key === key);
+      if (!team) { console.log(`✗ team ${key} not found`); process.exitCode = 1; continue; }
+      const plan = planSetup(await auditTeam(client, config.linear, team), { includeOptional: opts.includeOptional });
+      if (plan.length === 0) { console.log(`✓ ${key}: nothing to create`); continue; }
+      for (const a of plan) console.log(`  ${opts.apply ? "creating" : "would create"} ${a.kind} "${a.name}"${a.kind === "status" ? ` (type: ${a.type})` : ""} in team ${key}`);
+      if (!opts.apply) { console.log(`  (dry run: re-run with --apply to create)`); continue; }
+      const r = await applySetup(client, config.linear, team, { includeOptional: opts.includeOptional });
+      for (const c of r.created) console.log(`  ✓ created ${c}`);
+      for (const f of r.failed) { console.log(`  ✗ ${f.action}: ${f.error}`); process.exitCode = 1; }
+    }
   });
 
 program

@@ -22,7 +22,9 @@ export function ticketBlock(issue: LinearIssue & { comments?: { body: string; us
 const AUTOMATED = [
   "This is a fully automated run and nobody can answer questions.",
   "Where the skill would ask the user something or needs a choice, decide using the best-supported option from the ticket, the codebase and the project constitution, and record the decision in the artefact marked \"agent decision\".",
-  "Never stop to ask. If something genuinely cannot be decided without a human, add it under a heading `## Open questions requiring a human` and continue with the safest assumption.",
+  "Never stop to ask. If something genuinely cannot be decided without a human, add it under a heading `## Open questions requiring a human` and continue with the safest assumption; if there are none, write just `None.` under that heading or omit it.",
+  "Never change directory with `cd`: use paths relative to the repository root (a `cd` changes where the sandbox resolves paths).",
+  "Run each Spec Kit helper script (.specify/scripts/bash/*.sh) as its own single command exactly as the skill shows it, with no `cd`, `export`, inline environment variables, pipes or chaining: they find the feature through .specify/feature.json, and chained commands are refused by the sandbox.",
 ].join(" ");
 
 /** Runs a Spec Kit skill by reading its SKILL.md (skills are not auto-registered because repo settings are ignored on purpose). */
@@ -35,7 +37,7 @@ export function skillPrompt(step: string, featureDir: string, extra = ""): strin
 
 export const analysisPrompt = (ticket: string) => [
   "Decide whether this ticket can be built as written. Read the relevant code first.", ticket,
-  "Answer per the JSON schema: `ready`, or `needs_clarification` with the exact questions a human must answer.",
+  "Answer per the JSON schema. Use `needs_clarification` only for ambiguity in WHAT is wanted that the ticket, code and conventions cannot resolve; design choices (API shape, naming, data representation) are not questions: list them under `risks`, the specification writer decides them.",
 ].join("\n\n");
 
 export const classificationPrompt = (ticket: string) => [ticket, "Classify this ticket per the JSON schema."].join("\n\n");

@@ -19,6 +19,8 @@ export interface Behaviour {
   /** Called after the default file writing for a skill step; may add/overwrite files or return a failure. */
   onStep?: (step: string, req: AgentRequest, featureDir: string) => Partial<AgentResult> | void;
   onRemediate?: (req: AgentRequest, featureDir: string) => void;
+  /** Simulate a step that runs but writes nothing (n = how many times this step has run). */
+  skipWrite?: (step: string, n: number) => boolean;
 }
 
 export const defaults = (): Behaviour => ({
@@ -32,6 +34,7 @@ export const defaults = (): Behaviour => ({
 /** Behaves like Claude Code for the SpecKit flow: writes real SpecKit artefacts for skill steps, returns structured output otherwise. */
 export class ScriptedAgent implements Agent {
   calls: AgentRequest[] = [];
+  private stepRuns = new Map<string, number>();
   constructor(readonly provider: "anthropic" | "local", public b: Behaviour = defaults()) {}
 
   private ok(over: Partial<AgentResult> = {}): AgentResult {
@@ -54,6 +57,8 @@ export class ScriptedAgent implements Agent {
       return this.ok({ structured, text: JSON.stringify(structured) });
     }
     if (step && STEP_FILES[step]) {
+      const n = (this.stepRuns.get(step) ?? 0) + 1; this.stepRuns.set(step, n);
+      if (this.b.skipWrite?.(step, n)) return this.ok({ denials: [{ tool: "Write", input: `{"file_path":"${dir}/tasks.md"}` }] });
       for (const f of STEP_FILES[step]!) {
         const dest = join(req.cwd, dir, f);
         mkdirSync(dirname(dest), { recursive: true });

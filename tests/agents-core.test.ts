@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentEnv } from "../src/agents/env.js";
 import { findProtectedChanges } from "../src/agents/guard.js";
-import { toolPolicy } from "../src/agents/permissions.js";
+import { pathRoots, toolPolicy } from "../src/agents/permissions.js";
 import { runProcess } from "../src/agents/process.js";
 import { buildClaudeArgs, parseClaudeOutput, ClaudeCodeAgent } from "../src/agents/claude.js";
 import { ROLE_PROFILE, rolePrompt } from "../src/agents/roles.js";
@@ -56,6 +56,30 @@ describe("permission profiles", () => {
     for (const r of Object.keys(ROLE_PROFILE) as AgentRole[]) expect(rolePrompt(r).length).toBeGreaterThan(50);
     for (const r of ["spec-reviewer", "qa-reviewer", "security-reviewer", "final-reviewer", "requirements-analyst", "classifier"] as AgentRole[]) expect(ROLE_PROFILE[r]).toBe("read-only");
     expect(ROLE_PROFILE.implementer).toBe("implementer");
+  });
+});
+
+describe("absolute path anchoring (survives a Bash `cd`)", () => {
+  const prot = [".env", ".git/**", "**/*.pem", ".claude/**"];
+  it("emits relative AND absolute forms of every scoped allow and every protected-path deny", () => {
+    const p = toolPolicy("spec-writer", { protectedPaths: prot, roots: ["/work/JAM-1"] });
+    expect(p.allow).toEqual(expect.arrayContaining(["Edit(specs/**)", "Edit(//work/JAM-1/specs/**)", "Edit(//work/JAM-1/.specify/memory/**)", "Edit(//work/JAM-1/.specify/feature.json)"]));
+    expect(p.deny).toEqual(expect.arrayContaining(["Edit(.env)", "Edit(//work/JAM-1/.env)", "Edit(//work/JAM-1/.git/**)", "Edit(//work/JAM-1/**/*.pem)", "Edit(//work/JAM-1/.claude/**)"]));
+    const i = toolPolicy("implementer", { protectedPaths: prot, roots: ["/work/JAM-1"] });
+    expect(i.deny).toContain("Edit(//work/JAM-1/.env)");
+  });
+  it("covers every spelling of the root, including macOS /var vs /private/var", () => {
+    const real = tmp();
+    const roots = pathRoots(real);
+    expect(roots).toContain(real);
+    if (real.startsWith("/private/var/")) expect(roots).toContain(real.slice("/private".length));
+    const p = toolPolicy("spec-writer", { roots });
+    for (const r of roots) expect(p.allow).toContain(`Edit(//${r.slice(1)}/specs/**)`);
+  });
+  it("buildClaudeArgs passes the anchored rules for the request's cwd", () => {
+    const cwd = tmp();
+    const a = buildClaudeArgs({ role: "spec-writer", profile: "spec-writer", prompt: "x", cwd, timeoutMs: 1 });
+    expect(a.join(" ")).toContain(`Edit(//${cwd.slice(1)}/specs/**)`);
   });
 });
 

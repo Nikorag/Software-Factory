@@ -66,5 +66,15 @@ export class FakeLinear implements LinearClient {
     if (issue.comments.some((c) => c.id === commentId)) throw new LinearApiError("duplicate comment id", false);
     store();
   }
+  created: string[] = [];
+  async createWorkflowState(_team: string, name: string, type: string) {
+    this.rec(`createState:${name}:${type}`); this.maybeFail("createWorkflowState");
+    if (this.states.some((x) => x.name.toLowerCase() === name.toLowerCase())) throw new LinearApiError("state already exists", false);
+    const st = { id: `st-new-${this.states.length}`, name, type }; this.states.push(st); this.created.push(`status:${name}`); return { id: st.id };
+  }
+  async createLabel(_team: string, name: string) {
+    this.rec(`createLabel:${name}`); this.maybeFail("createLabel");
+    const l = { id: `lb-new-${this.labelDefs.length}`, name }; this.labelDefs.push(l); this.created.push(`label:${name}`); return { id: l.id };
+  }
   async linkPullRequest(id: string, url: string) { this.rec(`linkPr:${id}:${url}`); this.maybeFail("linkPullRequest"); }
 }

@@ -31,7 +31,8 @@ export interface SpecKitDeps {
   git?: GitFn;
 }
 
-const COMMIT_PATHS = (dir: string) => [dir, ".specify/memory", ".specify/feature.json"];
+// `.specify/feature.json` is machine-local state that Spec Kit itself gitignores: never committed.
+const COMMIT_PATHS = (dir: string) => [dir, ".specify/memory"];
 const STEPS = [
   { step: "specify", file: "spec.md" },
   { step: "clarify", file: "spec.md" },
@@ -79,7 +80,7 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
 
   async function agent<T extends z.ZodType>(
     ctx: { job: { id: string }; executionId: number; signal: AbortSignal }, o: { task: TaskKind; role: AgentRole; prompt: string; cwd: string; schema?: T; baseRef?: string; timeoutMs: number; bashAllow?: string[] },
-  ): Promise<{ ok: true; data: z.infer<T> | undefined; result: AgentResult } | { ok: false; stop: StageResult }> {
+  ): Promise<{ ok: true; data: z.infer<T> | undefined; result: AgentResult & { route?: { provider: string; model: string } } } | { ok: false; stop: StageResult }> {
     const result = await d.runner.run({
       jobId: ctx.job.id, executionId: ctx.executionId, task: o.task, role: o.role, prompt: o.prompt, cwd: o.cwd,
       timeoutMs: o.timeoutMs, signal: ctx.signal, baseRef: o.baseRef, bashAllow: o.bashAllow,
@@ -140,11 +141,17 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
         plan: `Technical context: use the repository's existing stack, conventions and CLAUDE.md. Do not add dependencies unless the specification requires them.`,
         tasks: `Every behavioural change needs tests. Project commands - test: ${project.commands.test ?? "(detect from the repo)"}; lint: ${project.commands.lint ?? "(detect)"}; typecheck: ${project.commands.typecheck ?? "(detect)"}.`,
       }[step];
-      const r = await agent(ctx, { task: "specification", role: "spec-writer", prompt: skillPrompt(step, p.featureDir, extra), cwd: p.cwd, baseRef: p.info.base, timeoutMs: 15 * MIN });
-      if (!r.ok) return r.stop;
-      const bundle = readSpecBundle(p.cwd, p.featureDir);
-      if (!bundle.files[file] || bundle.files[file]!.trim().length < 100) {
-        return { kind: "retry", reason: `speckit-${step} finished but ${p.featureDir}/${file} is missing or empty` };
+      // A step can finish without producing its file (observed once live: a one-off permission denial on an in-scope Write).
+      // Rerun that step once, in the same attempt, before failing the stage.
+      let bundle = readSpecBundle(p.cwd, p.featureDir);
+      for (let attempt = 1; ; attempt++) {
+        const r = await agent(ctx, { task: "specification", role: "spec-writer", prompt: skillPrompt(step, p.featureDir, extra), cwd: p.cwd, baseRef: p.info.base, timeoutMs: 15 * MIN });
+        if (!r.ok) return r.stop;
+        bundle = readSpecBundle(p.cwd, p.featureDir);
+        if (bundle.files[file] && bundle.files[file]!.trim().length >= 100) break;
+        const denied = r.result.denials.map((x) => `${x.tool}: ${x.input.slice(0, 120)}`).join("; ");
+        if (attempt >= 2) return { kind: "retry", reason: `speckit-${step} finished twice but ${p.featureDir}/${file} is missing or empty${denied ? ` (denied: ${denied})` : ""}` };
+        record(ctx.job.id, "speckit.step.rerun", `${step}: ${file} missing after attempt ${attempt}`, denied || undefined);
       }
       await commitPaths(p.cwd, COMMIT_PATHS(p.featureDir), `spec(${p.issue.identifier}): ${step}`, git);
       recordArtifacts(d.db, ctx.job.id, bundle, { [`step:${step}`]: bundle.files[file]! });
@@ -153,37 +160,44 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
     return { kind: "ok", output: { featureDir: p.featureDir, files: Object.keys(readSpecBundle(p.cwd, p.featureDir).files) } };
   };
 
-  /** Independent review: local model first; falls back to a fresh read-only Claude reviewer (or blocks) per config. */
+  /**
+   * Independent review by whatever the `independent_review` route names (a different, cheaper model than the author:
+   * Haiku by default). Only a *local* route has a fallback (to a fresh Claude reviewer, or block): a Claude route's
+   * failures are ordinary stage failures.
+   */
   const specificationReview: StageHandler = async (ctx) => {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
     const bundle = readSpecBundle(p.cwd, p.featureDir);
     const prompt = reviewPrompt(p.ticket, bundle);
-    let r = await tryLocalReview(ctx, p.cwd, prompt);
-    let independent = true;
+    const run = (task: TaskKind) => agent(ctx, { task, role: "spec-reviewer", prompt, cwd: p.cwd, schema: Review, timeoutMs: 15 * MIN });
+
+    let provider: "local" | "anthropic" = "anthropic";
+    let r: Awaited<ReturnType<typeof run>>;
+    try {
+      provider = d.router.route("independent_review").provider;
+      r = await run("independent_review");
+    } catch (e) {
+      if (!(e instanceof ConfigError)) throw e;
+      provider = "local"; // an unconfigured local route
+      r = { ok: false, stop: { kind: "retry", reason: "local model not configured" } };
+    }
+    let reviewer = "independent_review route";
+    if (r.ok) reviewer = r.result.route?.model ?? reviewer;
     if (!r.ok) {
+      if (provider !== "local") return r.stop;
       if (d.fallback === "block") return { kind: "blocked", reason: `The independent (local) reviewer is unavailable and the fallback is "block": ${r.stop.kind === "retry" ? r.stop.reason : "unavailable"}` };
       record(ctx.job.id, "review.degraded", "independent local review unavailable; used a fresh Claude reviewer", r.stop.kind === "retry" ? r.stop.reason : undefined);
-      independent = false;
-      r = await agent(ctx, { task: "final_review", role: "spec-reviewer", prompt, cwd: p.cwd, schema: Review, timeoutMs: 15 * MIN });
+      r = await run("final_review");
       if (!r.ok) return r.stop;
+      reviewer = `${r.result.route?.model ?? "claude"} (fallback)`;
     }
-    const review = (r as { data: z.infer<typeof Review> }).data;
+    const review = r.data!;
     const must = review.findings.filter((f) => blocking(f.severity));
-    record(ctx.job.id, "review.result", `${review.verdict}: ${review.findings.length} finding(s), ${must.length} blocking`, independent ? "local model" : "claude (fallback)");
-    if (must.length > 0) return { kind: "remediate", reason: `${must.length} blocking finding(s) in the specification review`, output: { findings: review.findings, independent } };
-    return { kind: "ok", output: { findings: review.findings, independent } };
+    record(ctx.job.id, "review.result", `${review.verdict}: ${review.findings.length} finding(s), ${must.length} blocking`, reviewer);
+    if (must.length > 0) return { kind: "remediate", reason: `${must.length} blocking finding(s) in the specification review`, output: { findings: review.findings, reviewer } };
+    return { kind: "ok", output: { findings: review.findings, reviewer } };
   };
-
-  async function tryLocalReview(ctx: Parameters<StageHandler>[0], cwd: string, prompt: string) {
-    try {
-      d.router.route("independent_review");
-    } catch (e) {
-      if (e instanceof ConfigError) return { ok: false as const, stop: { kind: "retry", reason: "local model not configured" } as StageResult };
-      throw e;
-    }
-    return agent(ctx, { task: "independent_review", role: "spec-reviewer", prompt, cwd, schema: Review, timeoutMs: 15 * MIN });
-  }
 
   const specificationValidation: StageHandler = async (ctx) => {
     const p = await prepare(ctx.job);

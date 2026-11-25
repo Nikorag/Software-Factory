@@ -1,4 +1,4 @@
-import { toolPolicy } from "./permissions.js";
+import { pathRoots, toolPolicy } from "./permissions.js";
 import { agentEnv } from "./env.js";
 import { runProcess, type RunOptions, type RunResult } from "./process.js";
 import type { Agent, AgentFailure, AgentRequest, AgentResult } from "./types.js";
@@ -11,7 +11,7 @@ import type { Agent, AgentFailure, AgentRequest, AgentResult } from "./types.js"
  * --dangerously-skip-permissions.
  */
 export function buildClaudeArgs(req: AgentRequest): string[] {
-  const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow });
+  const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow, roots: pathRoots(req.cwd) });
   const args = [
     "-p",
     "--output-format", "json",
