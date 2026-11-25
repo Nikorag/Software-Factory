@@ -24,7 +24,7 @@ export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: 
   const st = (id: string): NodeState => flow.state[id] ?? "idle";
   return (
     <div className="overflow-x-auto pb-1">
-      <svg viewBox="0 0 1180 640" role="img" aria-label="Pipeline flow chart" width={1180} height={640} className="mx-auto block h-auto max-w-none">
+      <svg viewBox="0 0 1180 640" role="img" aria-label="Pipeline flow chart" className="mx-auto block h-auto w-full min-w-[760px] max-w-[1180px]">
         <defs>
           {([["m-off", "fill-border"], ["m-ok", "fill-ok"], ["m-run", "fill-run"], ["m-loop", "fill-loop"]] as const).map(([id, c]) => (
             <marker key={id} id={id} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" className={c} /></marker>

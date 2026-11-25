@@ -17,7 +17,7 @@ export function Jobs() {
     return { jobs: jobs.jobs, projects: ps.projects };
   }, 3000, [status, proj]);
   return (
-    <div className="grid gap-4">
+    <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
       <div className="flex gap-2">
         <Select value={status} onValueChange={setStatus}><SelectTrigger className="w-40" aria-label="status filter"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value={ALL}>any status</SelectItem>{["running", "queued", "waiting", "done", "failed", "cancelled"].map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>

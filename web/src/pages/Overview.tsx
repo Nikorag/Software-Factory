@@ -17,7 +17,7 @@ export function Overview() {
   if (!o) return <Skeleton className="h-64 w-full" />;
   const c = o.counts.byStatus, sys = o.system, sch = o.scheduler;
   return (
-    <div className="grid gap-4">
+    <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card><CardHeader><CardTitle className="text-sm">Jobs</CardTitle></CardHeader><CardContent className="grid grid-cols-5 gap-2">
           <Kpi label="running" v={c.running || 0} /><Kpi label="queued" v={c.queued || 0} /><Kpi label="waiting" v={c.waiting || 0} tone={c.waiting ? "text-loop" : ""} /><Kpi label="done" v={c.done || 0} tone="text-ok" /><Kpi label="failed" v={c.failed || 0} tone={c.failed ? "text-destructive" : ""} />
