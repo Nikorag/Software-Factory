@@ -64,6 +64,8 @@ export function loadConfig(configDir = defaultConfigDir()): LoadedConfig {
   const factory = readYaml(dir, "factory.yaml", FactoryConfig, false);
   const models = readYaml(dir, "models.yaml", ModelsConfig, true);
   const projectsFile = readYaml(dir, "projects.yaml", ProjectsFile, false);
+  // The default data dir follows FACTORY_HOME (a second install, or a test, must never share the real one).
+  if (process.env.FACTORY_HOME && factory.dataDir === "~/.software-factory") factory.dataDir = factoryHome();
   const dataDir = expandHome(factory.dataDir);
   const projects = ProjectsConfig.parse({
     projects: projectsFile.projects.map((p) => ({
