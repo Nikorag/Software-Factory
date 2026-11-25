@@ -266,14 +266,18 @@ program
 
 program
   .command("serve")
-  .description("Run the factory: scheduler (polls Linear, runs jobs) and the dashboard/API on loopback")
+  .alias("start") // `start` also opens the dashboard
+  .description("Run the factory: scheduler (polls Linear, runs jobs) and the dashboard/API on loopback. `start` = `serve --open`")
   .option("--no-scheduler", "dashboard and API only; do not poll Linear or run jobs")
   .option("--dry-run", "discover and plan only: skip every mutating stage")
-  .action(async (opts: { scheduler: boolean; dryRun?: boolean }) => {
+  .option("--open", "open the dashboard in your browser (the setup wizard on first run)")
+  .action(async (opts: { scheduler: boolean; dryRun?: boolean; open?: boolean }) => {
     const config = loadConfig();
     if (opts.dryRun) config.factory.dryRun = true;
     const svc = await startService(config, { scheduler: opts.scheduler });
-    console.log(`factory running on http://127.0.0.1:${svc.port}  (open it with: pnpm factory dashboard --open)`);
+    const url = `http://127.0.0.1:${svc.port}/${config.projects.projects.length === 0 ? "#/setup" : ""}`;
+    console.log(`factory running on ${url}`);
+    if ((opts.open || process.argv[2] === "start") && process.platform === "darwin") execFileSync("open", [url]);
     if (config.factory.dryRun) console.log("DRY RUN: nothing will be changed in repositories, Linear or GitHub");
     const shutdown = async () => { await svc.stop(); process.exit(0); };
     process.on("SIGINT", shutdown);
