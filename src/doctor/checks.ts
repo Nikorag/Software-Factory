@@ -47,6 +47,23 @@ export async function checkLocalModels(baseUrl: string, fetchImpl: typeof fetch 
   }
 }
 
+/** Each route that uses the local model must name a model the server really reports. */
+export async function checkLocalRoutes(config: LoadedConfig, fetchImpl: typeof fetch = fetch): Promise<CheckResult[]> {
+  const local = Object.entries(config.models.routes).filter(([, r]) => r.provider === "local");
+  if (local.length === 0) return [];
+  let ids: string[] = [];
+  try {
+    const res = await fetchImpl(`${config.models.local.baseUrl}/models`, { signal: AbortSignal.timeout(5000) });
+    ids = res.ok ? (((await res.json()) as { data?: { id: string }[] }).data ?? []).map((m) => m.id) : [];
+  } catch { /* reported by checkLocalModels */ }
+  return local.map(([task, r]) => {
+    if (/^UNCONFIGURED/i.test(r.model)) return { name: `route ${task}`, status: "warn" as const, detail: "local model id not configured in config/models.yaml" };
+    return ids.includes(r.model)
+      ? { name: `route ${task}`, status: "ok" as const, detail: `${r.model} is available` }
+      : { name: `route ${task}`, status: "fail" as const, detail: `${r.model} is not reported by the local server${ids.length ? ` (has: ${ids.join(", ")})` : ""}` };
+  });
+}
+
 /** Read-only: asks Linear who the key belongs to. Reports the account name, never the key. */
 export async function checkLinear(config: LoadedConfig, clientOverride?: LinearClient): Promise<CheckResult> {
   const key = process.env[config.linear.apiKeyEnv];
@@ -71,6 +88,7 @@ export async function runDoctor(config: LoadedConfig, fetchImpl: typeof fetch = 
     await tool("claude", "claude", ["--version"]),
     await tool("specify (SpecKit)", "specify", ["version"], false),
     ...(await checkLocalModels(config.models.local.baseUrl, fetchImpl)),
+    ...(await checkLocalRoutes(config, fetchImpl)),
   ];
   results.push(await checkLinear(config));
   return results;

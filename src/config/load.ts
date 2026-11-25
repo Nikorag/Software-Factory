@@ -68,6 +68,7 @@ export function loadConfig(configDir = process.env.FACTORY_CONFIG_DIR ?? "config
     if (ids.has(p.id)) throw new ConfigError(`projects.yaml: duplicate project id "${p.id}"`);
     ids.add(p.id);
     const repo = resolve(expandHome(p.repository));
+    if (repo === resolve(dir, "..")) throw new ConfigError(`projects.yaml: "${p.id}" is the factory's own repository; the factory must never modify itself through a job`);
     if (repos.has(repo)) throw new ConfigError(`projects.yaml: "${p.id}" and "${repos.get(repo)}" use the same repository (${repo}); repositories must never be shared`);
     repos.set(repo, p.id);
     if (p.linear) {

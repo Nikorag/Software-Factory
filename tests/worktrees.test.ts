@@ -168,7 +168,7 @@ describe("reconcile", () => {
 });
 
 describe("prepareWorkspace handler", () => {
-  const ctx = (job: ReturnType<typeof mkJob>) => ({ job: job as never, attempt: 1, signal: new AbortController().signal, dryRun: false, logger: pino({ level: "silent" }) });
+  const ctx = (job: ReturnType<typeof mkJob>) => ({ job: job as never, attempt: 1, executionId: 0, signal: new AbortController().signal, dryRun: false, logger: pino({ level: "silent" }) });
   it("returns ok with path/branch, and blocks (not retries) on ownership conflicts", async () => {
     const job = mkJob("j1", "ENG-1", "lin-1");
     const handler = prepareWorkspace(wt);

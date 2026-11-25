@@ -1,0 +1,69 @@
+import { join } from "node:path";
+import { eq } from "drizzle-orm";
+import type { FactoryDb } from "../db/client.js";
+import { agentInvocations, decisions } from "../db/schema.js";
+import { git as realGit, type GitFn } from "../repo/git.js";
+import { findProtectedChanges } from "./guard.js";
+import { ROLE_PROFILE, rolePrompt } from "./roles.js";
+import type { ModelRouter, Route, TaskKind } from "./router.js";
+import type { AgentResult, AgentRole } from "./types.js";
+
+export interface RunStep {
+  jobId: string;
+  executionId?: number;
+  task: TaskKind;
+  role: AgentRole;
+  prompt: string;
+  cwd: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  baseRef?: string; // enables the protected-path diff check for tool-using roles
+  bashAllow?: string[];
+  jsonSchema?: Record<string, unknown>;
+  resumeSessionId?: string;
+}
+
+/**
+ * The single entry point stage handlers use to run an agent. It fixes the permission profile from the role,
+ * records the invocation, and independently verifies afterwards that the agent respected its boundaries.
+ */
+export class AgentRunner {
+  constructor(private readonly d: { db: FactoryDb; router: ModelRouter; logDir: string; protectedPaths: string[]; git?: GitFn }) {}
+
+  async run(step: RunStep): Promise<AgentResult & { route: Route; violations: string[] }> {
+    const { db, router } = this.d;
+    const git = this.d.git ?? realGit;
+    const profile = ROLE_PROFILE[step.role];
+    const route = router.route(step.task); // fail on bad config before recording anything
+    const logFile = join(this.d.logDir, step.jobId, `${Date.now()}-${step.role}.log`);
+    const row = db.insert(agentInvocations).values({
+      jobId: step.jobId, stageExecutionId: step.executionId ?? null, agent: `${route.provider}/${step.role}`, model: route.model, cwd: step.cwd, logPath: logFile,
+    }).returning({ id: agentInvocations.id }).get();
+
+    const before = profile === "read-only" && route.provider === "anthropic" ? await git(step.cwd, ["status", "--porcelain", "--untracked-files=all"]).catch(() => null) : null;
+    const result = await router.run(step.task, {
+      role: step.role, profile, prompt: step.prompt, cwd: step.cwd, timeoutMs: step.timeoutMs, signal: step.signal,
+      systemPrompt: rolePrompt(step.role), protectedPaths: this.d.protectedPaths, bashAllow: step.bashAllow,
+      jsonSchema: step.jsonSchema, resumeSessionId: step.resumeSessionId, persistSession: profile === "implementer", logFile,
+    });
+
+    const violations: string[] = [];
+    if (profile !== "read-only" && step.baseRef) {
+      violations.push(...(await findProtectedChanges(step.cwd, step.baseRef, this.d.protectedPaths, git)).map((f) => `protected path changed: ${f}`));
+    }
+    if (before !== null) {
+      const after = await git(step.cwd, ["status", "--porcelain", "--untracked-files=all"]).catch(() => null);
+      if (after !== null && after !== before) violations.push("read-only agent modified the worktree");
+    }
+    if (violations.length) {
+      db.insert(decisions).values({ jobId: step.jobId, kind: "agent.violation", decision: `${step.role}: ${violations.join("; ")}`, rationale: logFile, actor: "factory" }).run();
+    }
+    db.update(agentInvocations).set({
+      exitCode: result.exitCode, durationMs: result.durationMs,
+      usageJson: JSON.stringify({ costUsd: result.costUsd, sessionId: result.sessionId, numTurns: result.numTurns, failure: result.failure, denials: result.denials.length, violations: violations.length, usage: result.usage }),
+    }).where(eq(agentInvocations.id, row.id)).run();
+
+    if (violations.length) return { ...result, ok: false, failure: "error", error: `boundary violation: ${violations.join("; ")}`, violations };
+    return { ...result, violations };
+  }
+}

@@ -16,8 +16,9 @@ export const FactoryConfig = z.object({
   maxRemediationAttempts: z.number().int().min(0).max(10).default(3),
   maxConcurrentJobs: z.number().int().min(1).default(1),
   pollIntervalSeconds: z.number().int().min(10).default(60),
-  // Paths agents may never write to, regardless of project (factory self-protection).
-  protectedPaths: z.array(z.string()).default(["config/**", ".env*", "**/*.pem", "**/secrets/**"]),
+  // Paths agents may never write to in any project. Enforced twice: as permission denies given to Claude Code,
+  // and by verifying the worktree diff after every agent run. (The factory itself can never be a project: see loadConfig.)
+  protectedPaths: z.array(z.string()).default([".git/**", ".env", ".env.*", "**/*.pem", "**/*.key", "**/id_rsa*", "**/id_ed25519*", "**/secrets/**", ".github/workflows/**"]),
 });
 export type FactoryConfig = z.infer<typeof FactoryConfig>;
 
@@ -28,7 +29,8 @@ const ModelRoute = z.object({
   // (see `factory doctor`); for `anthropic` it is passed to Claude Code via --model.
   model: z.string().min(1),
 });
-export const ModelsConfig = z.object({
+export const ModelsConfig = z
+  .object({
   local: z
     .object({
       // Bionic is LM Studio-derived but its API is unverified; the adapter assumes
@@ -45,7 +47,10 @@ export const ModelsConfig = z.object({
     independent_review: ModelRoute,
     final_review: ModelRoute,
   }),
-});
+  })
+  .refine((m) => m.routes.implementation.provider === "anthropic" && m.routes.specification.provider === "anthropic", {
+    message: "specification and implementation need file and shell tools, so they must use provider `anthropic` (Claude Code)",
+  });
 export type ModelsConfig = z.infer<typeof ModelsConfig>;
 
 export const ProjectConfig = z.object({

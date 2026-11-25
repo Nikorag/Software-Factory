@@ -4,9 +4,9 @@ A local-first, standalone TypeScript orchestrator that turns Linear tickets into
 using Claude Code as the engineering agent, GitHub SpecKit for specifications, and a local model (via Bionic)
 for independent review. See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Status: Milestones 1–4 complete.** Config, logging, SQLite schema, doctor, loopback service skeleton, and the
+**Status: Milestones 1–5 complete.** Config, logging, SQLite schema, doctor, loopback service skeleton, and the
 durable job engine (state machine, retries, remediation cap, cancellation, crash recovery, dry-run, pause and
-emergency stop), plus the project registry, read-only repository validation and isolated git worktrees, and Linear discovery with a durable write-back outbox. Real stage handlers, integrations and the dashboard are not built yet.
+emergency stop), plus the project registry, read-only repository validation and isolated git worktrees, Linear discovery with a durable write-back outbox, and the Claude Code and local-model adapters with enforced permission profiles. Real stage handlers, integrations and the dashboard are not built yet.
 Try `pnpm factory simulate` (in-memory, no side effects).
 
 ## Quick start

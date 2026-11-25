@@ -11,6 +11,7 @@ import { isMutating, nextStage, remediationTarget, statusForStage } from "./work
 export interface StageContext {
   job: JobRow;
   attempt: number;
+  executionId: number; // the stage_executions row for this attempt (links agent invocations to it)
   signal: AbortSignal; // aborted on timeout, cancel, emergency stop or lease loss
   dryRun: boolean;
   logger: Logger;
@@ -141,7 +142,7 @@ export class Engine {
     try {
       const aborted = new Promise<never>((_, rej) => ac.signal.addEventListener("abort", () => rej(new Error(`aborted: ${reason}`)), { once: true }));
       aborted.catch(() => {}); // avoid unhandled rejection when the handler wins the race
-      result = await Promise.race([handler({ job, attempt, signal: ac.signal, dryRun, logger: log }), aborted]);
+      result = await Promise.race([handler({ job, attempt, executionId: execId, signal: ac.signal, dryRun, logger: log }), aborted]);
     } catch (e) {
       result = { kind: "retry", reason: e instanceof Error ? e.message : String(e) };
     } finally {

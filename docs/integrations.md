@@ -24,3 +24,20 @@ Each Linear project maps to its own repository: `linear: { teamKey: JAM, project
 
 ## GitHub plan limits (important)
 On a free GitHub plan, **private repositories cannot use branch protection or rulesets** (the API answers 403 "Upgrade to GitHub Pro or make this repository public"). The factory reports this as `protection: unavailable` (distinct from `unprotected` and `unknown`). Such a project can run in `supervised` mode, but `autonomy: full` will not auto-merge until one of: upgrade the plan, make the repo public, or an explicit decision to accept factory-side enforcement of required checks (not implemented; would be recorded as an ADR).
+
+## Claude Code (Milestone 5)
+Verified by running the installed CLI (2.1.332), not assumed. Adapter: `src/agents/claude.ts`.
+- **Invocation:** `claude -p --output-format json --permission-mode dontAsk --setting-sources "" --strict-mcp-config --tools … --allowedTools … --disallowedTools …`, prompt on **stdin** (never argv), cwd = the job worktree. Result JSON provides `result`, `structured_output` (with `--json-schema`), `session_id`, `total_cost_usd`, `usage`, `num_turns`, `permission_denials`, `is_error`, `api_error_status`. All of it is recorded in `agent_invocations`.
+- **Auth:** the normal subscription login. `--bare` is deliberately *not* used: it never reads OAuth/keychain. The child environment is an allowlist (`src/agents/env.ts`), so `ANTHROPIC_API_KEY` (which would switch to metered billing), `GH_TOKEN`, `LINEAR_API_KEY`, cloud credentials and `SSH_AUTH_SOCK` never reach an agent.
+- **Settings isolation:** `--setting-sources ""` ignores user/project settings files, so permissions are defined by the factory, not by a repository an attacker may control. Role prompts come from this repo's `agents/*.md`, not from the target repo.
+- **Process control:** the child runs in its own process group; timeout and cancellation (SIGTERM, then SIGKILL after a grace period) kill the whole tree. Output is captured to a per-invocation log under `<dataDir>/logs/agents/`.
+- **Failure classes:** `auth`, `rate_limited` (subscription limits), `transient`, `timeout`, `cancelled`, `invalid_output`, `error`. Transient ones are retryable by the engine; auth and invalid output are not.
+- **Resuming:** implementer sessions are persisted (`--resume <session_id>` for remediation); reviewers use `--no-session-persistence`.
+
+### Permission model (each rule verified with real calls; see `tests/live/`)
+Run `FACTORY_LIVE=1 pnpm vitest run tests/live` to re-verify against an upgraded CLI (uses a little subscription quota).
+- A **deny beats a broad allow**. Path scoping uses `Edit(<glob>)`, which governs both the Edit and Write tools. (`Write(<glob>)` does not work.) Bare `Write`/`Edit` allows are what enable those tools.
+- `Bash(git:*)` allowed with `Bash(git push:*)` denied permits other git commands and refuses push.
+- **Never grant bare `Read`/`Grep`/`Glob`.** With no rule they are confined to the worktree; a bare allow lets an agent read any file the user can. (A live test caught this mistake; there is a regression test.) Bash built-ins such as `cat`/`ls`/`grep` are also refused outside the worktree.
+- Profiles (`src/agents/permissions.ts`): `read-only` (reviewers/analysts/classifier), `spec-writer` (may only edit `specs/**` and `.specify/**`), `implementer` (edit + `git add/commit` + the project's test/lint commands; denied: push, fetch, pull, checkout/switch/branch/reset, config, remote, worktree, `gh`, curl/wget/ssh/scp, sudo, `rm -rf`, publish, docker, and edits to every protected path). A role maps to exactly one profile (`src/agents/roles.ts`); there is no per-call override.
+- **Independent verification** (`AgentRunner`): after every run the factory checks the worktree itself. Any change (committed, staged, modified, untracked or renamed-away) matching `protectedPaths` fails the run and records an `agent.violation` decision; a read-only agent that altered the worktree fails the same way. Correctness does not depend on Claude Code's permission system alone.
