@@ -22,9 +22,9 @@ async function api(path, opts) {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
   return res;
 }
-async function post(path) {
+async function post(path, body) {
   if (!token) { alert("Controls need the control token. Open the dashboard with: pnpm factory dashboard --open"); return null; }
-  try { return await (await api(path, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: "{}" })).json(); }
+  try { return await (await api(path, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })).json(); }
   catch (e) { alert(`Failed: ${e.message}`); return null; }
 }
 
@@ -75,6 +75,12 @@ async function jobs() {
   return h("div", {}, h("div", { class: "row" }, sel("any status", ["running", "queued", "waiting", "done", "failed", "cancelled"], status, "f-status"), sel("any project", ps.projects.map((p) => p.id), proj, "f-proj")), jobTable(list.jobs));
 }
 
+function answerBox(j) {
+  const ta = h("textarea", { rows: "5", style: "width:100%", placeholder: "Your answer to the questions above. It is given to the agent as authoritative, then the job resumes." });
+  return h("div", {}, h("h3", {}, "Answer & resume"), ta,
+    h("div", { class: "row" }, h("button", { on: { click: async () => { if (ta.value.trim() && await post(`/api/jobs/${j.id}/answer`, { answer: ta.value })) render(); } } }, "Answer & resume")));
+}
+
 async function jobDetail(id) {
   const d = await (await api(`/api/jobs/${encodeURIComponent(id)}`)).json(); const j = d.job;
   const ran = new Set(d.executions.filter((e) => e.outcome === "succeeded").map((e) => e.stage));
@@ -92,6 +98,7 @@ async function jobDetail(id) {
     j.lastError ? h("div", { class: "err" }, j.lastError) : null,
     h("div", { class: "stages" }, d.stageOrder.map((s) => h("span", { class: `stage ${s === at ? (held ? "held" : "now") : ran.has(s) ? "done" : ""}`, title: s }, s.replaceAll("_", " ").toLowerCase()))),
     held ? h("div", { class: "muted" }, `Held at ${j.stage}${j.heldFromStage ? ` (was ${j.heldFromStage})` : ""}. Retry resumes there.`) : null,
+    held && j.stage !== "CANCELLED" ? answerBox(j) : null,
     h("h3", {}, "Stage history"),
     h("table", {}, h("thead", {}, h("tr", {}, ["Stage", "#", "Outcome", "Took", "Detail"].map((c) => h("th", {}, c)))),
       h("tbody", {}, d.executions.map((e) => h("tr", {}, h("td", { class: "mono" }, e.stage), h("td", {}, e.attempt), h("td", { class: cls(e.outcome) }, e.outcome), h("td", {}, e.finishedAt ? dur(e.finishedAt - e.startedAt) : "…"), h("td", { class: e.error ? "err" : "muted" }, (e.error || "").slice(0, 200)))))),

@@ -83,13 +83,13 @@ export function cancelJob(db: FactoryDb, id: string, actor: string): JobRow {
 }
 
 /** Manually retry a failed/held job from the stage it stopped at, with fresh attempt counters. */
-export function retryJob(db: FactoryDb, id: string, actor: string): JobRow {
+export function retryJob(db: FactoryDb, id: string, actor: string, resumeAt?: StageName): JobRow {
   return db.transaction((tx) => {
     const job = tx.select().from(jobs).where(eq(jobs.id, id)).get();
     if (!job) throw new JobError(`no such job ${id}`);
     const held = ["BLOCKED", "FAILED", "NEEDS_ATTENTION", "PAUSED", "CANCELLED"].includes(job.stage);
     if (!held) throw new JobError(`job is not retryable (stage ${job.stage}, status ${job.status})`);
-    const resume = (job.heldFromStage ?? "DISCOVERED") as StageName;
+    const resume = resumeAt ?? ((job.heldFromStage ?? "DISCOVERED") as StageName);
     try {
       tx.update(jobs).set({ stage: resume, status: "queued", heldFromStage: null, stageAttempts: 0, remediationAttempts: 0, cancelRequested: false, lastError: null, notBefore: null, updatedAt: new Date() })
         .where(eq(jobs.id, id)).run();
@@ -99,4 +99,25 @@ export function retryJob(db: FactoryDb, id: string, actor: string): JobRow {
     tx.insert(decisions).values({ jobId: id, kind: "job.retry", decision: `resume at ${resume}`, actor }).run();
     return tx.select().from(jobs).where(eq(jobs.id, id)).get()!;
   });
+}
+
+/**
+ * A human's answer to a held job. Recorded durably, then the job resumes. Answers to the specification's own
+ * open questions resume at remediation (so the spec-writer actually applies them); re-validating the same
+ * spec would just block on the same questions again.
+ */
+export function answerJob(db: FactoryDb, id: string, text: string, actor: string): JobRow {
+  const answer = text.trim();
+  if (!answer) throw new JobError("an answer cannot be empty");
+  if (answer.length > 8000) throw new JobError("answer too long (max 8000 characters)");
+  const job = getJob(db, id);
+  if (!job) throw new JobError(`no such job ${id}`);
+  const resumeAt = job.heldFromStage === "SPECIFICATION_VALIDATION" ? "SPECIFICATION_REMEDIATION" as StageName : undefined;
+  const retried = retryJob(db, id, actor, resumeAt);
+  db.insert(decisions).values({ jobId: id, kind: "human.answer", decision: `answered while held at ${job.heldFromStage ?? job.stage}`, rationale: answer, actor }).run();
+  return retried;
+}
+
+export function humanAnswers(db: FactoryDb, jobId: string): string[] {
+  return db.select().from(decisions).where(and(eq(decisions.jobId, jobId), eq(decisions.kind, "human.answer"))).orderBy(asc(decisions.id)).all().map((r) => r.rationale ?? "");
 }

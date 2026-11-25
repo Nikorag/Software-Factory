@@ -13,6 +13,10 @@ import type { GitFn } from "../repo/git.js";
 import { WorktreeError, type WorktreeInfo, type WorktreeManager } from "../repo/worktrees.js";
 import { featureDirFor } from "../speckit/artifacts.js";
 import { ticketBlock } from "../speckit/prompts.js";
+import { humanAnswers } from "../core/jobs.js";
+
+const withAnswers = (ticket: string, answers: string[]) =>
+  answers.length ? `${ticket}\n\nAnswers from the human to your open questions (authoritative, apply them):\n${answers.map((a, i) => `${i + 1}. ${a}`).join("\n")}` : ticket;
 import { toJsonSchema } from "../speckit/schemas.js";
 
 export interface StageKitDeps {
@@ -65,7 +69,7 @@ export function createStageKit(d: StageKitDeps) {
       if (e instanceof LinearApiError && !e.retryable) return { ok: false, stop: { kind: "blocked", reason: `cannot read the Linear issue: ${e.message}` } };
       throw e;
     }
-    return { ok: true, info, issue, ticket: ticketBlock(issue), featureDir: featureDirFor(job.externalKey, issue.title), cwd: info.path };
+    return { ok: true, info, issue, ticket: withAnswers(ticketBlock(issue), humanAnswers(d.db, job.id)), featureDir: featureDirFor(job.externalKey, issue.title), cwd: info.path };
   }
 
   const record = (jobId: string, kind: string, decision: string, rationale?: string) =>

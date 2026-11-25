@@ -9,7 +9,7 @@ import type { FactoryDb } from "../db/client.js";
 import { agentInvocations, artifacts, decisions, jobs, linearOutbox, projects, stageExecutions, worktrees } from "../db/schema.js";
 import * as control from "../core/control.js";
 import type { Engine } from "../core/engine.js";
-import { cancelJob, JobError, retryJob } from "../core/jobs.js";
+import { answerJob, cancelJob, JobError, retryJob } from "../core/jobs.js";
 import type { Scheduler } from "../service/scheduler.js";
 import { counts, systemInfo, type HealthChecker } from "../service/metrics.js";
 
@@ -142,6 +142,10 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/cancel", { preHandler: requireToken }, async (req, reply) => {
     try { const j = cancelJob(db, req.params.id, actor); d.engine?.abortJob(req.params.id, "cancel"); return { ok: true, job: jobRow(j) }; }
+    catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
+  });
+  app.post<{ Params: { id: string }; Body: { answer?: unknown } }>("/api/jobs/:id/answer", { preHandler: requireToken }, async (req, reply) => {
+    try { return { ok: true, job: jobRow(answerJob(db, req.params.id, typeof req.body?.answer === "string" ? req.body.answer : "", actor)) }; }
     catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
   });
   app.post<{ Params: { id: string } }>("/api/jobs/:id/retry", { preHandler: requireToken }, async (req, reply) => {
