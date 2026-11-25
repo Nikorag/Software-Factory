@@ -43,11 +43,15 @@ export async function commitPaths(cwd: string, paths: string[], message: string,
 }
 
 /** Never sweep dependency or build output into a commit, even in a repo that forgot to gitignore it. */
-const NEVER_COMMIT = [":(exclude)node_modules", ":(exclude).pnpm-store", ":(exclude).DS_Store", ":(exclude)**/node_modules"];
+const NEVER_COMMIT = /(^|\/)(node_modules|\.pnpm-store)(\/|$)|(^|\/)\.DS_Store$/;
 
 /** Commits whatever is left in the worktree (e.g. tasks ticked by an agent) as the factory. Returns whether a commit was made. */
 export async function commitAll(cwd: string, message: string, git: GitFn = realGit): Promise<boolean> {
-  await git(cwd, ["add", "-A", "--", ".", ...NEVER_COMMIT]);
+  // Not `:(exclude)node_modules` pathspecs: when node_modules exists and is gitignored (the usual case), git refuses the whole
+  // `add` ("The following paths are ignored"). Stage normally, then unstage anything that must never be committed.
+  await git(cwd, ["add", "-A", "--", "."]);
+  const never = (await git(cwd, ["diff", "--cached", "--name-only", "-z"])).split("\0").filter((f) => f && NEVER_COMMIT.test(f));
+  for (let i = 0; i < never.length; i += 200) await git(cwd, ["reset", "-q", "--", ...never.slice(i, i + 200)]);
   if (!(await git(cwd, ["diff", "--cached", "--name-only"]))) return false;
   await git(cwd, ["-c", "commit.gpgsign=false", "commit", "-q", "-m", message], { env: IDENT_ENV });
   return true;
