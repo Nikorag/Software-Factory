@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { OctagonAlert, Pause, Play, ShieldOff } from "lucide-react";
+import { ArrowUpCircle, OctagonAlert, Pause, Play, ShieldOff, X } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api, post } from "@/lib/api";
-import type { Overview } from "@/lib/types";
+import type { Overview, UpdateInfo } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +15,10 @@ const NAV = [["/", "Overview"], ["/jobs", "Jobs"], ["/projects", "Projects"], ["
 export function Shell() {
   const { data: o, error, reload } = usePoll(() => api<Overview>("/api/overview"), 3000);
   const [msg, setMsg] = useState<string | null>(null);
+  const { data: upd } = usePoll(() => api<UpdateInfo>("/api/update"), 30 * 60_000);
+  const [hidden, setHidden] = useState<string | null>(() => { try { return localStorage.getItem("dismissed-update"); } catch { return null; } });
+  const showUpdate = upd?.available && upd.latest && hidden !== upd.latest;
+  const dismiss = () => { setHidden(upd?.latest ?? null); try { if (upd?.latest) localStorage.setItem("dismissed-update", upd.latest); } catch { /* remembered for this tab only */ } };
   const act = async (name: string) => { const err = await post(`/api/control/${name}`); setMsg(err); if (!err) void reload(); };
   const stop = o?.control.emergencyStop, paused = o?.control.paused;
   return (
@@ -42,6 +46,11 @@ export function Shell() {
           <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) => cn("-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors", isActive ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>{label}</NavLink>
         ))}
       </nav>
+      {showUpdate ? (
+        <Alert role="status"><ArrowUpCircle /><AlertDescription className="flex flex-wrap items-center gap-x-2">
+          <span><b>Update available:</b> {upd!.current} → {upd!.latest}.</span><span>Run <code className="rounded bg-muted px-1.5 py-0.5 text-xs">software-factory update</code> in a terminal, then restart the factory (wait for a quiet moment: a restart redoes any stage in progress).</span>
+          <Button variant="ghost" size="sm" className="ml-auto" onClick={dismiss} aria-label="dismiss update notice"><X /></Button></AlertDescription></Alert>
+      ) : null}
       {stop ? <Alert variant="destructive" role="alert"><OctagonAlert /><AlertDescription>Emergency stop is active{o?.control.reason ? `: ${o.control.reason}` : ""}. No new work starts and running agents were terminated.</AlertDescription></Alert> : null}
       {msg ? <Alert variant="destructive" role="alert"><AlertDescription>{msg}</AlertDescription></Alert> : null}
       {error && !o ? <Alert variant="destructive"><AlertDescription>Cannot load: {error}</AlertDescription></Alert> : null}

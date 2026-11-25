@@ -23,6 +23,7 @@ export interface ApiDeps {
   health?: HealthChecker;
   dataDir?: string;
   /** Settings UI + setup wizard. Absent in tests that do not exercise them. */
+  updates?: { status(): Promise<import("../service/versions.js").UpdateStatus> };
   settings?: Omit<import("./settings-routes.js").SettingsDeps, "db" | "config">;
 }
 
@@ -125,6 +126,8 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
       }),
     };
   });
+
+  app.get("/api/update", async () => (await d.updates?.status()) ?? { current: null, latest: null, available: false, checkedAt: null });
 
   app.get("/api/health", async () => ({ system: await systemInfo(d.dataDir ?? "."), health: (await d.health?.check()) ?? [], scheduler: d.scheduler?.status() ?? null }));
 

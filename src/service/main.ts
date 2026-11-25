@@ -19,6 +19,7 @@ import { createLinearClient } from "../linear/client.js";
 import { createProjectActions } from "./actions.js";
 import { resolveSecret, saveSecret } from "./secrets.js";
 import { TaskManager } from "./tasks.js";
+import { UpdateChecker } from "./versions.js";
 
 const run = promisify(execFile);
 
@@ -61,7 +62,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     tasks: new TaskManager(), actions: createProjectActions(ctx), linear: () => ctx.linear(), linearKeyPresent: () => Boolean(resolveSecret(keySrc)),
     saveLinearKey: async (key: string) => { const me = await createLinearClient({ apiKey: key }).viewer(); saveSecret(keySrc, key); return { name: me.name }; },
   };
-  const app = buildServer({ db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings });
+  const app = buildServer({ db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, updates: new UpdateChecker() });
   try {
     await app.listen({ host: config.factory.server.host, port });
   } catch (e) { lock.release(); throw e; }

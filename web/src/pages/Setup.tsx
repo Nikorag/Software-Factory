@@ -4,7 +4,7 @@ import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checks, LinearSetup } from "@/components/Integrations";
-import { ProjectForm } from "@/components/ProjectForm";
+import { ProjectEditor } from "@/components/ProjectEditor";
 import { api } from "@/lib/api";
 import type { Project, SetupInfo, TeamAudit } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
@@ -39,7 +39,8 @@ export function Setup() {
         <Card><CardHeader><CardTitle>Add your first project</CardTitle><CardDescription>Link a GitHub repository to a Linear project and tell the factory how to run its tests. You can add more later in Settings.</CardDescription></CardHeader>
           <CardContent className="grid gap-4">
             {projects.map((p) => <div key={p.id} className="flex items-center gap-2 rounded-md border p-3 text-sm"><Check className="size-4 text-ok" /><b>{p.name}</b><span className="text-muted-foreground">{p.githubRepo || p.repository}</span></div>)}
-            <div><Button variant={projects.length ? "outline" : "default"} onClick={() => setOpen(true)}>{projects.length ? "Add another" : "Add a project"}</Button></div>
+            {open ? <div className="rounded-md border p-4"><ProjectEditor project={null} teams={teams} onSaved={() => { setOpen(false); void reload(); void reloadInfo(); }} /></div>
+              : <div><Button variant={projects.length ? "outline" : "default"} onClick={() => setOpen(true)}>{projects.length ? "Add another" : "Add a project"}</Button></div>}
             <div className="flex gap-2"><Button variant="outline" onClick={() => setStep(1)}>Back</Button>{next(projects.length > 0)}</div>
           </CardContent></Card>
       ) : null}
@@ -51,7 +52,6 @@ export function Setup() {
             <div><Button asChild><Link to="/settings">Go to Settings</Link></Button> <Button variant="outline" asChild><Link to="/">Open the dashboard</Link></Button></div>
           </CardContent></Card>
       ) : null}
-      <ProjectForm open={open} onOpenChange={setOpen} project={null} teams={teams} onSaved={() => { void reload(); void reloadInfo(); }} />
     </div>
   );
 }

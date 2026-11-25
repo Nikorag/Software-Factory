@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -135,34 +135,86 @@ const proj = { id: "my-app", name: "My App", enabled: true, autonomy: "supervise
 const setupInfo = { configDir: null, homeConfigDir: "~/.software-factory/config", usingDefaults: true, projectCount: 1, linear: { keyPresent: true, env: "LINEAR_API_KEY", keychainService: "svc" } };
 
 describe("settings and setup", () => {
-  it("lists projects with their test commands and warns about one with none", async () => {
-    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj, { ...proj, id: "bare", name: "Bare", commands: {} }] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] } };
+  it("shows projects in a list on the left and the selected one in a full editor", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj, { ...proj, id: "bare", name: "Bare", githubRepo: "me/bare", commands: {} }] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] } };
     app("/settings");
-    expect(await screen.findByText("My App")).toBeInTheDocument();
-    expect(screen.getByText("npm test")).toBeInTheDocument();
-    expect(screen.getByText(/No test command: the factory will not implement/)).toBeInTheDocument();
+    const nav = await screen.findByRole("navigation", { name: "Projects" });
+    expect(within(nav).getByRole("button", { name: /My App/ })).toHaveAttribute("aria-current", "true"); // first one selected
+    expect(within(nav).getByLabelText("no test command")).toBeInTheDocument();                           // the one without tests is flagged in the list
+    expect(await screen.findByLabelText(/^test$/i)).toHaveValue("npm test");
+    await userEvent.click(within(nav).getByRole("button", { name: /Bare/ }));
+    expect(await screen.findByText(/No test command: the factory will not implement/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toHaveValue("Bare");
   });
-  it("adds a project: sends exactly what was typed, no token, and shows the server's validation error", async () => {
+  it("adds a project from the list's Add button: sends exactly what was typed, no token", async () => {
     routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/projects/new-thing": { ok: true } };
     app("/settings");
-    await userEvent.click(await screen.findByRole("button", { name: /Add project/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Add project" }));
+    expect(await screen.findByText("New project")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create project" })).toBeDisabled();
     await userEvent.type(screen.getByLabelText("Name"), "New Thing");
     await userEvent.type(screen.getByLabelText("GitHub repo"), "me/new-thing");
     await userEvent.type(screen.getByLabelText(/^test$/i), "npm test");
-    await userEvent.click(screen.getByRole("button", { name: "Add project" }));
+    await userEvent.click(screen.getByRole("button", { name: "Create project" }));
     await waitFor(() => expect(calls.find((c) => c.method === "PUT")?.url).toBe("/api/settings/projects/new-thing"));
     const put = calls.find((c) => c.method === "PUT")!;
     expect(JSON.parse(put.body!)).toMatchObject({ name: "New Thing", github: { repo: "me/new-thing" }, commands: { test: "npm test" }, autonomy: "supervised" });
     expect(put.headers).toMatchObject({ "X-Factory-UI": "1" });
     expect(put.headers?.Authorization).toBeUndefined();
   });
-  it("runs a project action and streams its output", async () => {
+  it("shows the server's validation error in the editor and keeps what was typed", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] } }; // PUT -> 404 => error
+    app("/settings");
+    await userEvent.click(await screen.findByRole("button", { name: "Add project" }));
+    await userEvent.type(screen.getByLabelText("Name"), "Dup");
+    await userEvent.click(screen.getByRole("button", { name: "Create project" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toHaveValue("Dup");
+  });
+  it("asks before discarding unsaved edits when switching project", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj, { ...proj, id: "bare", name: "Bare", githubRepo: "me/bare", commands: {} }] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] } };
+    app("/settings");
+    const nav = await screen.findByRole("navigation", { name: "Projects" });
+    await userEvent.type(await screen.findByLabelText("Name"), " edited");
+    await userEvent.click(within(nav).getByRole("button", { name: /Bare/ }));
+    expect(await screen.findByText("Discard unsaved changes?")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByLabelText("Name")).toHaveValue("My App edited");
+    await userEvent.click(within(nav).getByRole("button", { name: /Bare/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Discard" }));
+    expect(await screen.findByDisplayValue("Bare")).toBeInTheDocument();
+  });
+  it("runs a project action from the editor and streams its output", async () => {
     routes = { "/api/overview": overview(), "/api/projects": { projects: [proj] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] },
       "/api/projects/my-app/actions/check": { ok: true, taskId: "t1" }, "/api/tasks/t1": { id: "t1", label: "Run checks: my-app", status: "ok", lines: ["✓ test (3s): npm test"] } };
     app("/settings");
     await userEvent.click(await screen.findByRole("button", { name: "Run checks" }));
     expect(await screen.findByText(/✓ test \(3s\): npm test/)).toBeInTheDocument();
     expect(screen.getByText(/Run checks: my-app: done/)).toBeInTheDocument();
+  });
+  it("shows an update notice with the command to run, and remembers a dismissal per version", async () => {
+    localStorage.clear();
+    routes = { "/api/overview": overview(), "/api/update": { current: "v0.1.0", latest: "v0.1.1", available: true, checkedAt: 1 } };
+    app("/");
+    expect(await screen.findByText(/Update available:/)).toBeInTheDocument();
+    expect(screen.getByText("software-factory update")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "dismiss update notice" }));
+    expect(screen.queryByText(/Update available:/)).toBeNull();
+    cleanup();
+    app("/");
+    await screen.findByText("RUNNING");
+    expect(screen.queryByText(/Update available:/)).toBeNull();           // still dismissed for v0.1.1
+    cleanup();
+    routes = { ...routes, "/api/update": { current: "v0.1.0", latest: "v0.2.0", available: true, checkedAt: 1 } };
+    app("/");
+    expect(await screen.findByText(/Update available:/)).toBeInTheDocument(); // a newer release shows again
+  });
+  it("shows no update notice when up to date", async () => {
+    localStorage.clear();
+    routes = { "/api/overview": overview(), "/api/update": { current: "v0.1.1", latest: "v0.1.1", available: false, checkedAt: 1 } };
+    app("/");
+    await screen.findByText("RUNNING");
+    expect(screen.queryByText(/Update available:/)).toBeNull();
   });
   it("the wizard only lets you continue from Linear once a key exists, and shows each step's real status", async () => {
     routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": { ...setupInfo, projectCount: 0, linear: { ...setupInfo.linear, keyPresent: false } }, "/api/setup/linear": { teams: [] },

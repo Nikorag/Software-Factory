@@ -36,3 +36,4 @@ export interface HealthReport { system: SystemInfo; health: Health[]; scheduler:
 export interface SetupInfo { configDir: string | null; homeConfigDir: string; usingDefaults: boolean; projectCount: number; linear: { keyPresent: boolean; env: string; keychainService: string | null } }
 export interface TeamAudit { key: string; name: string; projects: string[]; audit: { ok: boolean; statuses: { name: string; required: boolean }[]; labels: { name: string; required: boolean }[] } }
 export interface TaskState { id: string; label: string; status: "running" | "ok" | "failed"; lines: string[] }
+export interface UpdateInfo { current: string | null; latest: string | null; available: boolean; checkedAt: number | null }
