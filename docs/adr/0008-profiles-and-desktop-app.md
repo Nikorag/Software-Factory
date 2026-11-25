@@ -11,3 +11,5 @@
 *Why a separate `shutdown` command?* `stop` already exists and means emergency stop (terminate running agents, pause).
 
 **Name and icon.** Run from `node_modules`, Electron shows as "Electron" with its own icon in the Dock and menu bar, because both come from the app bundle. `src/service/branding.ts` gives the local copy the name "Software Factory" and the factory icon (Info.plist, a generated .icns, an ad-hoc re-signature, originals kept and restored on failure). It runs once at launch and only on macOS.
+
+**Menu bar icon.** Closing the window no longer quits the app: it hides the Dock icon and leaves a menu bar icon (a monochrome template image, so macOS tints it for light and dark) showing how many jobs are running (or how many wait for a person), with a menu to reopen the window on any profile, start the profiles, check for updates, quit the app, or stop the factory and quit. A second `software-factory` brings the window back from the menu bar. The app only ever reads the profiles' status for this; it does not control the factory.

@@ -1,6 +1,7 @@
 // The Software Factory desktop app: a window onto a profile's dashboard. It is deliberately thin: the factory itself runs as a
 // background service (started by `software-factory start`) and keeps working when this window is closed.
-const { app, BrowserWindow, Menu, shell, dialog, session, nativeImage } = require("electron");
+const { app, BrowserWindow, Menu, Tray, shell, dialog, session, nativeImage } = require("electron");
+const { summarise } = require("./tray-model.cjs");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -9,6 +10,9 @@ const { spawn } = require("node:child_process");
 const ROOT = process.env.FACTORY_ROOT || path.join(os.homedir(), ".software-factory");
 const ICON = path.join(__dirname, "icon.png");
 const SMOKE = process.env.FACTORY_DESKTOP_SMOKE === "1";
+const SMOKE_TRAY = process.env.FACTORY_DESKTOP_SMOKE_TRAY === "1"; // test hook: close the window, prove the menu bar icon keeps the app alive, reopen it
+let tray = null;
+let quitting = false;
 
 app.setName("Software Factory"); // before ready: menus, the About panel and window titles use this
 app.setAboutPanelOptions({ applicationName: "Software Factory", applicationVersion: require("../package.json").version, copyright: "Runs on your machine. It never merges: you do." });
@@ -21,6 +25,9 @@ const profileArg = (argv) => { const i = argv.indexOf("--profile"); return i >= 
 const find = (name) => readProfiles().find((p) => p.name === name) || readProfiles()[0];
 
 async function up(p) { try { return (await fetch(`${urlOf(p)}health`, { signal: AbortSignal.timeout(700) })).ok; } catch { return false; } }
+async function counts(p) {
+  try { const o = await (await fetch(`${urlOf(p)}api/overview`, { signal: AbortSignal.timeout(1500) })).json(); const c = o.counts?.byStatus ?? {}; return { running: c.running ?? 0, queued: c.queued ?? 0, waiting: c.waiting ?? 0 }; } catch { return { running: 0, queued: 0, waiting: 0 }; }
+}
 async function activeJobs(p) {
   try { const o = await (await fetch(`${urlOf(p)}api/overview`, { signal: AbortSignal.timeout(1500) })).json(); return (o.counts?.byStatus?.running ?? 0); } catch { return 0; }
 }
@@ -62,7 +69,47 @@ async function stopAll() {
   });
   if (response !== 0) return;
   for (const p of profs) { const pid = pidOf(p); if (pid) { try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ } } }
+  quitting = true;
   setTimeout(() => app.quit(), 800);
+}
+
+
+// ---- the menu bar icon: the app stays here when its window is closed, so the factory is one click away while the engine runs ----
+function openWindow(profile) {
+  if (profile) current = profile;
+  if (process.platform === "darwin") void app.dock?.show();
+  if (!win) createWindow();
+  else { if (win.isMinimized()) win.restore(); win.show(); win.focus(); if (profile) void show(profile); }
+}
+
+async function refreshTray() {
+  if (!tray) return;
+  const profs = readProfiles();
+  const status = await Promise.all(profs.map(async (p) => { const isUp = await up(p); return { name: p.name, up: isUp, ...(isUp ? await counts(p) : {}) }; }));
+  const m = summarise(status);
+  tray.setToolTip(m.tooltip);
+  if (process.platform === "darwin") tray.setTitle(m.title);
+  const items = [
+    { label: "Open Software Factory", click: () => openWindow() },
+    { type: "separator" },
+    ...m.lines.map((l) => ({ label: l.label, click: () => openWindow(profs.find((p) => p.name === l.name)) })),
+    { type: "separator" },
+    ...(!m.allUp ? [{ label: "Start all profiles", click: startAll }] : []),
+    { label: "Check for Updates…", click: () => { openWindow(); if (win) win.loadURL(`${urlOf(current)}#/settings?tab=system`); } },
+    { type: "separator" },
+    { label: "Quit (the factory keeps running)", click: () => { quitting = true; app.quit(); } },
+    { label: "Stop the Factory and Quit…", click: () => void stopAll() },
+  ];
+  tray.setContextMenu(Menu.buildFromTemplate(items));
+}
+
+function createTray() {
+  const icon = nativeImage.createFromPath(path.join(__dirname, "trayTemplate.png")); // black with alpha: macOS tints it for light and dark menu bars
+  icon.setTemplateImage(true);
+  tray = new Tray(icon);
+  tray.setToolTip("Software Factory");
+  tray.on("double-click", () => openWindow());
+  void refreshTray(); setInterval(() => void refreshTray(), 5000);
 }
 
 async function buildMenu() {
@@ -74,7 +121,7 @@ async function buildMenu() {
       { label: "Check for Updates…", click: () => { if (win) win.loadURL(`${urlOf(current)}#/settings?tab=system`); } },
       { type: "separator" },
       { label: "Stop the Factory and Quit…", click: () => void stopAll() },
-      { role: "quit", label: "Quit (the factory keeps running)" },
+      { label: "Quit (the factory keeps running)", accelerator: "CmdOrCtrl+Q", click: () => { quitting = true; app.quit(); } },
     ] },
     { label: "Profiles", submenu: [
       ...profs.map((p, i) => ({ label: `${p.name}${status[i] ? "" : "  (stopped)"}`, type: "radio", checked: p.name === current.name, click: () => void show(p) })),
@@ -86,6 +133,16 @@ async function buildMenu() {
     { role: "windowMenu" },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/** Test hook: closing the window must not end the app while the menu bar icon exists, and the icon must bring the window back. */
+function trayRoundTrip() {
+  win.close();
+  setTimeout(() => {
+    console.log(`TRAY-SMOKE after close: windows=${BrowserWindow.getAllWindows().length} tray=${tray && !tray.isDestroyed() ? "present" : "missing"}`);
+    openWindow();
+    win.webContents.once("did-finish-load", () => { console.log(`TRAY-SMOKE reopened: windows=${BrowserWindow.getAllWindows().length} url=${win.webContents.getURL()}`); quitting = true; app.quit(); });
+  }, 1200);
 }
 
 function createWindow() {
@@ -100,19 +157,26 @@ function createWindow() {
   win.webContents.on("will-navigate", (e, url) => { if (url.startsWith("data:")) return; try { if (origins().has(new URL(url).origin)) return; } catch { /* fall through */ } e.preventDefault(); external(url); });
   win.on("closed", () => { win = null; });
   win.webContents.on("page-title-updated", (e) => e.preventDefault()); // keep the profile name in the title
-  win.webContents.once("did-finish-load", () => { if (SMOKE) { console.log(`SMOKE ok url=${win.webContents.getURL()} title=${win.getTitle()}`); app.quit(); } });
+  win.webContents.once("did-finish-load", () => {
+    if (SMOKE) { console.log(`SMOKE ok url=${win.webContents.getURL()} title=${win.getTitle()}`); app.quit(); }
+    if (SMOKE_TRAY) trayRoundTrip();
+  });
   void show(current);
 }
 
 if (!SMOKE && !app.requestSingleInstanceLock()) { app.quit(); }
 else {
-  app.on("second-instance", (_e, argv) => { current = find(profileArg(argv)); if (!win) createWindow(); else { if (win.isMinimized()) win.restore(); win.focus(); void show(current); } });
+  app.on("second-instance", (_e, argv) => openWindow(find(profileArg(argv)))); // `software-factory` again: bring the window back, even from the menu bar
   app.whenReady().then(() => {
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false)); // no camera, mic, location, notifications...
     if (process.platform === "darwin" && fs.existsSync(ICON)) app.dock?.setIcon(nativeImage.createFromPath(ICON));
     void buildMenu(); setInterval(() => void buildMenu(), 5000);
+    if (!SMOKE) createTray();
     createWindow();
     app.on("activate", () => { if (!win) createWindow(); });
   });
-  app.on("window-all-closed", () => app.quit()); // closing the window quits the app; the background factory is separate and keeps running
+  // Closing the window keeps the app in the menu bar (no Dock icon) so it can be reopened with one click; the factory itself is a separate
+  // background service either way. Quit from the menu bar icon or the app menu to really close the app.
+  app.on("window-all-closed", () => { if (SMOKE || quitting || !tray) app.quit(); else if (process.platform === "darwin") app.dock?.hide(); });
+  app.on("before-quit", () => { quitting = true; });
 }

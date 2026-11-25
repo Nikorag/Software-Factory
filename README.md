@@ -45,7 +45,7 @@ It runs locally: your code, your Claude subscription, your GitHub and Linear acc
 - **Settings UI and setup wizard.** Connect your tools, add projects, set their test commands, pick models per workflow step, and set concurrency and fix-cycle limits, globally or per project. No config files to edit.
 - **Independent review.** A different model reviews the work than the one that wrote it.
 - **Safe by construction.** See [Safety](#safety).
-- **Desktop app.** A window onto the dashboard; the factory itself runs in the background and frees your terminal.
+- **Desktop app.** A window onto the dashboard, with a menu bar icon that shows what is running and reopens the window; the factory itself runs in the background and frees your terminal.
 
 ## Requirements
 
@@ -82,7 +82,7 @@ That starts the factory in the background, opens the app window and gives you yo
 
 Then start a ticket one of two ways: in **automatic** mode, label it **`factory:enabled`** in Linear and move it to **Ready for specification**; in **manual** mode, open the **Board**, find it (search by number works) and press **Start**. A project must be fully onboarded first (Settings → Projects shows what is left). Open the app and watch it go.
 
-The factory keeps working after you close the window. Stop it with `software-factory shutdown`.
+The factory keeps working after you close the window, and a **menu bar icon** stays behind: it shows how many jobs are running, and one click reopens the app. Stop the factory with `software-factory shutdown` (or "Stop the Factory and Quit…" from the menu bar icon).
 
 ## How a ticket flows
 
