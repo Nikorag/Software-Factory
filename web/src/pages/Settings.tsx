@@ -34,7 +34,7 @@ function ProjectsPane({ projects, teams, globals, tracker, reload }: { projects:
   const go = (id: string) => { if (id === sel) return; if (dirty) setPending(id); else setSel(id); };
   const [filter, setFilter] = useState("");
   const visible = projects.filter((p) => p.id === sel || matches(filter, p.name, p.id, p.githubRepo, p.bitbucketRepo, p.repository));
-  const paged = usePaged(visible, 10);
+  const paged = usePaged(visible, 10, filter);
   const current = sel === NEW ? null : projects.find((p) => p.id === sel) ?? null;
 
   return (

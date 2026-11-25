@@ -13,6 +13,8 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { api, send } from "@/lib/api";
 import type { Board as BoardData, BoardItem } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
+import { ConnectionBanner, useOffline } from "@/components/ConnectionBanner";
+import { safeLink } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const ALL = "__all";
@@ -31,10 +33,11 @@ function Lane({ state, items, render }: { state: string; items: BoardItem[]; ren
 }
 
 function Ticket({ t, onStart, busy }: { t: BoardItem; onStart: (t: BoardItem) => void; busy: boolean }) {
+  const href = safeLink(t.url); // a ticket URL comes from the tracker: never let it be javascript: or data:
   return (
     <div className="grid gap-2 rounded-lg border bg-card p-3 text-sm shadow-sm">
       <div className="flex items-center gap-2">
-        <a href={t.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono text-xs font-semibold hover:underline">{t.key}<ExternalLink className="size-3" /></a>
+        {href ? <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono text-xs font-semibold hover:underline">{t.key}<ExternalLink className="size-3" /></a> : <span className="font-mono text-xs font-semibold">{t.key}</span>}
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{t.projectName}</span>
       </div>
       <div className="font-medium leading-snug">{t.title}</div>
@@ -59,9 +62,11 @@ export function Board() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   useEffect(() => { const t = setTimeout(() => setQ(text.trim()), 250); return () => clearTimeout(t); }, [text]);
-  const { data, error, reload } = usePoll(() => api<BoardData>(`/api/board${(() => { const qs = new URLSearchParams({ ...(q ? { q } : {}), ...(project !== ALL ? { project } : {}) }).toString(); return qs ? `?${qs}` : ""; })()}`), 20000, [q, project]);
+  const { data, error, updatedAt, reload } = usePoll((signal) => api<BoardData>(`/api/board${(() => { const qs = new URLSearchParams({ ...(q ? { q } : {}), ...(project !== ALL ? { project } : {}) }).toString(); return qs ? `?${qs}` : ""; })()}`, signal), 20000, [q, project]);
+  const offline = useOffline() || error !== null;
 
   const start = async (t: BoardItem) => {
+    if (busy) return;
     setBusy(t.id); setMsg(null);
     const r = await send<{ jobId: string }>("POST", "/api/board/start", { issueId: t.id });
     setBusy(null);
@@ -72,7 +77,7 @@ export function Board() {
   const lanes = new Map<string, BoardItem[]>();
   for (const t of data?.items ?? []) lanes.set(t.state, [...(lanes.get(t.state) ?? []), t]);
   const searching = q !== "";
-  const results = usePaged(data?.items ?? [], 25);
+  const results = usePaged(data?.items ?? [], 25, `${q}|${project}`);
 
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
@@ -86,17 +91,17 @@ export function Board() {
         {data ? <Badge variant="outline" className={cn(data.mode === "manual" ? "border-loop/50 text-loop" : "border-ok/50 text-ok")}>{data.mode === "manual" ? "Manual mode: nothing starts until you start it" : "Automatic mode: labelled tickets start on their own"}</Badge> : null}
       </div>
       {msg ? <Alert variant={msg.ok ? "default" : "destructive"} role={msg.ok ? "status" : "alert"}><AlertDescription>{msg.text}</AlertDescription></Alert> : null}
-      {error && !data ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+      <ConnectionBanner error={error} updatedAt={updatedAt} what="board" />
       {data && data.items.length === 0 ? (
         <Card><CardContent className="text-sm text-muted-foreground">{searching ? `No ticket matches “${q}” in this profile's projects.` : data.projects.length ? "No open tickets in your projects." : <>No projects are linked to Linear yet. <Link className="underline" to="/settings">Add one in Settings</Link>.</>}</CardContent></Card>
       ) : null}
       {searching ? (<>
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{results.slice.map((t) => <div key={t.id} className="grid gap-1"><span className="text-xs text-muted-foreground">{t.state}</span><Ticket t={t} onStart={start} busy={busy === t.id} /></div>)}</div>
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{results.slice.map((t) => <div key={t.id} className="grid gap-1"><span className="text-xs text-muted-foreground">{t.state}</span><Ticket t={t} onStart={start} busy={busy !== null || offline} /></div>)}</div>
         <Pager page={results.page} pages={results.pages} pageSize={results.pageSize} total={results.total} onPage={results.setPage} onPageSize={results.setPageSize} />
       </>) : (
         <div className="flex gap-3 overflow-x-auto pb-2">
           {[...lanes.entries()].map(([state, items]) => (
-            <Lane key={state} state={state} items={items} render={(t) => <Ticket key={t.id} t={t} onStart={start} busy={busy === t.id} />} />
+            <Lane key={state} state={state} items={items} render={(t) => <Ticket key={t.id} t={t} onStart={start} busy={busy !== null || offline} />} />
           ))}
         </div>
       )}

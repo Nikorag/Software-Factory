@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight, Loader2, Terminal } from "lucide-react";
 import { api } from "@/lib/api";
+import { nextDelay } from "@/hooks/usePoll";
 import { cn } from "@/lib/utils";
 
 export type Turn =
@@ -33,20 +34,27 @@ export function Conversation({ jobId, runId, running }: { jobId: string; runId: 
   const stick = useRef(true);
 
   useEffect(() => {
-    let live = true, timer: ReturnType<typeof setTimeout>;
+    let live = true, timer: ReturnType<typeof setTimeout> | undefined, failures = 0;
+    const ctrl = new AbortController();
     offset.current = 0; setTurns([]); setErr(null);
     const tick = async () => {
       try {
-        const p = await api<Page>(`/api/jobs/${encodeURIComponent(jobId)}/invocations/${runId}/conversation?after=${offset.current}`);
+        const p = await api<Page>(`/api/jobs/${encodeURIComponent(jobId)}/invocations/${runId}/conversation?after=${offset.current}`, ctrl.signal);
         if (!live) return;
+        failures = 0; setErr(null);
         offset.current = p.offset;
         if (p.turns.length) setTurns((t) => [...t, ...p.turns]);
         setMeta({ agent: p.agent, model: p.model, done: p.done });
         if (!p.done) timer = setTimeout(() => void tick(), 1500);
-      } catch (e) { if (live) setErr((e as Error).message); }
+      } catch (e) {
+        if (!live) return;
+        // a blip (service restart, the log not written yet) must not end a live view for good: keep retrying, backing off
+        setErr((e as Error).message); failures++;
+        timer = setTimeout(() => void tick(), nextDelay(1500, failures, 30_000));
+      }
     };
     void tick();
-    return () => { live = false; clearTimeout(timer); };
+    return () => { live = false; clearTimeout(timer); ctrl.abort(); };
   }, [jobId, runId]);
 
   useEffect(() => { if (stick.current) end.current?.scrollIntoView?.({ block: "end" }); }, [turns]);
@@ -59,7 +67,7 @@ export function Conversation({ jobId, runId, running }: { jobId: string; runId: 
         <b className="text-foreground">{meta.agent || "agent run"}</b>{meta.model ? <span className="font-mono">{meta.model}</span> : null}
         {!meta.done ? <span className="flex items-center gap-1 text-run"><Loader2 className="size-3.5 animate-spin" />live</span> : <span>finished</span>}
       </div>
-      {err ? <p role="alert" className="text-sm text-destructive">No conversation for this run: {err}</p> : null}
+      {err ? <p role="alert" className="text-sm text-destructive">{turns.length ? "Lost the connection to this run" : "No conversation for this run yet"}: {err}. Retrying…</p> : null}
       {turns.map((t, i) => {
         switch (t.kind) {
           case "prompt": return <Fold key={i} summary={<span className="font-medium">Prompt sent to Claude</span>}><Pre>{t.text}</Pre></Fold>;

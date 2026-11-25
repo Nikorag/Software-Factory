@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTimeline, statsOf, summarise } from "./timeline";
+import { buildTimeline, decisionText, statsOf, summarise } from "./timeline";
 import type { Decision, Execution, Invocation, Job, JobDetail } from "./types";
 
 const T0 = 1_700_000_000_000;
@@ -7,7 +7,7 @@ const job = (o: Partial<Job> = {}): Job => ({ id: "j", key: "JAM-1", project: "p
 let id = 0;
 const ex = (stage: string, outcome: string, start: number, end: number | null, o: Partial<Execution> = {}): Execution => ({ id: ++id, stage, attempt: 1, outcome, error: null, output: null, startedAt: T0 + start * 1000, finishedAt: end === null ? null : T0 + end * 1000, ...o });
 const dec = (kind: string, decision: string, at: number, rationale: string | null = null): Decision => ({ id: ++id, kind, decision, rationale, actor: "factory", at: T0 + at * 1000 });
-const inv = (execId: number, agent: string, ms: number, exit: number | null = 0): Invocation => ({ id: ++id, stageExecutionId: execId, agent, model: "m", exitCode: exit, durationMs: ms, usage: null, hasLog: true, at: T0 });
+const inv = (execId: number, agent: string, ms: number, exit: number | null = 0): Invocation => ({ id: ++id, stageExecutionId: execId, agent, model: "m", exitCode: exit, durationMs: ms, finished: true, usage: null, hasLog: true, at: T0 });
 const detail = (executions: Execution[], decisions: Decision[] = [], invocations: Invocation[] = [], j = job()): JobDetail => ({ job: j, stageOrder: [], executions, decisions, invocations, artifacts: [], worktree: null, outbox: [] });
 
 describe("job timeline", () => {
@@ -80,5 +80,12 @@ describe("job timeline", () => {
     id = 0;
     const t = buildTimeline(detail([ex("CLAUDE_REVIEW", "succeeded", 0, 10, { output: '{"details":{"findings":[{"id":"a","issue":"very long…' })]));
     expect(t[0]!.summary).toBeUndefined();
+  });
+  it("a human answer shows the held-at line and the answer, not the (possibly long) questions; old one-line rows still work", () => {
+    const questions = Array.from({ length: 20 }, (_, i) => `${i + 1}. Which port should the service listen on, and why that one?`).join("\n");
+    const text = decisionText({ kind: "human.answer", decision: `answered while held at REQUIREMENTS_ANALYSIS\n\n${questions}`, rationale: "Use port 7777" });
+    expect(text).toBe("answered while held at REQUIREMENTS_ANALYSIS — Use port 7777");
+    expect(decisionText({ kind: "human.answer", decision: "answered while held at BLOCKED", rationale: "yes" })).toBe("answered while held at BLOCKED — yes");
+    expect(decisionText({ kind: "remediation", decision: "a\nb", rationale: null })).toBe("a\nb"); // other kinds are untouched
   });
 });

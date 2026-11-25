@@ -9,20 +9,28 @@ import { api, post } from "@/lib/api";
 import type { Overview, ProfileInfo, UpdateInfo } from "@/lib/types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePoll } from "@/hooks/usePoll";
+import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { cn } from "@/lib/utils";
 
 const NAV = [["/", "Overview"], ["/board", "Board"], ["/jobs", "Jobs"], ["/health", "Health"], ["/settings", "Settings"]] as const;
 
 export function Shell() {
-  const { data: o, error, reload } = usePoll(() => api<Overview>("/api/overview"), 3000);
+  const { data: o, error, updatedAt, reload } = usePoll((signal) => api<Overview>("/api/overview", signal), 3000);
+  const offline = error !== null;
   const [msg, setMsg] = useState<string | null>(null);
-  const { data: prof } = usePoll(() => api<{ current: string; profiles: ProfileInfo[] }>("/api/profiles"), 8000);
+  const { data: prof } = usePoll((signal) => api<{ current: string; profiles: ProfileInfo[] }>("/api/profiles", signal), 8000);
   useEffect(() => { if (prof) document.title = prof.profiles.length > 1 ? `Software Factory — ${prof.current}` : "Software Factory"; }, [prof]);
-  const { data: upd } = usePoll(() => api<UpdateInfo>("/api/update"), 30 * 60_000);
+  const { data: upd } = usePoll((signal) => api<UpdateInfo>("/api/update", signal), 30 * 60_000);
   const [hidden, setHidden] = useState<string | null>(() => { try { return localStorage.getItem("dismissed-update"); } catch { return null; } });
   const showUpdate = upd?.available && upd.latest && hidden !== upd.latest;
   const dismiss = () => { setHidden(upd?.latest ?? null); try { if (upd?.latest) localStorage.setItem("dismissed-update", upd.latest); } catch { /* remembered for this tab only */ } };
-  const act = async (name: string) => { const err = await post(`/api/control/${name}`); setMsg(err); if (!err) void reload(); };
+  const [busy, setBusy] = useState(false);
+  // Pause/resume/clear-stop are disabled while one is in flight or the API is unreachable. Emergency stop never is: it is always worth trying.
+  const act = async (name: string) => {
+    if (busy && name !== "stop") return;
+    setBusy(true);
+    try { const err = await post(`/api/control/${name}`); setMsg(err); if (!err) await reload(); } finally { setBusy(false); }
+  };
   const stop = o?.control.emergencyStop, paused = o?.control.paused;
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-7xl min-w-0 flex-col gap-4 px-4 py-5">
@@ -37,8 +45,8 @@ export function Shell() {
         {o ? <Badge variant="outline" className={cn("font-semibold", stop ? "border-destructive/50 text-destructive" : paused ? "border-loop/50 text-loop" : "border-ok/50 text-ok")}>{stop ? "EMERGENCY STOP" : paused ? "PAUSED" : "RUNNING"}</Badge> : <Badge variant="outline">…</Badge>}
         {o ? <Badge variant="secondary">{o.mergeMode === "pr-only" ? "PR-only: never merges" : o.mergeMode}{o.dryRun ? " · DRY RUN" : ""}</Badge> : null}
         <span className="flex-1" />
-        {o && !paused && !stop ? <Button variant="outline" size="sm" onClick={() => void act("pause")}><Pause />Pause</Button> : null}
-        {o && paused && !stop ? <Button variant="outline" size="sm" onClick={() => void act("resume")}><Play />Resume</Button> : null}
+        {o && !paused && !stop ? <Button variant="outline" size="sm" disabled={busy || offline} onClick={() => void act("pause")}><Pause />Pause</Button> : null}
+        {o && paused && !stop ? <Button variant="outline" size="sm" disabled={busy || offline} onClick={() => void act("resume")}><Play />Resume</Button> : null}
         {o && !stop ? (
           <AlertDialog>
             <AlertDialogTrigger asChild><Button variant="destructive" size="sm"><OctagonAlert />Emergency stop</Button></AlertDialogTrigger>
@@ -48,7 +56,7 @@ export function Shell() {
             </AlertDialogContent>
           </AlertDialog>
         ) : null}
-        {o && stop ? <Button variant="outline" size="sm" onClick={() => void act("clear-stop")}><ShieldOff />Clear stop</Button> : null}
+        {o && stop ? <Button variant="outline" size="sm" disabled={busy || offline} onClick={() => void act("clear-stop")}><ShieldOff />Clear stop</Button> : null}
       </header>
       <nav className="flex gap-1 border-b">
         {NAV.map(([to, label]) => (
@@ -62,8 +70,8 @@ export function Shell() {
       ) : null}
       {stop ? <Alert variant="destructive" role="alert"><OctagonAlert /><AlertDescription>Emergency stop is active{o?.control.reason ? `: ${o.control.reason}` : ""}. No new work starts and running agents were terminated.</AlertDescription></Alert> : null}
       {msg ? <Alert variant="destructive" role="alert"><AlertDescription>{msg}</AlertDescription></Alert> : null}
-      {error && !o ? <Alert variant="destructive"><AlertDescription>Cannot load: {error}</AlertDescription></Alert> : null}
-      <main className="min-w-0 flex-1"><Outlet context={{ overview: o, reload }} /></main>
+      <ConnectionBanner global error={error} updatedAt={updatedAt} what="dashboard" />
+      <main className="min-w-0 flex-1"><Outlet context={{ overview: o, reload, offline }} /></main>
     </div>
   );
 }

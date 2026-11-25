@@ -74,7 +74,7 @@ export function Timeline({ detail, cap, selected, onSelect, onWatch }: { detail:
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
                         {e.runs.map((r) => (
                           <Button key={r.id} size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-xs" onClick={() => onWatch(r.id)}>
-                            <MessageSquare className="size-3" />{r.exitCode === null ? "Watch live" : "Conversation"}: {r.agent.split("/")[1] ?? r.agent}{r.durationMs ? ` · ${dur(r.durationMs)}` : ""}
+                            <MessageSquare className="size-3" />{r.finished ? "Conversation" : "Watch live"}: {r.agent.split("/")[1] ?? r.agent}{r.durationMs ? ` · ${dur(r.durationMs)}` : ""}
                           </Button>
                         ))}
                       </div>

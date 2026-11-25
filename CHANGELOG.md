@@ -18,6 +18,18 @@ Updates: `software-factory update` (add `--check` to only look). Releases are gi
 
 - **Jira support** (Jira Cloud, OAuth 2.0 3LO) as an alternative to Linear, chosen per profile. Statuses and labels are mapped to existing ones in Settings because Jira statuses cannot be created. See docs/jira.md.
 
+- **Dashboard reliability**:
+  - Agent runs that were stopped by a signal (timeout, cancel, emergency stop), failed in the local model, or were cut short by a service restart no longer show "Watch live" forever. The API now returns an explicit `finished` flag, and the conversation view stops polling for those runs.
+  - Polling no longer overlaps and cannot show stale data. Each request is aborted when a newer one starts and old responses are dropped. Polling pauses while the tab is hidden and backs off after errors.
+  - "Connection lost — last updated Xs ago" appears whenever polling fails, and controls are disabled until the connection is back.
+  - Double-clicking Retry, Answer or another action sends one request only.
+  - Live tables keep their page when rows come and go.
+  - The conversation view keeps retrying after a failed request, and moves past log lines over 1 MB.
+  - A project with active jobs cannot be removed (409, with the reason shown in Settings).
+  - Ticket links on the Board accept only http(s) URLs.
+  - Archived jobs say that retrying restores them from the archive.
+  - Human answers in the timeline show the answer rather than the list of questions.
+  - The Health page has a Re-check button.
 - **Logs no longer grow without bound**: successful read requests (the dashboard's and menu bar app's polling) are logged at debug, not info; changes and non-2xx responses are still logged (paths only, no query strings), and server errors keep their stack. `factory.log`, `service.out` and the LaunchAgent's `launchd.out.log`/`launchd.err.log` are rotated by size (10 MB, 3 old copies kept) when the service starts and every 10 minutes. Project command logs (`logs/commands`) now follow `logRetentionDays` like agent logs.
 - **Cheaper `/api/overview` and `/api/health`**: recent agent failures are counted in SQL over the last hour instead of loading the whole `agent_invocations` table; system info (which runs `memory_pressure`) is cached for 5 seconds.
 - **Health probes**: overlapping checks share one in-flight probe; failures are re-checked after 30 seconds (successes after 5 minutes), so fixing e.g. `gh auth login` shows up quickly; an expired result is returned at once while one refresh runs behind it; `GET /api/health?refresh=1` re-probes now.

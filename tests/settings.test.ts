@@ -5,7 +5,10 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { BUNDLED_CONFIG_DIR, loadConfig } from "../src/config/load.js";
 import { applyGlobal, applyProjects, globalSettingsOf, removeProject, seedHomeConfig, updateGlobalSettings, upsertProject } from "../src/config/store.js";
+import { eq } from "drizzle-orm";
+import { enqueue } from "../src/core/jobs.js";
 import { openDb } from "../src/db/client.js";
+import { jobs } from "../src/db/schema.js";
 import { buildServer } from "../src/server/app.js";
 import { TaskManager } from "../src/service/tasks.js";
 import { saveSecret } from "../src/service/secrets.js";
@@ -92,7 +95,7 @@ function server() {
     db, logger: pino({ level: "silent" }), config, dataDir: tmpDir(), port: 4780, controlToken: "t".repeat(64),
     settings: { tasks: new TaskManager(), actions, linear: () => { throw new Error("no linear in this test"); }, linearKeyPresent: () => false, saveLinearKey: async (k) => { saved.push(k); return { name: "Me" }; } },
   });
-  return { app, dir, config, ran, saved, release };
+  return { app, db, dir, config, ran, saved, release };
 }
 const send = (app: ReturnType<typeof server>["app"], method: "PUT" | "POST" | "DELETE" | "GET", url: string, headers: Record<string, string>, body?: unknown) =>
   app.inject({ method, url, headers: body === undefined ? headers : { ...headers, "content-type": "application/json" }, remoteAddress: "127.0.0.1", payload: body === undefined ? undefined : JSON.stringify(body) });
@@ -108,6 +111,18 @@ describe("settings API", () => {
     expect(loadConfig(s.dir).projects.projects.some((p) => p.id === "my-app")).toBe(true);
     expect((await send(s.app, "DELETE", "/api/settings/projects/my-app", UI)).statusCode).toBe(200);
     expect((await send(s.app, "GET", "/api/projects", HOST)).json().projects.some((p: { id: string }) => p.id === "my-app")).toBe(false);
+  });
+  it("refuses to remove a project while it has active jobs (they would fail with orphaned worktrees), and allows it after", async () => {
+    const s = server();
+    const { id: _id, ...body } = app1; void _id;
+    expect((await send(s.app, "PUT", "/api/settings/projects/my-app", UI, { ...body, linear: { teamKey: "ENG", projectName: "Mine" } })).statusCode).toBe(200);
+    const { job } = enqueue(s.db, { projectId: "my-app", externalId: "i1", externalKey: "ENG-1" });
+    const r = await send(s.app, "DELETE", "/api/settings/projects/my-app", UI);
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toMatch(/1 active job/);
+    expect(loadConfig(s.dir).projects.projects.some((p) => p.id === "my-app")).toBe(true); // untouched
+    s.db.update(jobs).set({ status: "done" }).where(eq(jobs.id, job.id)).run();
+    expect((await send(s.app, "DELETE", "/api/settings/projects/my-app", UI)).statusCode).toBe(200);
   });
   it("needs the dashboard origin or the token, and rejects invalid input with a readable error", async () => {
     const s = server();

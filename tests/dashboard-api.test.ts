@@ -159,6 +159,28 @@ describe("dashboard API data (real persisted state, nothing mocked)", () => {
   });
 });
 
+describe("when an agent run counts as finished", () => {
+  it("a run with no exit code is still finished once it has a duration, once its stage execution closed, or (with none) once its job stopped running", async () => {
+    const s = setup(); const j = s.job();
+    const open = s.db.insert(stageExecutions).values({ jobId: j.id, stage: "IMPLEMENTATION", attempt: 1, outcome: "started", idempotencyKey: "o" }).returning({ id: stageExecutions.id }).get().id;
+    const closed = s.db.insert(stageExecutions).values({ jobId: j.id, stage: "IMPLEMENTATION", attempt: 2, outcome: "failed", idempotencyKey: "c" }).returning({ id: stageExecutions.id }).get().id;
+    const f = join(s.dataDir, "logs", "r.log"); writeFileSync(f, `${JSON.stringify({ type: "factory_prompt", text: "go" })}\n`);
+    const add = (o: Partial<typeof agentInvocations.$inferInsert>) => s.db.insert(agentInvocations).values({ jobId: j.id, agent: "anthropic/implementer", logPath: f, ...o }).returning({ id: agentInvocations.id }).get().id;
+    const killed = add({ stageExecutionId: open, exitCode: null, durationMs: 600_000 });   // timeout / cancel / estop: signal, no exit code
+    const local = add({ stageExecutionId: open, exitCode: null, durationMs: 0 });          // local-model failure before it started
+    const crashed = add({ stageExecutionId: closed });                                       // service died mid-run; recovery closed the execution
+    const live = add({ stageExecutionId: open });                                            // really running
+    const loose = add({});                                                                   // no stage execution; the job is queued, not running
+    const inv = (await get(s.app, `/api/jobs/${j.id}`)).json().invocations as { id: number; finished: boolean }[];
+    const fin = Object.fromEntries(inv.map((i) => [i.id, i.finished]));
+    expect(fin).toEqual({ [killed]: true, [local]: true, [crashed]: true, [live]: false, [loose]: true });
+    const conv = async (id: number) => (await get(s.app, `/api/jobs/${j.id}/invocations/${id}/conversation`)).json().done;
+    expect(await conv(killed)).toBe(true); expect(await conv(crashed)).toBe(true); expect(await conv(live)).toBe(false);
+    s.db.update(jobs).set({ status: "running" }).where(eq(jobs.id, j.id)).run();
+    expect((await get(s.app, `/api/jobs/${j.id}`)).json().invocations.find((i: { id: number }) => i.id === loose).finished).toBe(false);
+  });
+});
+
 describe("agent log viewing is confined to the logs directory", () => {
   const seed = (s: ReturnType<typeof setup>, logPath: string) => {
     const j = s.job();

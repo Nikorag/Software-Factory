@@ -6,7 +6,7 @@ import { ago, gb } from "@/lib/format";
 import type { Overview as O } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export const useOverview = () => useOutletContext<{ overview: O | null; reload: () => void }>();
+export const useOverview = () => useOutletContext<{ overview: O | null; reload: () => void; offline: boolean }>();
 
 const Kpi = ({ label, v, tone }: { label: string; v: string | number; tone?: string }) => (
   <div><div className={cn("text-2xl font-semibold tabular-nums", tone)}>{v}</div><div className="text-xs text-muted-foreground">{label}</div></div>

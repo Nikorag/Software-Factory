@@ -9,6 +9,7 @@ import { Settings } from "@/pages/Settings";
 import { Setup } from "@/pages/Setup";
 import { Board } from "@/pages/Board";
 import { Overview } from "@/pages/Overview";
+import { HealthPage } from "@/pages/Health";
 import type { Execution, Job, JobDetail as D, Overview as O } from "@/lib/types";
 
 const XSS = `<img src=x onerror="window.__pwned=1"><script>window.__pwned=1</script>`;
@@ -27,8 +28,10 @@ beforeEach(() => {
   calls = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     calls.push({ url, method: init?.method ?? "GET", headers: init?.headers as Record<string, string>, body: init?.body as string });
-    const body = routes[url];
-    return new Response(JSON.stringify(body ?? {}), { status: body === undefined ? 404 : 200, headers: { "content-type": "application/json" } });
+    const route = routes[url];
+    const body = typeof route === "function" ? await (route as () => unknown)() : route; // a function route can hold its response back
+    const status = body && typeof body === "object" && "__status" in body ? (body as { __status: number }).__status : body === undefined ? 404 : 200;
+    return new Response(JSON.stringify(body ?? {}), { status, headers: { "content-type": "application/json" } });
   }));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -86,7 +89,7 @@ describe("dashboard", () => {
   });
   it("renders hostile ticket/agent-derived text as inert text: no elements, no script, no javascript: links", async () => {
     const j = job({ lastError: `${XSS} boom`, prUrl: "javascript:window.__pwned=1", stage: "BLOCKED", status: "waiting", heldFromStage: "IMPLEMENTATION" });
-    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [{ ...exec("DISCOVERED", "failed"), error: XSS }], { decisions: [{ id: 1, kind: XSS, decision: XSS, rationale: XSS, actor: XSS, at: 1 }], invocations: [{ id: 1, stageExecutionId: null, agent: XSS, model: XSS, exitCode: 0, durationMs: 1, usage: null, hasLog: false, at: 1 }] }) };
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [{ ...exec("DISCOVERED", "failed"), error: XSS }], { decisions: [{ id: 1, kind: XSS, decision: XSS, rationale: XSS, actor: XSS, at: 1 }], invocations: [{ id: 1, stageExecutionId: null, agent: XSS, model: XSS, exitCode: 0, durationMs: 1, finished: true, usage: null, hasLog: false, at: 1 }] }) };
     const { container } = app("/jobs/j1");
     await screen.findAllByText(/<img src=x onerror=/);
     expect(container.querySelectorAll("img, script, iframe, object, embed").length).toBe(0);
@@ -295,7 +298,7 @@ describe("settings and setup", () => {
     expect(sent.overrides).toEqual({ maxRemediationAttempts: 1, models: { implementation: { provider: "anthropic", model: "opus" } } }); // concurrency + other models: follow global
   });
   it("shows an agent run's conversation: prompt, messages, tool calls with their results, and the outcome", async () => {
-    const run = { id: 7, stageExecutionId: null, agent: "anthropic/implementer", model: "claude-opus-5-5", exitCode: 0, durationMs: 5000, usage: null, hasLog: true, at: 1 };
+    const run = { id: 7, stageExecutionId: null, agent: "anthropic/implementer", model: "claude-opus-5-5", exitCode: 0, durationMs: 5000, finished: true, usage: null, hasLog: true, at: 1 };
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [run] }), "/api/jobs/j1/invocations/7/conversation?after=0": { offset: 500, done: true, agent: "anthropic/implementer", model: "claude-opus-5-5", turns: [
       { kind: "prompt", text: "Implement the due-date feature" }, { kind: "session", model: "claude-opus-5-5", tools: 6 }, { kind: "text", text: "I'll start by reading the tests." },
       { kind: "tool", id: "t1", name: "Bash", input: "npm test" }, { kind: "tool_result", id: "t1", text: "12 passed", error: false }, { kind: "result", ok: true, text: "Done", turns: 3 } ] } };
@@ -312,7 +315,7 @@ describe("settings and setup", () => {
     expect(screen.getByText(/Finished after 3 turns/)).toBeInTheDocument();
   });
   it("renders hostile text in a conversation as inert text", async () => {
-    const run = { id: 8, stageExecutionId: null, agent: "anthropic/implementer", model: null, exitCode: 0, durationMs: 1, usage: null, hasLog: true, at: 1 };
+    const run = { id: 8, stageExecutionId: null, agent: "anthropic/implementer", model: null, exitCode: 0, durationMs: 1, finished: true, usage: null, hasLog: true, at: 1 };
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [run] }), "/api/jobs/j1/invocations/8/conversation?after=0": { offset: 1, done: true, agent: "x", model: null, turns: [
       { kind: "text", text: XSS }, { kind: "tool", id: "a", name: XSS, input: XSS }, { kind: "tool_result", id: "a", text: XSS, error: false } ] } };
     const { container } = app("/jobs/j1");
@@ -562,7 +565,7 @@ describe("settings and setup", () => {
       { id: 3, stage: "REMEDIATION", attempt: 1, outcome: "succeeded", error: null, output: JSON.stringify({ accepted: [1, 2], rejected: [] }), startedAt: T + 90_000, finishedAt: T + 200_000 },
       { id: 4, stage: "AUTOMATED_TESTING", attempt: 2, outcome: "failed", error: "3 tests failed", output: null, startedAt: T + 200_000, finishedAt: T + 230_000 },
     ];
-    const run = { id: 9, stageExecutionId: 3, agent: "anthropic/implementer", model: "m", exitCode: 0, durationMs: 110_000, usage: null, hasLog: true, at: T };
+    const run = { id: 9, stageExecutionId: 3, agent: "anthropic/implementer", model: "m", exitCode: 0, durationMs: 110_000, finished: true, usage: null, hasLog: true, at: T };
     routes = { "/api/overview": overview(), "/api/jobs/j1": { ...detail(job({ stage: "REMEDIATION", status: "running", remediationAttempts: 1 }), exs, { invocations: [run] }), remediationCap: 3 } };
     app("/jobs/j1");
     expect(await screen.findByText("What happened")).toBeInTheDocument();
@@ -593,3 +596,83 @@ describe("settings and setup", () => {
     expect(await screen.findByText("Selected step")).toBeInTheDocument();                                            // the step panel opened for it
   });
 });
+
+describe("reliability: live state, lost connections and double clicks", () => {
+  it("a run stopped by a signal (no exit code, but a duration) is finished, not 'Watch live'; a run still going is live", async () => {
+    const stopped = { id: 3, stageExecutionId: null, agent: "anthropic/implementer", model: "m", exitCode: null, durationMs: 300_000, finished: true, usage: null, hasLog: true, at: 1 };
+    const live = { ...stopped, id: 4, agent: "anthropic/reviewer", durationMs: null, finished: false };
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [stopped, live] }) };
+    app("/jobs/j1");
+    await userEvent.click(await screen.findByRole("tab", { name: "Agent runs" }));
+    const rows = screen.getAllByRole("row");
+    const row = (agent: string) => within(rows.find((r) => within(r).queryByText(agent))!);
+    expect(row("anthropic/implementer").getByRole("button", { name: "Conversation" })).toBeInTheDocument();
+    expect(row("anthropic/implementer").getByText("stopped")).toBeInTheDocument();
+    expect(row("anthropic/reviewer").getByRole("button", { name: "Watch live" })).toBeInTheDocument();
+  });
+  it("says the connection is lost (keeping the last data, marked as old) and disables controls until it is back", async () => {
+    routes = { "/api/overview": overview(), "/api/control/pause": { ok: true } };
+    app("/");
+    await userEvent.click(await screen.findByRole("button", { name: /Pause/ }));
+    delete routes["/api/overview"]; // the next poll (3s later) fails
+    await waitFor(() => expect(screen.getByTestId("connection-lost")).toHaveTextContent(/Connection lost.*last updated \d+s ago/), { timeout: 5000 });
+    expect(screen.getByText("RUNNING")).toBeInTheDocument();                       // last known state still shown
+    expect(screen.getByRole("button", { name: /Pause/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Emergency stop/ })).toBeEnabled(); // always worth trying
+    routes["/api/overview"] = overview();
+    await waitFor(() => expect(screen.queryByTestId("connection-lost")).toBeNull(), { timeout: 15_000 });
+    expect(screen.getByRole("button", { name: /Pause/ })).toBeEnabled();
+  }, 25_000);
+  it("a double-clicked Retry sends one request and shows no false error", async () => {
+    let release = () => {};
+    const j = job({ stage: "NEEDS_ATTENTION", status: "waiting", heldFromStage: "CLAUDE_REVIEW" });
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j), "/api/jobs/j1/retry": () => new Promise((r) => { release = () => r({ ok: true }); }) };
+    app("/jobs/j1");
+    const retry = await screen.findByRole("button", { name: /Retry/ });
+    await userEvent.dblClick(retry);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Retry/ })).toBeDisabled());
+    await userEvent.click(screen.getByRole("button", { name: /Retry/ }));
+    release();
+    await waitFor(() => expect(screen.getByRole("button", { name: /Retry/ })).toBeEnabled());
+    expect(calls.filter((c) => c.url === "/api/jobs/j1/retry")).toHaveLength(1);
+    expect(screen.queryByText(/HTTP \d{3}|not held|cannot retry/i)).toBeNull(); // no false error from a second request
+  });
+  it("says that retrying an archived job restores it from the archive", async () => {
+    const j = job({ stage: "FAILED", status: "failed", heldFromStage: "IMPLEMENTATION", archivedAt: 5 });
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j) };
+    app("/jobs/j1");
+    expect(await screen.findByText(/Retrying will restore this job from the archive/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Retry and restore/ })).toBeInTheDocument();
+  });
+  it("never turns a hostile ticket URL into a link on the Board", async () => {
+    const t = { id: "i1", key: "ENG-1", title: "Evil", url: "javascript:window.__pwned=1", state: "Backlog", stateType: "backlog", labels: [], linearProject: "A", projectId: "a", projectName: "A", mode: "manual", job: null, canStart: true, reason: null };
+    const good = { ...t, id: "i2", key: "ENG-2", title: "Fine", url: "https://linear.app/x/issue/ENG-2" };
+    routes = { "/api/overview": overview(), "/api/board": { mode: "manual", query: "", items: [t, good], projects: [{ id: "a", name: "A", mode: "manual" }] } };
+    const { container } = app("/board");
+    expect(await screen.findByText("ENG-1")).toBeInTheDocument();
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(screen.getByRole("link", { name: /ENG-2/ })).toHaveAttribute("href", "https://linear.app/x/issue/ENG-2");
+  });
+  it("shows why a project cannot be removed while it has active jobs", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] },
+      "/api/settings/projects/my-app": { __status: 409, error: "my-app has 1 active job(s). Finish or cancel them before removing the project." } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("button", { name: /Remove/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    expect(await screen.findByText(/Could not remove: my-app has 1 active job/)).toBeInTheDocument();
+    cleanup();
+    routes = { ...routes, "/api/projects": { projects: [{ ...proj, activeJobs: 2 }] } };
+    app("/settings");
+    expect(await screen.findByText(/2 active job\(s\) use this project/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Remove/ })).toBeDisabled();
+  });
+  it("Health: Re-check asks the server to probe again now", async () => {
+    const report = { system: overview().system, health: [{ name: "github", status: "error", detail: "unreachable", checkedAt: 1 }] };
+    routes = { "/api/health": report, "/api/health?refresh=1": { ...report, health: [{ name: "github", status: "ok", detail: "ok now", checkedAt: 2 }] } };
+    render(<MemoryRouter><HealthPage /></MemoryRouter>);
+    await userEvent.click(await screen.findByRole("button", { name: /Re-check/ }));
+    expect(await screen.findByText(/ok now/)).toBeInTheDocument();
+    expect(calls.filter((c) => c.url === "/api/health?refresh=1")).toHaveLength(1);
+  });
+});
+
