@@ -38,6 +38,15 @@ describe("createGhClient (argument building and parsing; verified field names fr
     expect(create.args.join(" ")).not.toContain("SECRET-LOOKING BODY");
     expect(create.body).toContain("$(subshell)");
   });
+  it("createPr is idempotent: 'already exists' (GitHub created it despite an earlier error, seen live) returns that PR", async () => {
+    const run: GhExec = async (args) => {
+      if (args[1] === "create") throw Object.assign(new Error("exit 1"), { stderr: 'a pull request for branch "factory/x" into branch "main" already exists:\nhttps://github.com/o/r/pull/113' });
+      return JSON.stringify(pr({ number: 113, url: "https://github.com/o/r/pull/113" }));
+    };
+    expect(await createGhClient({ run }).createPr("o/r", { head: "factory/x", base: "main", title: "t", body: "b" })).toMatchObject({ number: 113, state: "OPEN" });
+    const other: GhExec = async (args) => { if (args[1] === "create") throw Object.assign(new Error("x"), { stderr: "HTTP 403 forbidden" }); return "{}"; };
+    await expect(createGhClient({ run: other }).createPr("o/r", { head: "h", base: "m", title: "t", body: "b" })).rejects.toThrow(/403/); // other errors still surface
+  });
   it("parses checks, and treats 'no checks reported' (a repo without CI) as an empty list, not an error", async () => {
     const c = await createGhClient({ run: fake({ "pr checks": JSON.stringify([{ name: "app", state: "SUCCESS", bucket: "pass", link: "https://github.com/o/r/actions/runs/1/job/2", workflow: "CI" }]) }).run }).checks("o/r", 5);
     expect(c).toEqual([{ name: "app", workflow: "CI", bucket: "pass", state: "SUCCESS", link: "https://github.com/o/r/actions/runs/1/job/2" }]);
@@ -49,6 +58,8 @@ describe("createGhClient (argument building and parsing; verified field names fr
     expect((await mk("HTTP 503: Service Unavailable"))).toMatchObject({ retryable: true });
     expect((await mk("API rate limit exceeded"))).toMatchObject({ retryable: true });
     expect((await mk("could not resolve host: api.github.com"))).toMatchObject({ retryable: true });
+    expect((await mk("pull request create failed: GraphQL: Something went wrong while executing your query on 2026-11-25T15:56:21Z. Please include `C460:362C9C` when reporting this issue."))).toMatchObject({ retryable: true }); // seen live
+    expect((await mk("HTTP 500 Internal Server Error"))).toMatchObject({ retryable: true });
     expect((await mk("HTTP 404: Not Found"))).toMatchObject({ retryable: false });
     expect((await mk("HTTP 401 bad credentials"))).toMatchObject({ retryable: false });
     const leak = await mk("failed with token ghp_" + "a".repeat(36));

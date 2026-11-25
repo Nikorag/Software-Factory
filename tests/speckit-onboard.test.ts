@@ -7,6 +7,7 @@ import { FactoryConfig, ModelsConfig, ProjectConfig } from "../src/config/schema
 import { openDb } from "../src/db/client.js";
 import { onboardProject, raiseOnboardingPr } from "../src/speckit/onboard.js";
 import { FakeGitHub } from "./helpers/fake-github.js";
+import { GitHubError } from "../src/github/client.js";
 import { commitPaths, findBinary, initSpecKit, isInitialised } from "../src/speckit/tools.js";
 import { ScriptedAgent, overwrite } from "./helpers/scripted-agent.js";
 import { makeRepo, sh, tmp } from "./helpers/git-fixture.js";
@@ -124,6 +125,17 @@ describe("raising the onboarding PR (never merges)", () => {
     expect(gh.created[0]!.body).toMatch(/not merged automatically/);
     expect(gh.created[0]!.body).toMatch(/becomes policy/);
     expect(gh.calls.filter((c) => /merge/i.test(c))).toEqual([]);
+  });
+  it("retries a transient GitHub failure (seen live) and succeeds, but stops at once on a refusal", async () => {
+    const { project, r } = await ready();
+    const flaky = new FakeGitHub();
+    flaky.failures.push({ method: "createPr", times: 2, error: new GitHubError("GraphQL: Something went wrong while executing your query", true) });
+    const out = await raiseOnboardingPr(project, { github: flaky, worktree: r.worktree, retryDelayMs: 1 });
+    expect(out.pr.number).toBe(1); expect(flaky.calls.filter((c) => c === "createPr")).toHaveLength(3);
+    const refused = new FakeGitHub();
+    refused.failures.push({ method: "createPr", times: 9, error: new GitHubError("HTTP 403 forbidden", false) });
+    await expect(raiseOnboardingPr(project, { github: refused, worktree: r.worktree, retryDelayMs: 1 })).rejects.toThrow(/403/);
+    expect(refused.calls.filter((c) => c === "createPr")).toHaveLength(1);
   });
   it("is idempotent and refuses a closed PR, a missing constitution, and a dirty worktree", async () => {
     const { project, r } = await ready();

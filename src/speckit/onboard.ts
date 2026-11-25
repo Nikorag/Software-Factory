@@ -6,7 +6,7 @@ import { git as realGit, type GitFn } from "../repo/git.js";
 import { gitAuthEnv } from "../repo/gh.js";
 import { skillPrompt } from "./prompts.js";
 import { commitPaths, initSpecKit, isInitialised, type InitDeps } from "./tools.js";
-import type { GitHubClient, PrInfo } from "../github/client.js";
+import { GitHubError, type GitHubClient, type PrInfo } from "../github/client.js";
 import { repoSlug } from "../delivery/handlers.js";
 import { pushBranch } from "../repo/push.js";
 
@@ -75,7 +75,17 @@ Merging this PR is what allows the factory to process tickets for this project.
 `;
 
 /** Pushes the onboarding branch and opens a PR for human review. Idempotent; never merges (the client cannot). */
-export async function raiseOnboardingPr(project: ProjectConfig, d: { github: GitHubClient; worktree: string; branch?: string; git?: GitFn; push?: typeof pushBranch }): Promise<{ pr: PrInfo; reused: boolean }> {
+/** Retries a GitHub call a few times when the failure is transient (GitHub's own 5xx-style errors, network). */
+async function withRetry<T>(fn: () => Promise<T>, sleepMs: number): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try { return await fn(); } catch (e) {
+      if (!(e instanceof GitHubError) || !e.retryable || attempt >= 4) throw e;
+      await new Promise((r) => setTimeout(r, sleepMs * attempt));
+    }
+  }
+}
+
+export async function raiseOnboardingPr(project: ProjectConfig, d: { github: GitHubClient; worktree: string; branch?: string; git?: GitFn; push?: typeof pushBranch; retryDelayMs?: number }): Promise<{ pr: PrInfo; reused: boolean }> {
   const git = d.git ?? realGit;
   const branch = d.branch ?? "factory/onboard-speckit";
   const log = await git(d.worktree, ["log", "--format=%s", `${project.defaultBranch}..HEAD`]).catch(() => "");
@@ -83,8 +93,9 @@ export async function raiseOnboardingPr(project: ProjectConfig, d: { github: Git
   if ((await git(d.worktree, ["status", "--porcelain"])).length) throw new Error("the onboarding worktree has uncommitted changes; refusing to push");
   const repo = await repoSlug(project, git);
   await (d.push ?? pushBranch)(d.worktree, branch, { defaultBranch: project.defaultBranch, account: project.github.account, git });
-  const existing = await d.github.findPr(repo, branch);
+  const delay = d.retryDelayMs ?? 2000;
+  const existing = await withRetry(() => d.github.findPr(repo, branch), delay);
   if (existing?.state === "OPEN") return { pr: existing, reused: true };
   if (existing) throw new Error(`a pull request for ${branch} already exists and is ${existing.state} (${existing.url}); not reopening it`);
-  return { pr: await d.github.createPr(repo, { head: branch, base: project.defaultBranch, title: "Add Spec Kit and project constitution (for review)", body: ONBOARDING_BODY(project) }), reused: false };
+  return { pr: await withRetry(() => d.github.createPr(repo, { head: branch, base: project.defaultBranch, title: "Add Spec Kit and project constitution (for review)", body: ONBOARDING_BODY(project) }), delay), reused: false };
 }

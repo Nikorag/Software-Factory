@@ -45,7 +45,8 @@ const asPr = (j: Record<string, unknown>): PrInfo => ({
 /** Network/rate problems are retryable; auth and "not found" are not. */
 function classify(e: unknown): GitHubError {
   const msg = `${(e as { stderr?: string }).stderr ?? ""} ${(e as Error).message}`.trim();
-  const transient = /timeout|timed out|ECONN|ETIMEDOUT|EAI_AGAIN|502|503|504|rate limit|secondary rate|could not resolve host|connection reset/i.test(msg);
+  // GitHub's own "Something went wrong while executing your query" (seen live on `pr create`) is a server-side fault: retry it.
+  const transient = /timeout|timed out|ECONN|ETIMEDOUT|EAI_AGAIN|\b50[0234]\b|rate limit|secondary rate|could not resolve host|connection reset|something went wrong|internal server error|temporarily unavailable|try again/i.test(msg);
   return new GitHubError(msg.replace(/gh[pousr]_[A-Za-z0-9]+/g, "[REDACTED]").slice(0, 500), transient);
 }
 
@@ -69,8 +70,16 @@ export function createGhClient(opts: { account?: string; run?: GhExec } = {}): G
       const dir = mkdtempSync(join(tmpdir(), "factory-pr-"));
       const bodyFile = join(dir, "body.md");
       writeFileSync(bodyFile, o.body, { mode: 0o600 });
-      const out = await gh(["pr", "create", "--repo", repo, "--head", o.head, "--base", o.base, "--title", o.title, "--body-file", bodyFile]);
-      const url = out.trim().split("\n").at(-1)!;
+      let url: string;
+      try {
+        url = (await gh(["pr", "create", "--repo", repo, "--head", o.head, "--base", o.base, "--title", o.title, "--body-file", bodyFile])).trim().split("\n").at(-1)!;
+      } catch (e) {
+        // Idempotent create. GitHub sometimes creates the PR and still returns an error (seen live), and its list endpoint lags
+        // behind, so a retry (or a find-then-create) can hit "already exists": that is success, and the PR URL is in the message.
+        const existing = e instanceof GitHubError ? /already exists:?\s*(https:\/\/github\.com\/\S+\/pull\/\d+)/i.exec(e.message)?.[1] : undefined;
+        if (!existing) throw e;
+        url = existing;
+      }
       return view(repo, url);
     },
     getPr: (repo, number) => view(repo, String(number)),
