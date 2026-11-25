@@ -178,6 +178,15 @@ describe("cleanup", () => {
     expect(existsSync(join(info.path, "precious.txt"))).toBe(true);
     expect(h.db.select().from(worktrees).get()?.state).toBe("preserved");
   });
+  it("discards uncommitted changes when a human has chosen to (discardChanges), and records the removal", async () => {
+    const info = await wt.create(mkJob("j1", "ENG-1"));
+    writeFileSync(join(info.path, "scratch.txt"), "x");
+    sh(info.path, "add", "-A"); // staged, so `worktree remove` would refuse without --force
+    await wt.remove("j1", { discardChanges: true, deleteBranch: "force" });
+    expect(existsSync(info.path)).toBe(false);
+    expect(sh(fx.repo, "branch", "--list", "factory/ENG-1")).toBe("");
+    expect(h.db.select().from(worktrees).get()?.state).toBe("removed");
+  });
   it("keeps an unmerged branch on safe delete but removes it on forced delete", async () => {
     const info = await wt.create(mkJob("j1", "ENG-1"));
     writeFileSync(join(info.path, "f.txt"), "f");

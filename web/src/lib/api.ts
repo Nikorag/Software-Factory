@@ -27,12 +27,18 @@ export async function post(path: string, body: unknown = {}): Promise<string | n
 }
 
 /** Like post(), for settings: any method, and the response body (or the server's error message). */
-export async function send<T = unknown>(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+export type SendResult<T = unknown> = { ok: true; data: T } | { ok: false; error: string; code?: string };
+export async function send<T = unknown>(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<SendResult<T>> {
   try {
     const res = await fetch(path, { method, headers: { "X-Factory-UI": "1", ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body) });
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    return res.ok ? { ok: true, data: data as T } : { ok: false, error: data.error || `HTTP ${res.status}` };
+    const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+    return res.ok ? { ok: true, data: data as T } : { ok: false, error: data.error || `HTTP ${res.status}`, ...(data.code ? { code: data.code } : {}) };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
 }
+
+export interface DeleteOptions { removeWorktree: boolean; discardChanges: boolean }
+/** DELETE /api/jobs/:id, optionally taking the job's worktree (and local branch) with it. */
+export const deleteJobRequest = (id: string, o: DeleteOptions = { removeWorktree: false, discardChanges: false }) =>
+  send("DELETE", `/api/jobs/${id}${o.removeWorktree ? `?removeWorktree=1${o.discardChanges ? "&discardChanges=1" : ""}` : ""}`);
