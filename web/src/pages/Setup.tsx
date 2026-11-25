@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checks, LinearSetup } from "@/components/Integrations";
+import { Checks } from "@/components/Integrations";
+import { TrackerSetup } from "@/components/TrackerSetup";
 import { ProjectEditor } from "@/components/ProjectEditor";
 import { api } from "@/lib/api";
 import type { Project, SetupInfo, TeamAudit } from "@/lib/types";
@@ -32,8 +33,8 @@ export function Setup() {
           <CardContent className="grid gap-4"><Checks onChange={setToolsOk} /><div>{next(true, toolsOk ? "Continue" : "Continue anyway")}</div></CardContent></Card>
       ) : null}
       {step === 1 ? (
-        <Card><CardHeader><CardTitle>Connect Linear</CardTitle><CardDescription>Tickets come from Linear. The factory needs a few statuses and labels in your team; it only ever creates missing ones.</CardDescription></CardHeader>
-          <CardContent className="grid gap-4"><LinearSetup info={info} onKey={() => void reloadInfo()} onTeams={setTeams} /><div className="flex gap-2"><Button variant="outline" onClick={() => setStep(0)}>Back</Button>{next(Boolean(info?.linear.keyPresent))}</div></CardContent></Card>
+        <Card><CardHeader><CardTitle>Connect your issue tracker</CardTitle><CardDescription>Tickets come from Linear or Jira (each profile picks one). With Linear the factory can create the few statuses and labels it needs; with Jira you map its statuses and labels to ones that already exist.</CardDescription></CardHeader>
+          <CardContent className="grid gap-4"><TrackerSetup info={info} onChanged={() => void reloadInfo()} onKey={() => void reloadInfo()} onTeams={setTeams} /><div className="flex gap-2"><Button variant="outline" onClick={() => setStep(0)}>Back</Button>{next(Boolean(info?.tracker.connected ?? info?.linear.keyPresent))}</div></CardContent></Card>
       ) : null}
       {step === 2 ? (
         <Card><CardHeader><CardTitle>Add your first project</CardTitle><CardDescription>Link a GitHub repository to a Linear project and tell the factory how to run its tests. You can add more later in Settings.</CardDescription></CardHeader>

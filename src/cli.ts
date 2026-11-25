@@ -13,7 +13,8 @@ import * as control from "./core/control.js";
 import { runSimulation } from "./core/simulation.js";
 import { syncProjects, validateProjects } from "./repo/registry.js";
 import { ensureClone } from "./repo/clone.js";
-import { createLinearClient, type LinearClient } from "./linear/client.js";
+import type { LinearClient } from "./linear/client.js";
+import { createTrackerClient } from "./tracker/index.js";
 import { discoverIssues } from "./linear/discovery.js";
 import { auditTeam, SUGGESTED_STATUS_TYPE } from "./linear/check.js";
 import { applySetup, planSetup } from "./linear/setup.js";
@@ -22,7 +23,6 @@ import { createContext } from "./app/context.js";
 import { onboardProject, raiseOnboardingPr } from "./speckit/onboard.js";
 import { checkProject } from "./repo/check.js";
 import { createGhClient } from "./github/client.js";
-import { resolveSecret } from "./service/secrets.js";
 import { startService } from "./service/main.js";
 import { loadOrCreateToken } from "./server/app.js";
 import { applyUpdate, planUpdate } from "./service/update.js";
@@ -36,9 +36,7 @@ const openFactoryDb = () => {
 };
 const ACTOR = "cli";
 const linearClient = (config: ReturnType<typeof loadConfig>): LinearClient => {
-  const key = resolveSecret({ envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService });
-  if (!key) throw new Error(`${config.linear.apiKeyEnv} is not set and no keychain entry "${config.linear.keychainService}" was found`);
-  return createLinearClient({ apiKey: key });
+  return createTrackerClient(config);
 };
 
 const NOT_PER_PROFILE = new Set(["start", "shutdown", "status", "profile", "list", "add", "remove", "update"]);

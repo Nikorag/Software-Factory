@@ -5,6 +5,7 @@ import type { LoadedConfig } from "../config/schema.js";
 import { findBinary } from "../speckit/tools.js";
 import { resolveSecret } from "../service/secrets.js";
 import { createLinearClient, type LinearClient } from "../linear/client.js";
+import { createTrackerClient, trackerConfigured } from "../tracker/index.js";
 
 const run = promisify(execFile);
 
@@ -84,6 +85,14 @@ export function reviewerIndependence(config: LoadedConfig): CheckResult[] {
 
 /** Read-only: asks Linear who the key belongs to. Reports the account name, never the key. */
 export async function checkLinear(config: LoadedConfig, clientOverride?: LinearClient): Promise<CheckResult> {
+  if (config.factory.tracker === "jira") {
+    const name = "jira";
+    try {
+      if (!clientOverride && !trackerConfigured(config)) return { name, status: "warn", detail: "not connected: set up the OAuth app and connect in Settings → Tracker" };
+      const me = await (clientOverride ?? createTrackerClient(config)).viewer();
+      return { name, status: "ok", detail: `authenticated as ${me.name}` };
+    } catch (e) { return { name, status: "fail", detail: (e as Error).message }; }
+  }
   const key = resolveSecret({ envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService });
   if (!clientOverride && !key) return { name: "linear", status: "warn", detail: `${config.linear.apiKeyEnv} not set and no keychain entry "${config.linear.keychainService}"` };
   try {

@@ -16,7 +16,7 @@ export function onboardingOf(project: ProjectConfig, report: RepoReport | null, 
     { id: "speckit", label: "Spec Kit set up on the default branch", ok: Boolean(report?.hasSpecKit),
       detail: !report ? "unknown until validated" : report.hasSpecKit ? "present" : report.onboardingBranchPushed ? "onboarding pull request is open: merge it, then press Validate" : "press Onboard Spec Kit" },
     { id: "test", label: "Test command configured", ok: Boolean(project.commands.test), detail: project.commands.test ? project.commands.test : "set one in Commands: the factory will not implement changes without it" },
-    { id: "linear", label: "Linked to a Linear project", ok: Boolean(project.linear), detail: project.linear ? `${project.linear.teamKey}${project.linear.projectName ? ` / ${project.linear.projectName}` : ""}` : "choose a team and project under Linear" },
+    { id: "linear", label: "Linked to a tracker project", ok: Boolean(project.linear), detail: project.linear ? `${project.linear.teamKey}${project.linear.projectName ? ` / ${project.linear.projectName}` : ""}` : "choose the project under Tracker" },
     { id: "checks", label: "Commands verified", ok: Boolean(check?.ok),
       detail: !check ? "press Run checks to prove the commands work in the sandbox" : check.ok ? `passed ${new Date(check.at).toLocaleDateString()}` : "the last run failed: see Run checks" },
   ];

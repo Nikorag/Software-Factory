@@ -43,6 +43,7 @@ export function counts(db: FactoryDb, now = new Date(), windowMs = 3600_000): Co
 export interface HealthItem { name: string; status: "ok" | "warn" | "fail"; detail: string; checkedAt: number }
 
 export interface HealthDeps {
+  trackerName?: string; // "linear" (default) or "jira": what the tracker probe is called
   claudeAuth?: () => Promise<string>; // output of `claude auth status`
   linearViewer?: () => Promise<{ name: string }>;
   ghAuth?: () => Promise<string>;
@@ -76,7 +77,7 @@ export class HealthChecker {
       const j = JSON.parse(await d.claudeAuth!()) as { loggedIn?: boolean; authMethod?: string };
       return j.loggedIn ? { status: "ok", detail: `logged in (${j.authMethod ?? "unknown"} subscription login)` } : { status: "fail", detail: "not logged in: run `claude` and /login" };
     }));
-    if (d.linearViewer) out.push(this.probe("linear", async () => ({ status: "ok", detail: `authenticated as ${(await d.linearViewer!()).name}` })));
+    if (d.linearViewer) out.push(this.probe(d.trackerName ?? "linear", async () => ({ status: "ok", detail: `authenticated as ${(await d.linearViewer!()).name}` })));
     if (d.ghAuth) out.push(this.probe("github", async () => (/Logged in/.test(await d.ghAuth!()) ? { status: "ok", detail: "gh is authenticated" } : { status: "fail", detail: "gh is not logged in" })));
     if (d.sandboxAvailable) out.push(this.probe("sandbox", async () => (d.sandboxAvailable!() ? { status: "ok", detail: "sandbox-exec available: project code runs confined" } : { status: "fail", detail: "sandbox-exec missing: project commands will be refused" })));
     if (d.specifyInstalled) out.push(this.probe("spec kit", async () => (d.specifyInstalled!() ? { status: "ok", detail: "specify installed" } : { status: "warn", detail: "specify not found (needed to onboard projects)" })));

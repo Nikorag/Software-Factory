@@ -5,7 +5,7 @@
 <h1 align="center">Software Factory</h1>
 
 <p align="center">
-  <b>Turn Linear tickets into reviewed GitHub pull requests, on your own Mac, with Claude Code.</b><br />
+  <b>Turn Linear or Jira tickets into reviewed GitHub pull requests, on your own Mac, with Claude Code.</b><br />
   Spec-first, sandboxed, independently reviewed, and it never merges: you do.
 </p>
 
@@ -39,7 +39,8 @@ It runs locally: your code, your Claude subscription, your GitHub and Linear acc
 - **Watch Claude work.** Open the full back-and-forth of any agent run (prompt, messages, tool calls and their output), live while it runs.
 - **Pick tickets yourself.** Set the factory to manual mode and choose what to work on from a board of your Linear tickets, searchable by number (`418`, `JAM-418`) or title. Or leave it automatic and let labelled tickets start on their own.
 - **Human in the loop.** When it needs you, it stops and tells you why. Answer in the dashboard and the job resumes with your answer.
-- **Profiles.** Run a "home" and a "work" factory side by side, each with its own projects, Linear workspace, GitHub account and data.
+- **Linear or Jira.** Each profile uses one: connect Linear with an API key, or Jira with an OAuth app and a mapping of its statuses and labels. Run a "home" profile on Linear and a "work" profile on Jira.
+- **Profiles.** Run a "home" and a "work" factory side by side, each with its own projects, tracker, GitHub account and data.
 - **Settings UI and setup wizard.** Connect your tools, add projects, set their test commands, pick models per workflow step, and set concurrency and fix-cycle limits, globally or per project. No config files to edit.
 - **Independent review.** A different model reviews the work than the one that wrote it.
 - **Safe by construction.** See [Safety](#safety).
@@ -52,7 +53,7 @@ It runs locally: your code, your Claude subscription, your GitHub and Linear acc
 - [GitHub CLI](https://cli.github.com) (`gh`), signed in. Several accounts are fine.
 - [Spec Kit](https://github.com/github/spec-kit) (`uv tool install specify-cli`).
 - git, Node.js 22 or newer, and Python via [uv](https://docs.astral.sh/uv/).
-- A [Linear](https://linear.app) account and a personal API key.
+- A [Linear](https://linear.app) account and a personal API key, **or** a Jira Cloud site and an Atlassian OAuth app (see [docs/jira.md](docs/jira.md)). Each profile picks one.
 
 You do not need to check this by hand: the installer verifies every item and tells you exactly how to fix anything that is missing.
 
@@ -113,7 +114,7 @@ Everything is in **Settings** in the app:
 
 - **Projects**: repository, Linear binding, autonomy, and the install/build/typecheck/lint/test commands. Run *Clone*, *Validate*, *Run checks* and *Onboard Spec Kit* right from the editor.
 - **Workflow**: ticket pickup (automatic or manual), concurrent jobs, the fix-cycle limit, and which model handles each part of the workflow (triage, specification, implementation, independent review, Claude review). Any project can override these.
-- **Integrations**: live status of every tool, and your Linear connection.
+- **Integrations**: live status of every tool, and your issue tracker: Linear (API key) or Jira (OAuth app, plus mapping its statuses and labels to existing ones).
 - **Profiles**: add and manage them.
 
 Your settings live in `~/.software-factory/config/` as plain YAML, edited with comments preserved, so you can also edit them by hand. See [docs/configuration.md](docs/configuration.md).
@@ -179,7 +180,7 @@ pnpm typecheck && pnpm lint && pnpm test
 
 ## Documentation
 
-[Setup](docs/setup.md) · [Configuration](docs/configuration.md) · [Workflows](docs/workflows.md) · [Model routing](docs/model-routing.md) · [Integrations](docs/integrations.md) · [Operations](docs/operations.md) · [Troubleshooting](docs/troubleshooting.md) · [Decisions](docs/adr)
+[Setup](docs/setup.md) · [Configuration](docs/configuration.md) · [Workflows](docs/workflows.md) · [Model routing](docs/model-routing.md) · [Integrations](docs/integrations.md) · [Jira](docs/jira.md) · [Operations](docs/operations.md) · [Troubleshooting](docs/troubleshooting.md) · [Decisions](docs/adr)
 
 ## License
 

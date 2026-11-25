@@ -63,10 +63,11 @@ export async function flushOutbox(
   };
   const find = <T extends { name: string; id: string }>(items: T[], name: string, what: string): T => {
     const m = items.find((x) => x.name.toLowerCase() === name.toLowerCase());
-    if (!m) throw new LinearApiError(`Linear ${what} "${name}" does not exist for this team (fix config/linear.yaml or create it in Linear)`, false, undefined, "CONFIG");
+    if (!m) throw new LinearApiError(`Linear ${what} "${name}" does not exist for this project (map it to an existing one in Settings → Tracker, or create it in your tracker)`, false, undefined, "CONFIG");
     return m;
   };
 
+  const skip = (id: number, why: string) => { db.update(linearOutbox).set({ status: "done", doneAt: now(), lastError: `skipped: ${why}` }).where(eq(linearOutbox.id, id)).run(); };
   for (const row of rows) {
     if (blockedIssues.has(row.issueId)) { result.pending++; continue; }
     const op = { kind: row.kind, ...JSON.parse(row.payloadJson) } as OutboxOp;
@@ -77,6 +78,7 @@ export async function flushOutbox(
     try {
       switch (op.kind) {
         case "set_state": {
+          if (!linear.statuses[op.stateKey]) { skip(row.id, `the "${op.stateKey}" status is not mapped`); continue; } // Jira: an unmapped status is simply not used
           const issue = await issueOf(row.issueId);
           let states = stateCache.get(issue.team.id);
           if (!states) { states = await client.workflowStates(issue.team.id); stateCache.set(issue.team.id, states); }
@@ -86,10 +88,13 @@ export async function flushOutbox(
         }
         case "add_label":
         case "remove_label": {
+          if (!linear.labels[op.labelKey]) { skip(row.id, `the "${op.labelKey}" label is not mapped`); continue; }
           const issue = await issueOf(row.issueId);
           let labels = labelCache.get(issue.team.id);
           if (!labels) { labels = await client.labels(issue.team.id); labelCache.set(issue.team.id, labels); }
-          const target = find(labels, linear.labels[op.labelKey], "label");
+          const wanted = linear.labels[op.labelKey];
+          // Jira labels exist as soon as they are used, so one that is not in the list yet is simply added by name.
+          const target = client.freeformLabels && !labels.some((x) => x.name.toLowerCase() === wanted.toLowerCase()) ? { id: wanted, name: wanted } : find(labels, wanted, "label");
           const present = issue.labels.some((l) => l.id === target.id);
           if (op.kind === "add_label" && !present) await client.addLabel(row.issueId, target.id);
           if (op.kind === "remove_label" && present) await client.removeLabel(row.issueId, target.id);

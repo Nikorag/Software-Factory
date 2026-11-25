@@ -17,9 +17,10 @@ import { Scheduler } from "./scheduler.js";
 import { LocalModelClient } from "../agents/local.js";
 import { createLinearClient } from "../linear/client.js";
 import { createProjectActions } from "./actions.js";
-import { resolveSecret, saveSecret } from "./secrets.js";
+import { saveSecret } from "./secrets.js";
 import { TaskManager } from "./tasks.js";
 import { UpdateChecker } from "./versions.js";
+import { keychainStore, trackerConfigured } from "../tracker/index.js";
 import { pruneAgentLogs } from "./retention.js";
 import { addProfile, DEFAULT_PROFILE, factoryRoot, listProfiles, removeProfile } from "../config/profiles.js";
 import { isUp, startService as launchService } from "./launch.js";
@@ -41,6 +42,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
 
   const usesLocal = Object.values(config.models.routes).some((r) => r.provider === "local");
   const health = new HealthChecker({
+    trackerName: config.factory.tracker,
     claudeAuth: async () => (await run("claude", ["auth", "status"], { timeout: 10_000 })).stdout,
     linearViewer: async () => ctx.linear().viewer(),
     ghAuth: async () => { const r = await run("gh", ["auth", "status"], { timeout: 10_000 }).catch((e) => e as { stdout?: string; stderr?: string }); return `${r.stdout ?? ""}${r.stderr ?? ""}`; },
@@ -62,10 +64,10 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
 
   const keySrc = { envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService };
   const settings = {
-    tasks: new TaskManager(), actions: createProjectActions(ctx), linear: () => ctx.linear(), linearKeyPresent: () => Boolean(resolveSecret(keySrc)),
+    tasks: new TaskManager(), actions: createProjectActions(ctx), linear: () => ctx.linear(), linearKeyPresent: () => trackerConfigured(config),
     saveLinearKey: async (key: string) => { const me = await createLinearClient({ apiKey: key }).viewer(); saveSecret(keySrc, key); return { name: me.name }; },
   };
-  const app = buildServer({ db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, updates: new UpdateChecker(), profiles: {
+  const app = buildServer({ db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, jira: { store: keychainStore(config.jira.keychainService), port }, updates: new UpdateChecker(), profiles: {
     current: process.env.FACTORY_PROFILE ?? DEFAULT_PROFILE, list: () => listProfiles(), add: (n) => addProfile(n), remove: (n) => removeProfile(n),
     start: (p) => launchService(p, factoryRoot()), isUp: (p) => isUp(p),
   } });

@@ -26,7 +26,8 @@ export function parseSearch(raw: string): { number?: number; teamKey?: string; t
 /** Which of our projects a Linear ticket belongs to (the most specific binding wins; a whole-team binding is the fallback). */
 export function projectFor(issue: LinearIssue, projects: ProjectConfig[]): ProjectConfig | null {
   const mine = projects.filter((p) => p.linear?.teamKey === issue.team.key);
-  return mine.find((p) => (p.linear!.projectId && p.linear!.projectId === issue.project?.id) || (p.linear!.projectName && p.linear!.projectName === issue.project?.name))
+  const inProjects = issue.projects?.length ? issue.projects : issue.project ? [issue.project] : [];
+  return mine.find((p) => inProjects.some((x) => (p.linear!.projectId && p.linear!.projectId === x.id) || (p.linear!.projectName && p.linear!.projectName === x.name)))
     ?? mine.find((p) => !p.linear!.projectId && !p.linear!.projectName) ?? null;
 }
 

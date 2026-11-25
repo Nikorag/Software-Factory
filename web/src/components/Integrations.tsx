@@ -17,6 +17,7 @@ const HELP: Record<string, string> = {
   sandbox: "Needs macOS (sandbox-exec). Project commands are refused without it, by design.",
   "spec kit": "Install with `uv tool install specify-cli` (needs uv: `brew install uv`).",
   linear: "Add your Linear API key below.",
+  jira: "Connect Jira with your OAuth app below.",
 };
 const Icon = ({ s }: { s: string }) => (s === "ok" ? <CheckCircle2 className="size-4 text-ok" /> : s === "warn" ? <CircleAlert className="size-4 text-loop" /> : <XCircle className="size-4 text-destructive" />);
 

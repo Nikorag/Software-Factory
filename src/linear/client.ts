@@ -10,6 +10,8 @@ export interface LinearIssue {
   state: LinearState;
   team: { id: string; key: string; name: string };
   project: { id: string; name: string } | null;
+  /** Every project the ticket belongs to when the tracker allows several (Jira components). Absent for Linear. */
+  projects?: { id: string; name: string }[];
   labels: LinearLabel[];
 }
 export interface LinearIssueDetail extends LinearIssue { comments: LinearComment[] }
@@ -19,6 +21,8 @@ export interface IssueQuery { teamKey: string; projectId?: string; projectName?:
 
 /** Everything the factory needs from Linear. Real implementation below; tests supply a fake. */
 export interface LinearClient {
+  /** Labels exist as soon as they are used (Jira), so a label that is not in the list yet can still be added by name. */
+  freeformLabels?: boolean;
   viewer(): Promise<{ id: string; name: string }>;
   listIssues(q: IssueQuery): Promise<LinearIssue[]>;
   getIssue(idOrKey: string): Promise<LinearIssueDetail>;
