@@ -10,7 +10,7 @@ const BANDS = [
 
 function Icon({ kind, cx, cy }: { kind: NodeState; cx: number; cy: number }) {
   if (kind === "done") return <g><circle cx={cx} cy={cy} r={9} className="fill-ok" /><path d={`M${cx - 4},${cy} l3,3 l5,-6`} className="stroke-background" fill="none" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" /></g>;
-  if (kind === "run") return <g><circle cx={cx} cy={cy} r={8} fill="none" className="stroke-border" strokeWidth={2.4} /><path d={`M${cx},${cy - 8} A8,8 0 0 1 ${cx + 8},${cy}`} fill="none" className="anim stroke-run animate-spin" style={{ transformBox: "fill-box", transformOrigin: "center" }} strokeWidth={2.6} strokeLinecap="round" /></g>;
+  if (kind === "run") return <g><circle cx={cx} cy={cy} r={8} fill="none" className="stroke-border" strokeWidth={2.4} /><path d={`M${cx},${cy - 8} A8,8 0 0 1 ${cx + 8},${cy}`} fill="none" className="anim stroke-run animate-spin" style={{ transformBox: "view-box", transformOrigin: `${cx}px ${cy}px` }} strokeWidth={2.6} strokeLinecap="round" /></g>;
   if (kind === "wait") return <g><circle cx={cx} cy={cy} r={9} fill="none" className="stroke-wait" strokeWidth={2} /><path d={`M${cx},${cy - 5} V${cy} l4,2.5`} fill="none" className="stroke-wait" strokeWidth={2} strokeLinecap="round" /></g>;
   if (kind === "fail") return <g><circle cx={cx} cy={cy} r={9} className="fill-destructive" /><path d={`M${cx},${cy - 4.5} V${cy + 1}`} className="stroke-background" strokeWidth={2.2} strokeLinecap="round" /><circle cx={cx} cy={cy + 4.6} r={1.2} className="fill-background" /></g>;
   return <circle cx={cx} cy={cy} r={8} fill="none" className="stroke-border" strokeWidth={2} />;
