@@ -76,7 +76,7 @@ const RouteName = ["classification", "specification", "implementation", "indepen
 /** Anything set here beats the global setting for this project only; anything left out follows the global one. */
 export const ProjectOverrides = z.object({
   pickupMode: z.enum(["automatic", "manual"]).optional(),
-  maxConcurrentJobs: z.number().int().min(1).max(8).optional(), // jobs of THIS project running at once (default 1: they share one repository clone)
+  maxConcurrentJobs: z.number().int().min(1).max(8).optional(), // jobs of THIS project running at once (default 1: each job has its own worktree, but tickets in one repository tend to touch the same files)
   maxRemediationAttempts: z.number().int().min(0).max(10).optional(),
   maxImplementationPasses: z.number().int().min(1).max(10).optional(),
   models: z.object(Object.fromEntries(RouteName.map((r) => [r, ModelRoute.optional()])) as Record<(typeof RouteName)[number], z.ZodOptional<typeof ModelRoute>>)
