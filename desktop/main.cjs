@@ -1,7 +1,7 @@
 // The Software Factory desktop app: a window onto a profile's dashboard. It is deliberately thin: the factory itself runs as a
 // background service (started by `software-factory start`) and keeps working when this window is closed.
 const { app, BrowserWindow, Menu, Notification, Tray, shell, dialog, session, nativeImage } = require("electron");
-const { summarise } = require("./tray-model.cjs");
+const { summarise, pollPlan } = require("./tray-model.cjs");
 const { newInterruptions } = require("./notify-model.cjs");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -83,6 +83,7 @@ function showDock() { if (process.platform !== "darwin" || !app.dock) return; se
 function openWindow(profile) {
   if (profile) current = profile;
   if (process.platform === "darwin") void showDock();
+  void pollStatus(); // the window counts towards the polling pace: re-plan now
   if (!win) createWindow();
   else { if (win.isMinimized()) win.restore(); win.show(); win.focus(); if (profile) void show(profile); }
 }
@@ -92,6 +93,7 @@ async function refreshTray() {
   const profs = readProfiles();
   const status = await Promise.all(profs.map(async (p) => { const isUp = await up(p); return { name: p.name, up: isUp, ...(isUp ? await counts(p) : {}) }; }));
   const m = summarise(status);
+  lastSummary = m;
   tray.setToolTip(m.tooltip);
   if (process.platform === "darwin") tray.setTitle(m.title);
   const items = [
@@ -106,6 +108,21 @@ async function refreshTray() {
     { label: "Stop the Factory and Quit…", click: () => void stopAll() },
   ];
   tray.setContextMenu(Menu.buildFromTemplate(items));
+  return m;
+}
+
+// ---- polling pace (see pollPlan): one timer chain each, re-planned after every poll from what the last one saw ----
+let lastSummary = null, statusTimer = null, interruptionsTimer = null;
+const plan = () => pollPlan({ ...(lastSummary ?? {}), windowVisible: Boolean(win && !win.isDestroyed() && win.isVisible()) });
+async function pollStatus() {
+  clearTimeout(statusTimer);
+  try { await buildMenu(await refreshTray()); } catch { /* next poll */ }
+  clearTimeout(statusTimer); statusTimer = setTimeout(() => void pollStatus(), plan().statusMs);
+}
+async function pollInterruptions() {
+  clearTimeout(interruptionsTimer);
+  try { await checkInterruptions(); } catch { /* next poll */ }
+  clearTimeout(interruptionsTimer); interruptionsTimer = setTimeout(() => void pollInterruptions(), plan().interruptionsMs);
 }
 
 // ---- system notifications for interruptions: a job that stops and needs you (a question, a fix-cycle limit, a failure) ----
@@ -135,13 +152,13 @@ function createTray() {
   tray = new Tray(icon);
   tray.setToolTip("Software Factory");
   tray.on("double-click", () => openWindow());
-  void refreshTray(); setInterval(() => void refreshTray(), 5000);
-  void checkInterruptions(); setInterval(() => void checkInterruptions(), 10000);
+  void pollInterruptions();
 }
 
-async function buildMenu() {
+/** @param m the tray's latest summary, when there is a tray: saves probing every profile a second time */
+async function buildMenu(m) {
   const profs = readProfiles();
-  const status = await Promise.all(profs.map((p) => up(p)));
+  const status = await Promise.all(profs.map((p) => { const l = m?.lines.find((x) => x.name === p.name); return l ? l.up : up(p); }));
   const template = [
     { label: app.name, submenu: [
       { role: "about" },
@@ -197,9 +214,9 @@ else {
   app.whenReady().then(() => {
     session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false)); // no camera, mic, location, notifications...
     setDockIcon();
-    void buildMenu(); setInterval(() => void buildMenu(), 5000);
     if (!SMOKE) createTray();
     createWindow();
+    void pollStatus(); // tray and app menu, at the pace pollPlan sets (after the window exists: it counts towards the pace)
     app.on("activate", () => { if (!win) createWindow(); });
   });
   // Closing the window keeps the app in the menu bar (no Dock icon) so it can be reopened with one click; the factory itself is a separate

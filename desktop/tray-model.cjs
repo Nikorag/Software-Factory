@@ -22,4 +22,16 @@ function summarise(profiles) {
     })),
   };
 }
-module.exports = { summarise };
+
+/**
+ * How often the menu bar app polls the services. Every poll is a few HTTP requests per profile, and the app sits in the menu bar
+ * all day, so: quick while jobs are running or queued (counts change, interruptions can appear), relaxed while the window is open,
+ * and slow when the factory is idle (or stopped) and the window is closed. Interruptions only arise from jobs that run.
+ * @param {{running?: number, queued?: number, windowVisible?: boolean}} s
+ */
+function pollPlan(s) {
+  if ((s.running || 0) > 0 || (s.queued || 0) > 0) return { statusMs: 5000, interruptionsMs: 10000 };
+  if (s.windowVisible) return { statusMs: 10000, interruptionsMs: 30000 };
+  return { statusMs: 30000, interruptionsMs: 60000 };
+}
+module.exports = { summarise, pollPlan };
