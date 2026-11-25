@@ -4,6 +4,8 @@ Updates: `software-factory update` (add `--check` to only look). Releases are gi
 
 ## Unreleased
 
+- **Answering a held job's questions works end to end.** Answering a specification's open questions now runs the spec-writer with the questions and your answer (it used to skip remediation, leave the spec unchanged and block on the same questions again, or re-send already-fixed review findings). Answering in the ticket and retrying also goes through remediation once; if the questions are still unresolved the job blocks again instead of looping. Every answer is stored with the questions it answers and the stage that asked, and agents see question → answer pairs (the requirements analyst treats them as resolved).
+
 - **Bitbucket Cloud support** as an alternative to GitHub, chosen per project, with named token credentials (access tokens or Atlassian API tokens) in the keychain. See docs/bitbucket.md.
 
 - **Jira support** (Jira Cloud, OAuth 2.0 3LO) as an alternative to Linear, chosen per profile. Statuses and labels are mapped to existing ones in Settings because Jira statuses cannot be created. See docs/jira.md.
