@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
 import { loadConfig } from "./config/load.js";
@@ -22,6 +23,7 @@ import { createGhClient } from "./github/client.js";
 import { resolveSecret } from "./service/secrets.js";
 import { startService } from "./service/main.js";
 import { loadOrCreateToken } from "./server/app.js";
+import { applyUpdate, planUpdate } from "./service/update.js";
 import { agentStatus, installAgent, uninstallAgent } from "./service/launchd.js";
 
 const openFactoryDb = () => {
@@ -35,7 +37,7 @@ const linearClient = (config: ReturnType<typeof loadConfig>): LinearClient => {
   return createLinearClient({ apiKey: key });
 };
 
-const program = new Command("factory").description("Local-first autonomous software factory");
+const program = new Command("factory").description("Local-first autonomous software factory").version(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version as string, "-v, --version");
 
 program
   .command("doctor")
@@ -282,6 +284,27 @@ program
     const shutdown = async () => { await svc.stop(); process.exit(0); };
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
+  });
+
+program
+  .command("update")
+  .description("Update this install to the newest release (or --ref <tag|branch>), reinstall dependencies and rebuild the dashboard. Your settings and data are never touched.")
+  .option("--check", "only report whether an update is available")
+  .option("--ref <ref>", "a release tag or branch instead of the newest release")
+  .action(async (opts: { check?: boolean; ref?: string }) => {
+    const plan = await planUpdate({ ref: opts.ref });
+    const where = plan.targetIsTag ? `release ${plan.target}` : plan.target;
+    if (plan.upToDate) { console.log(`up to date (${plan.current})`); return; }
+    console.log(`${plan.current}  ->  ${where}  (${plan.behind} new commit(s))${plan.latestTag ? "" : "  [no releases yet: following main]"}`);
+    if (opts.check) { console.log("run `software-factory update` to apply it"); return; }
+    await applyUpdate(plan, { log: (l) => console.log(l) });
+    console.log(`updated to ${where}.`);
+    const config = loadConfig();
+    try {
+      const o = (await (await fetch(`http://127.0.0.1:${config.factory.server.port}/api/overview`, { signal: AbortSignal.timeout(2000) })).json()) as { counts: { byStatus: Record<string, number> } };
+      const running = o.counts.byStatus.running ?? 0;
+      console.log(`The factory is running and still has the old code. Restart it to use the update (${running ? `${running} job(s) are running right now: a restart redoes the stage in progress, so wait for a quiet moment` : "no jobs are running, so it is safe now"}).`);
+    } catch { console.log("Start it with `software-factory start`."); }
   });
 
 program

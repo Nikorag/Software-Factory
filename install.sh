@@ -12,14 +12,15 @@
 # dashboard walks you through the rest. Read this file first if you like: `curl -fsSL <url> | less`.
 #
 # Options:  --dry-run   print what would happen and change nothing
-# Env:      FACTORY_HOME, FACTORY_BIN, FACTORY_REPO (git url), FACTORY_REF (branch or tag, default main)
+# Env:      FACTORY_HOME, FACTORY_BIN, FACTORY_REPO (git url), FACTORY_REF (tag or branch; default: the newest release, else main)
+# Update later with:  software-factory update
 
 # Everything is inside main() so a download that is cut off half way never runs a partial script.
 main() {
   set -euo pipefail
 
   local REPO="${FACTORY_REPO:-https://github.com/Nikorag/Software-Factory.git}"
-  local REF="${FACTORY_REF:-main}"
+  local REF="${FACTORY_REF:-}"
   local HOME_DIR="${FACTORY_HOME:-$HOME/.software-factory}"
   local APP="$HOME_DIR/app"
   local BIN="${FACTORY_BIN:-$HOME/.local/bin}"
@@ -32,6 +33,13 @@ main() {
   run()  { if [ "$DRY" = 1 ]; then printf '   [dry-run] %s\n' "$*"; else "$@"; fi; }
 
   if [ "$DRY" = 1 ]; then say "Software Factory installer (dry run: nothing will be changed)"; else say "Software Factory installer"; fi
+
+  # Which version: FACTORY_REF if given, else the newest release tag (v*), else main (before the first release).
+  if [ -z "$REF" ]; then
+    REF="$(git ls-remote --tags --refs "$REPO" 'v*' 2>/dev/null | sed 's#.*refs/tags/##' | sort -V | tail -1 || true)"
+    REF="${REF:-main}"
+  fi
+  say "version: $REF"
 
   # 1. prerequisites
   if [ "$(uname -s)" != "Darwin" ]; then
@@ -52,8 +60,10 @@ main() {
   # 2. download (or update an earlier install: fast-forward only, local changes are never overwritten)
   if [ -d "$APP/.git" ]; then
     say "updating the existing install in $APP"
-    run git -C "$APP" fetch --quiet origin "$REF"
-    run git -C "$APP" merge --ff-only "origin/$REF" || die "$APP has local changes or diverged; resolve that (or remove it) and re-run."
+    say "tip: next time, just run  software-factory update"
+    run git -C "$APP" fetch --quiet --tags origin
+    if git -C "$APP" show-ref --verify --quiet "refs/tags/$REF"; then run git -C "$APP" checkout --quiet --detach "$REF" || die "$APP has local changes; resolve that (or remove it) and re-run."
+    else run git -C "$APP" merge --ff-only "origin/$REF" || die "$APP has local changes or diverged; resolve that (or remove it) and re-run."; fi
   else
     say "downloading the factory into $APP"
     run mkdir -p "$HOME_DIR"

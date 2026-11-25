@@ -1,6 +1,6 @@
 {
   "name": "software-factory",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Local-first autonomous software factory",
   "scripts": {
     "build": "pnpm web:build && tsc -p tsconfig.json --noEmit false --rootDir . --outDir dist",
