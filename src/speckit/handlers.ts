@@ -2,36 +2,18 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { desc, eq, and, inArray } from "drizzle-orm";
 import type { z } from "zod";
-import type { Logger } from "pino";
 import { ConfigError } from "../config/load.js";
-import type { ProjectConfig } from "../config/schema.js";
-import type { FactoryDb } from "../db/client.js";
-import { artifacts, decisions, stageExecutions } from "../db/schema.js";
-import type { StageHandler, StageResult } from "../core/engine.js";
-import type { AgentRunner } from "../agents/runner.js";
-import type { ModelRouter, TaskKind } from "../agents/router.js";
-import type { AgentResult, AgentRole } from "../agents/types.js";
-import { LinearApiError, type LinearClient } from "../linear/client.js";
-import { git as realGit, type GitFn } from "../repo/git.js";
-import { WorktreeError, type WorktreeInfo, type WorktreeManager } from "../repo/worktrees.js";
-import { featureDirFor, openQuestions, readSpecBundle, recordArtifacts, validateSpecArtifacts } from "./artifacts.js";
-import { analysisPrompt, analyzePrompt, classificationPrompt, remediationPrompt, reviewPrompt, skillPrompt, ticketBlock } from "./prompts.js";
-import { Analysis, Analyze, Classification, blocking, Remediation, Review, toJsonSchema, type Finding } from "./schemas.js";
+import { artifacts, stageExecutions } from "../db/schema.js";
+import type { StageHandler } from "../core/engine.js";
+import { git as realGit } from "../repo/git.js";
+import { openQuestions, readSpecBundle, recordArtifacts, validateSpecArtifacts } from "./artifacts.js";
+import { analysisPrompt, analyzePrompt, classificationPrompt, remediationPrompt, reviewPrompt, skillPrompt } from "./prompts.js";
+import { Analysis, Analyze, Classification, blocking, Remediation, Review, type Finding } from "./schemas.js";
 import { commitPaths, isInitialised } from "./tools.js";
+import { createStageKit, failureToResult, type StageKitDeps } from "../app/stage-kit.js";
 
-export interface SpecKitDeps {
-  db: FactoryDb;
-  runner: AgentRunner;
-  router: ModelRouter;
-  worktrees: WorktreeManager;
-  linear: () => LinearClient; // lazy: a missing LINEAR_API_KEY becomes a blocked job, not a crash at startup
-  project: (id: string) => ProjectConfig;
-  fallback: "claude" | "block";
-  logger: Logger;
-  git?: GitFn;
-}
+export type SpecKitDeps = StageKitDeps;
 
-// `.specify/feature.json` is machine-local state that Spec Kit itself gitignores: never committed.
 const COMMIT_PATHS = (dir: string) => [dir, ".specify/memory"];
 const STEPS = [
   { step: "specify", file: "spec.md" },
@@ -40,58 +22,11 @@ const STEPS = [
   { step: "tasks", file: "tasks.md" },
 ] as const;
 
-/** Translate an agent failure into the engine's vocabulary. Boundary violations and auth problems need a human. */
-export function failureToResult(r: AgentResult & { violations?: string[] }, what: string): StageResult {
-  if (r.violations?.length) return { kind: "needs_attention", reason: `${what}: security boundary violation (${r.violations.join("; ")}). The worktree was left for inspection.` };
-  if (r.failure === "auth") return { kind: "needs_attention", reason: `${what}: Claude Code is not logged in (run \`claude\` and /login).` };
-  return { kind: "retry", reason: `${what} failed (${r.failure ?? "error"}): ${r.error ?? "unknown"}` };
-}
+export { failureToResult };
 
 export function createSpecKitHandlers(d: SpecKitDeps) {
   const git = d.git ?? realGit;
-
-  type Prepared =
-    | { ok: false; stop: StageResult }
-    | { ok: true; info: WorktreeInfo; issue: Awaited<ReturnType<LinearClient["getIssue"]>>; ticket: string; featureDir: string; cwd: string };
-
-  /** Shared per-job setup. Returns a StageResult to stop early, or the working context. */
-  async function prepare(job: { id: string; projectId: string; externalId: string; externalKey: string }): Promise<Prepared> {
-    let info: WorktreeInfo;
-    try {
-      info = await d.worktrees.create(job);
-    } catch (e) {
-      if (e instanceof WorktreeError) return { ok: false, stop: { kind: "blocked", reason: e.message } };
-      throw e;
-    }
-    let issue;
-    try {
-      issue = await d.linear().getIssue(job.externalId);
-    } catch (e) {
-      if (e instanceof ConfigError || (e instanceof Error && /not set/.test(e.message))) return { ok: false, stop: { kind: "blocked", reason: e.message } };
-      if (e instanceof LinearApiError && !e.retryable) return { ok: false, stop: { kind: "blocked", reason: `cannot read the Linear issue: ${e.message}` } };
-      throw e;
-    }
-    const featureDir = featureDirFor(job.externalKey, issue.title);
-    return { ok: true, info, issue, ticket: ticketBlock(issue), featureDir, cwd: info.path };
-  }
-
-  const record = (jobId: string, kind: string, decision: string, rationale?: string) =>
-    d.db.insert(decisions).values({ jobId, kind, decision, rationale: rationale ?? null, actor: "factory" }).run();
-
-  async function agent<T extends z.ZodType>(
-    ctx: { job: { id: string }; executionId: number; signal: AbortSignal }, o: { task: TaskKind; role: AgentRole; prompt: string; cwd: string; schema?: T; baseRef?: string; timeoutMs: number; bashAllow?: string[] },
-  ): Promise<{ ok: true; data: z.infer<T> | undefined; result: AgentResult & { route?: { provider: string; model: string } } } | { ok: false; stop: StageResult }> {
-    const result = await d.runner.run({
-      jobId: ctx.job.id, executionId: ctx.executionId, task: o.task, role: o.role, prompt: o.prompt, cwd: o.cwd,
-      timeoutMs: o.timeoutMs, signal: ctx.signal, baseRef: o.baseRef, bashAllow: o.bashAllow,
-      jsonSchema: o.schema ? toJsonSchema(o.schema) : undefined,
-    });
-    if (!result.ok) return { ok: false, stop: failureToResult(result, o.role) };
-    if (!o.schema) return { ok: true, data: undefined, result };
-    const parsed = o.schema.safeParse(result.structured);
-    if (!parsed.success) return { ok: false, stop: { kind: "retry", reason: `${o.role} returned output that does not match the schema: ${parsed.error.issues[0]?.message ?? "invalid"}` } };
-    return { ok: true, data: parsed.data, result };
-  }
+  const { prepare, agent, record, independent } = createStageKit(d);
 
   const MIN = 60_000;
 
@@ -160,43 +95,17 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
     return { kind: "ok", output: { featureDir: p.featureDir, files: Object.keys(readSpecBundle(p.cwd, p.featureDir).files) } };
   };
 
-  /**
-   * Independent review by whatever the `independent_review` route names (a different, cheaper model than the author:
-   * Haiku by default). Only a *local* route has a fallback (to a fresh Claude reviewer, or block): a Claude route's
-   * failures are ordinary stage failures.
-   */
+  /** Independent review (Haiku by default, a different model from the author; read-only). Fallback rules live in the stage kit. */
   const specificationReview: StageHandler = async (ctx) => {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
-    const bundle = readSpecBundle(p.cwd, p.featureDir);
-    const prompt = reviewPrompt(p.ticket, bundle);
-    const run = (task: TaskKind) => agent(ctx, { task, role: "spec-reviewer", prompt, cwd: p.cwd, schema: Review, timeoutMs: 15 * MIN });
-
-    let provider: "local" | "anthropic" = "anthropic";
-    let r: Awaited<ReturnType<typeof run>>;
-    try {
-      provider = d.router.route("independent_review").provider;
-      r = await run("independent_review");
-    } catch (e) {
-      if (!(e instanceof ConfigError)) throw e;
-      provider = "local"; // an unconfigured local route
-      r = { ok: false, stop: { kind: "retry", reason: "local model not configured" } };
-    }
-    let reviewer = "independent_review route";
-    if (r.ok) reviewer = r.result.route?.model ?? reviewer;
-    if (!r.ok) {
-      if (provider !== "local") return r.stop;
-      if (d.fallback === "block") return { kind: "blocked", reason: `The independent (local) reviewer is unavailable and the fallback is "block": ${r.stop.kind === "retry" ? r.stop.reason : "unavailable"}` };
-      record(ctx.job.id, "review.degraded", "independent local review unavailable; used a fresh Claude reviewer", r.stop.kind === "retry" ? r.stop.reason : undefined);
-      r = await run("final_review");
-      if (!r.ok) return r.stop;
-      reviewer = `${r.result.route?.model ?? "claude"} (fallback)`;
-    }
-    const review = r.data!;
-    const must = review.findings.filter((f) => blocking(f.severity));
-    record(ctx.job.id, "review.result", `${review.verdict}: ${review.findings.length} finding(s), ${must.length} blocking`, reviewer);
-    if (must.length > 0) return { kind: "remediate", reason: `${must.length} blocking finding(s) in the specification review`, output: { findings: review.findings, reviewer } };
-    return { kind: "ok", output: { findings: review.findings, reviewer } };
+    const prompt = reviewPrompt(p.ticket, readSpecBundle(p.cwd, p.featureDir));
+    const r = await independent(ctx, (task) => agent(ctx, { task, role: "spec-reviewer", prompt, cwd: p.cwd, schema: Review, timeoutMs: 15 * MIN }));
+    if (!r.ok) return r.stop;
+    const must = r.data.findings.filter((f) => blocking(f.severity));
+    record(ctx.job.id, "review.result", `${r.data.verdict}: ${r.data.findings.length} finding(s), ${must.length} blocking`, r.reviewer);
+    if (must.length > 0) return { kind: "remediate", reason: `${must.length} blocking finding(s) in the specification review`, output: { findings: r.data.findings, reviewer: r.reviewer } };
+    return { kind: "ok", output: { findings: r.data.findings, reviewer: r.reviewer } };
   };
 
   const specificationValidation: StageHandler = async (ctx) => {

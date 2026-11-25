@@ -17,6 +17,7 @@ import { applySetup, planSetup } from "./linear/setup.js";
 import { flushOutbox } from "./linear/outbox.js";
 import { createContext } from "./app/context.js";
 import { onboardProject } from "./speckit/onboard.js";
+import { checkProject } from "./repo/check.js";
 
 const openFactoryDb = () => {
   const config = loadConfig();
@@ -204,6 +205,26 @@ program
     const r = await onboardProject(project, { runner: ctx.runner, dataDir: config.factory.dataDir });
     console.log(r.status === "already-initialised" ? `${id}: Spec Kit is already set up` : `${id}: created branch ${r.branch} (${r.commits.join(", ")})\n  review: git -C ${r.worktree} log -p ${project.defaultBranch}..HEAD`);
     ctx.handle.close();
+  });
+
+program
+  .command("project:check <id>")
+  .description("Prove a project's install/build/lint/typecheck/test commands work: runs them in a throwaway worktree under the sandbox")
+  .option("--no-install", "skip the install step (reuse nothing: only for projects that need no dependencies)")
+  .option("--keep", "keep the throwaway worktree for inspection")
+  .action(async (id: string, opts: { install: boolean; keep?: boolean }) => {
+    const config = loadConfig();
+    const project = config.projects.projects.find((p) => p.id === id);
+    if (!project) { console.error(`no such project: ${id}`); process.exitCode = 1; return; }
+    if (project.managed) { const c = await ensureClone(project); if (c.status === "error") { console.error(c.error); process.exitCode = 1; return; } }
+    const report = await checkProject(project, {
+      dataDir: config.factory.dataDir, sandbox: config.factory.sandbox, timeoutMs: config.factory.commandTimeoutSeconds * 1000, skipInstall: !opts.install, keep: opts.keep,
+      onResult: (r) => console.log(`${r.ok ? "✓" : "✗"} ${r.kind.padEnd(9)} ${Math.round(r.durationMs / 1000)}s${r.sandboxed ? "" : " (UNSANDBOXED)"}  ${r.command}${r.ok ? "" : `\n${r.tail.slice(-1800).split("\n").map((l) => `    ${l}`).join("\n")}`}`),
+    });
+    if (report.missingTest) console.log("! no `test` command is configured: the factory will not implement changes for this project");
+    console.log(report.ok ? `\n✓ ${id}: all configured commands pass on ${report.baseRef}` : `\n✗ ${id}: not ready`);
+    if (opts.keep) console.log(`  worktree kept at ${report.worktree}`);
+    process.exitCode = report.ok ? 0 : 1;
   });
 
 program

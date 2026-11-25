@@ -41,3 +41,14 @@ export async function commitPaths(cwd: string, paths: string[], message: string,
   await git(cwd, ["-c", "commit.gpgsign=false", "commit", "-q", "-m", message], { env: IDENT_ENV });
   return true;
 }
+
+/** Never sweep dependency or build output into a commit, even in a repo that forgot to gitignore it. */
+const NEVER_COMMIT = [":(exclude)node_modules", ":(exclude).pnpm-store", ":(exclude).DS_Store", ":(exclude)**/node_modules"];
+
+/** Commits whatever is left in the worktree (e.g. tasks ticked by an agent) as the factory. Returns whether a commit was made. */
+export async function commitAll(cwd: string, message: string, git: GitFn = realGit): Promise<boolean> {
+  await git(cwd, ["add", "-A", "--", ".", ...NEVER_COMMIT]);
+  if (!(await git(cwd, ["diff", "--cached", "--name-only"]))) return false;
+  await git(cwd, ["-c", "commit.gpgsign=false", "commit", "-q", "-m", message], { env: IDENT_ENV });
+  return true;
+}

@@ -15,6 +15,10 @@ export const FactoryConfig = z.object({
   dryRun: z.boolean().default(false),
   maxRemediationAttempts: z.number().int().min(0).max(10).default(3),
   maxConcurrentJobs: z.number().int().min(1).default(1),
+  // Project commands (install/build/test/lint/typecheck) run under macOS sandbox-exec: no network (installs excepted),
+  // writes only inside the worktree/temp, no reading of credentials. `required: true` refuses to run them unconfined.
+  sandbox: z.object({ required: z.boolean().default(true), readAllow: z.array(z.string()).optional(), writeAllow: z.array(z.string()).optional() }).prefault({}),
+  commandTimeoutSeconds: z.number().int().min(10).default(900),
   pollIntervalSeconds: z.number().int().min(10).default(60),
   // Paths agents may never write to in any project. Enforced twice: as permission denies given to Claude Code,
   // and by verifying the worktree diff after every agent run. (The factory itself can never be a project: see loadConfig.)
@@ -77,7 +81,7 @@ export const ProjectConfig = z.object({
     })
     .prefault({}),
   commands: z
-    .object({ test: z.string().optional(), lint: z.string().optional(), typecheck: z.string().optional() })
+    .object({ install: z.string().optional(), build: z.string().optional(), test: z.string().optional(), lint: z.string().optional(), typecheck: z.string().optional() })
     .default({}),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;

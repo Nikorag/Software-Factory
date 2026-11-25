@@ -9,6 +9,9 @@ projects:
     repository: ~/projects/personal/Zonto/Zonto-Hub   # your existing checkout (left untouched; factory worktrees are separate)
     defaultBranch: main
     autonomy: supervised
+    # From .github/workflows/ci.yml (npm ci, npm test, tsc, lint, build). `npm test` needs Node >= 24 (scripts/check-node.mjs); this machine has 26.
+    # build is omitted: `next build` may need network/env the sandbox denies. The sdk/ package has its own CI job and is not covered.
+    commands: { install: "npm ci", typecheck: "npx tsc --noEmit", lint: "npm run lint", test: "npm test" }
     github: { account: Nikorag }
     linear: { teamKey: JAM, projectName: "Zonto Hub" }
 
@@ -16,6 +19,9 @@ projects:
     name: "Brotherly Love"
     defaultBranch: main
     autonomy: supervised
+    # NO TEST COMMAND YET: `make test` (C++20, CMake + SDL2) exists but cmake is not installed on this machine (`brew install cmake`).
+    # Once installed, set: commands: { test: "make test" } and verify with `pnpm factory project:check brotherly-love`.
+    commands: {}
     github: { account: Nikorag, repo: Nikorag/Brotherly-Love }
     linear: { teamKey: JAM, projectName: "Brotherly Love" }
 
@@ -23,6 +29,8 @@ projects:
     name: "Blobs"
     defaultBranch: main
     autonomy: supervised
+    # package.json scripts + .github/workflows/ci.yml.
+    commands: { install: "npm ci", lint: "npm run lint", typecheck: "npm run typecheck", test: "npm test" }
     github: { account: Nikorag, repo: Nikorag/Blobs }
     linear: { teamKey: JAM, projectName: "Blobs" }
 
@@ -30,6 +38,8 @@ projects:
     name: "Cycic Citizen"
     defaultBranch: main
     autonomy: supervised
+    # package.json scripts + CI (lint, typecheck, test, build). e2e (playwright) is not run.
+    commands: { install: "npm ci", lint: "npm run lint", typecheck: "npm run typecheck", test: "npm test" }
     github: { account: Nikorag, repo: Nikorag/CycicCitizen }
     linear: { teamKey: JAM, projectName: "Cycic Citizen" }
 
@@ -37,6 +47,8 @@ projects:
     name: "Hungry Birds"
     defaultBranch: main
     autonomy: supervised
+    # package.json scripts (`npm run check` = typecheck + lint + test + build). No CI workflow in the repo.
+    commands: { install: "npm ci", lint: "npm run lint", typecheck: "npm run typecheck", test: "npm test" }
     github: { account: Nikorag, repo: Nikorag/HungryBirds }
     linear: { teamKey: JAM, projectName: "Hungry Birds" }
 
@@ -44,6 +56,8 @@ projects:
     name: "Iron"
     defaultBranch: main
     autonomy: supervised
+    # No unit tests exist. The only automated gate besides the build is the simulation check CI runs (`npm run sim -- check`).
+    commands: { install: "npm ci", typecheck: "npm run typecheck", test: "npm run sim -- check" }
     github: { account: Nikorag, repo: Nikorag/Iron }
     linear: { teamKey: JAM, projectName: "Iron" }
 
@@ -51,6 +65,8 @@ projects:
     name: "Meaven In Space"
     defaultBranch: main
     autonomy: supervised
+    # package.json scripts + CI (lint, typecheck, test). e2e (playwright) is not run.
+    commands: { install: "npm ci", lint: "npm run lint", typecheck: "npm run typecheck", test: "npm test" }
     github: { account: Nikorag, repo: Nikorag/Meaven-In-Space }
     linear: { teamKey: JAM, projectName: "Meaven In Space" }
 
@@ -58,6 +74,8 @@ projects:
     name: "Pine"
     defaultBranch: main
     autonomy: supervised
+    # NO TEST COMMAND: a Godot project with no tests. The factory will block implementation until tests exist.
+    commands: {}
     github: { account: Nikorag, repo: Nikorag/pine }
     linear: { teamKey: JAM, projectName: "Pine" }
 
@@ -65,6 +83,9 @@ projects:
     name: "Static"
     defaultBranch: main
     autonomy: supervised
+    # Godot suite (tests/run.sh, runs several Godot processes in parallel; default full run). HOME is a temp dir for the sandbox.
+    # UNVERIFIED: it goes through tools/godot_queue.sh, which may not work in the sandbox. The Python/node SDK checks are tools/sdk_checks.sh.
+    commands: { test: 'HOME="$(mktemp -d)" tests/run.sh' }
     github: { account: Nikorag, repo: Nikorag/static }
     linear: { teamKey: JAM, projectName: "Static" }
 
@@ -72,6 +93,9 @@ projects:
     name: "Time Sheriff"
     defaultBranch: main
     autonomy: supervised
+    # NO TEST COMMAND: the repo has no tests (only `tsc --noEmit`). The factory will block implementation until tests exist;
+    # a first ticket could be "add a test suite". Not configured as `test: typecheck` on purpose: that would not verify behaviour.
+    commands: { install: "npm ci", typecheck: "npm run typecheck" }
     github: { account: Nikorag, repo: Nikorag/Time-Sheriff }
     linear: { teamKey: JAM, projectName: "Time Sheriff" }
 
@@ -79,6 +103,9 @@ projects:
     name: "Zonto Kart"
     defaultBranch: main
     autonomy: supervised
+    # Godot 4.7.2 headless suite (tests/run.sh: imports the project, runs tests/**/test_*.gd, fails on parse/script errors; ~3 min).
+    # HOME is a temp dir because Godot writes user data under $HOME, which the sandbox forbids. The C++ server/ tests need cmake (not installed).
+    commands: { test: 'HOME="$(mktemp -d)" tests/run.sh' }
     github: { account: Nikorag, repo: Nikorag/Zonto-Kart }
     linear: { teamKey: JAM, projectName: "Zonto Kart" }
 
@@ -86,6 +113,8 @@ projects:
     name: "Carve the Fate"
     defaultBranch: main
     autonomy: supervised
+    # package.json scripts + CI (npm test, build). No lint script. e2e (playwright) is not run: it needs browsers and network.
+    commands: { install: "npm ci", typecheck: "npm run typecheck", test: "npm test" }
     github: { account: Nikorag, repo: Nikorag/Carve-The-Fate }
     linear: { teamKey: JAM, projectName: "Carve the Fate" }
 
@@ -93,6 +122,9 @@ projects:
     name: "Fruit Heist"
     defaultBranch: main
     autonomy: supervised
+    # Godot 4.7.2 + GUT (docs/TESTING.md: ./run_tests.sh). HOME points at a temp dir because Godot writes its user data under
+    # $HOME, which the sandbox (rightly) forbids. UNVERIFIED until `pnpm factory project:check fruit-heist` passes.
+    commands: { test: 'HOME="$(mktemp -d)" ./run_tests.sh' }
     github: { account: Nikorag, repo: Nikorag/heist }
     linear: { teamKey: JAM, projectName: "Fruit Heist" }
 
@@ -100,6 +132,8 @@ projects:
     name: "Peggy!"
     defaultBranch: main
     autonomy: supervised
+    # CI runs: tsc, test:unit, test:realm (the many other test:* scripts are browser/e2e scripts and are not run).
+    commands: { install: "npm ci", typecheck: "npx tsc --noEmit", test: "npm run test:unit && npm run test:realm" }
     github: { account: Nikorag, repo: Nikorag/Molkky }
     linear: { teamKey: JAM, projectName: "Peggy!" }
 

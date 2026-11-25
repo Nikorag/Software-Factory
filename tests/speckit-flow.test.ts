@@ -55,14 +55,14 @@ describe("specification pipeline (real engine, handlers, git; scripted agents)",
   let h: Harness;
   beforeEach(() => { h = harness(); });
 
-  it("takes a ticket to a validated, committed specification and stops where Milestone 7 begins", async () => {
+  it("takes a ticket to a validated, committed specification and hands over to implementation", async () => {
     await h.engine.tick();
     expect(h.hist()).toEqual([
       "DISCOVERED:succeeded", "ELIGIBILITY_CHECK:succeeded", "REQUIREMENTS_ANALYSIS:succeeded", "SPECIFICATION_GENERATION:succeeded", "SPECIFICATION_REVIEW:succeeded", "SPECIFICATION_VALIDATION:succeeded",
-      "IMPLEMENTATION_PREPARATION:failed", // no handler yet: honest stop, not a fake success
+      "IMPLEMENTATION_PREPARATION:failed", // the implementation stages take over; this harness project has no real project to build
     ]);
     expect(job(h)).toMatchObject({ stage: "BLOCKED", heldFromStage: "IMPLEMENTATION_PREPARATION" });
-    expect(job(h).lastError).toMatch(/no handler registered/);
+    expect(job(h).lastError).toMatch(/already fail|baseline|test command/i);
 
     const dir = "specs/jam-1-optional-due-dates-for-todos";
     for (const f of ["ticket.md", "spec.md", "plan.md", "tasks.md", "checklists/requirements.md", "data-model.md"]) expect(exists(wt(h), `${dir}/${f}`)).toBe(true);

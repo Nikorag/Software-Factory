@@ -63,7 +63,15 @@ export function parseClaudeOutput(run: Pick<RunResult, "stdout" | "stderr" | "ex
   return { ...common, ok: true, structured: raw.structured_output };
 }
 
-export interface ClaudeCodeOptions { bin?: string; env?: NodeJS.ProcessEnv; run?: (o: RunOptions) => Promise<RunResult> }
+export interface ClaudeCodeOptions {
+  bin?: string; env?: NodeJS.ProcessEnv; run?: (o: RunOptions) => Promise<RunResult>;
+  /** Identity on commits the agent makes. Never the user's own: AI-written commits must not be attributed to a person. */
+  gitIdentity?: { name: string; email: string };
+}
+export const FACTORY_GIT_IDENTITY = { name: "Software Factory", email: "factory@localhost" };
+
+// Environment beats git config, so a user's own global identity cannot leak into agent commits.
+const gitEnv = (i: { name: string; email: string }) => ({ GIT_AUTHOR_NAME: i.name, GIT_AUTHOR_EMAIL: i.email, GIT_COMMITTER_NAME: i.name, GIT_COMMITTER_EMAIL: i.email });
 
 export class ClaudeCodeAgent implements Agent {
   readonly provider = "anthropic" as const;
@@ -72,7 +80,7 @@ export class ClaudeCodeAgent implements Agent {
   async run(req: AgentRequest): Promise<AgentResult> {
     const args = buildClaudeArgs(req);
     const r = await (this.opts.run ?? runProcess)({
-      cmd: this.opts.bin ?? "claude", args, cwd: req.cwd, env: agentEnv(this.opts.env ?? process.env),
+      cmd: this.opts.bin ?? "claude", args, cwd: req.cwd, env: agentEnv(this.opts.env ?? process.env, gitEnv(this.opts.gitIdentity ?? FACTORY_GIT_IDENTITY)),
       stdin: req.prompt, timeoutMs: req.timeoutMs, signal: req.signal, logFile: req.logFile,
     });
     const meta = { durationMs: r.durationMs, exitCode: r.exitCode, denials: [] as AgentResult["denials"], logFile: req.logFile };

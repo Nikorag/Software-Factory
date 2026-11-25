@@ -213,6 +213,13 @@ describe("ClaudeCodeAgent with a fake claude binary", () => {
     expect(seen.linear).toBeNull(); expect(seen.gh).toBeNull(); expect(seen.anth).toBeNull();
     expect(seen.args.join(" ")).not.toContain("do the thing");
   });
+  it("commits made by the agent are attributed to the factory, never to the user's own git identity", async () => {
+    const bin = fake(`process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:JSON.stringify({a:process.env.GIT_AUTHOR_NAME,e:process.env.GIT_AUTHOR_EMAIL,c:process.env.GIT_COMMITTER_NAME}),permission_denials:[]})))`);
+    const r = await new ClaudeCodeAgent({ bin, env: { PATH: process.env.PATH, HOME: process.env.HOME, GIT_AUTHOR_NAME: "A Real Person", GIT_AUTHOR_EMAIL: "person@example.com" } }).run(req());
+    expect(JSON.parse(r.text)).toEqual({ a: "Software Factory", e: "factory@localhost", c: "Software Factory" });
+    const custom = await new ClaudeCodeAgent({ bin, gitIdentity: { name: "Bot", email: "bot@x" } }).run(req());
+    expect(JSON.parse(custom.text).a).toBe("Bot");
+  });
   it("maps timeout and cancellation to distinct failures", async () => {
     const bin = fake("setInterval(()=>{},1000)");
     const agent = new ClaudeCodeAgent({ bin });
