@@ -19,7 +19,6 @@ export function TaskOutput({ taskId, onDone }: { taskId: string; onDone?: (ok: b
     };
     void tick();
     return () => { live = false; clearTimeout(timer); };
-    // eslint-disable-next-line
   }, [taskId]);
   if (!t) return null;
   return (

@@ -18,6 +18,9 @@ export function Overview() {
   const c = o.counts.byStatus, sys = o.system, sch = o.scheduler;
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
+      {o.projectCount === 0 ? (
+        <Card><CardContent className="flex flex-wrap items-center gap-3"><div className="flex-1"><b>Let's get you set up.</b><div className="text-sm text-muted-foreground">Connect your tools and Linear, then add your first project.</div></div><Link to="/setup" className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground">Start setup</Link></CardContent></Card>
+      ) : null}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Card><CardHeader><CardTitle className="text-sm">Jobs</CardTitle></CardHeader><CardContent className="grid grid-cols-5 gap-2">
           <Kpi label="running" v={c.running || 0} /><Kpi label="queued" v={c.queued || 0} /><Kpi label="waiting" v={c.waiting || 0} tone={c.waiting ? "text-loop" : ""} /><Kpi label="done" v={c.done || 0} tone="text-ok" /><Kpi label="failed" v={c.failed || 0} tone={c.failed ? "text-destructive" : ""} />

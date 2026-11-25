@@ -64,6 +64,16 @@ describe("dashboard", () => {
     expect(screen.getByText("Dashboard only: the scheduler is not running.")).toBeInTheDocument();
     expect(screen.getByText("JAM-1")).toBeInTheDocument(); expect(screen.getByText("sandbox")).toBeInTheDocument();
   });
+  it("offers the setup wizard when there are no projects, and not otherwise", async () => {
+    routes = { "/api/overview": overview({ projectCount: 0 }) };
+    app("/");
+    expect(await screen.findByRole("link", { name: "Start setup" })).toHaveAttribute("href", "/setup");
+    cleanup();
+    routes = { "/api/overview": overview({ projectCount: 2 }) };
+    app("/");
+    await screen.findByText("RUNNING");
+    expect(screen.queryByRole("link", { name: "Start setup" })).toBeNull();
+  });
   it("shows the emergency state loudly and swaps the controls", async () => {
     routes = { "/api/overview": overview({ control: { paused: false, emergencyStop: true, reason: "disk full" } }) };
     app("/");
