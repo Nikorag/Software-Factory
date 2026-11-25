@@ -23,7 +23,8 @@ export interface RepoReport {
   defaultBranch: string | null;
   remote: { url: string; github: { owner: string; repo: string } | null } | null;
   hasClaudeMd: boolean;
-  hasSpecKit: boolean;
+  hasSpecKit: boolean; // Spec Kit is on the default branch (as pushed to origin): what jobs will actually start from
+  onboardingBranchPushed?: boolean; // the factory/onboard-speckit branch exists on origin: its pull request is waiting to be merged
   hasSubmodules: boolean;
   buildSystems: string[];
   detectedCommands: { test?: string; lint?: string; typecheck?: string };
@@ -138,7 +139,10 @@ export async function inspectRepository(project: ProjectConfig, deps: { git?: Gi
   else if (!report.remote.github) add("error", "not-github", "Origin is not a GitHub repository");
 
   report.hasClaudeMd = existsSync(join(root, "CLAUDE.md"));
-  report.hasSpecKit = existsSync(join(root, ".specify"));
+  // Judged on origin's default branch, not the working tree: a stale local checkout once made a fully onboarded repository look un-onboarded.
+  const onOrigin = await git(root, ["cat-file", "-e", `refs/remotes/origin/${project.defaultBranch}:.specify`]).then(() => true, () => false);
+  report.hasSpecKit = onOrigin || existsSync(join(root, ".specify"));
+  report.onboardingBranchPushed = await git(root, ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/factory/onboard-speckit"]).then(() => true, () => false);
   report.hasSubmodules = existsSync(join(root, ".gitmodules"));
   if (!report.hasClaudeMd) add("info", "no-claude-md", "No CLAUDE.md: agents will have no project instructions (onboarding should propose one, never overwrite)");
   if (project.specKit && !report.hasSpecKit) add("warn", "no-speckit", "specKit is enabled but .specify/ is missing; it must be initialised during onboarding");

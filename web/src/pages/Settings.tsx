@@ -37,6 +37,7 @@ function ProjectsPane({ projects, teams, globals, reload }: { projects: Project[
             <button key={p.id} type="button" aria-current={sel === p.id ? "true" : undefined} onClick={() => go(p.id)}
               className={cn("flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent", sel === p.id && "bg-accent font-medium")}>
               <span className="min-w-0 flex-1"><span className="block truncate">{p.name}</span><span className="block truncate font-mono text-[11px] text-muted-foreground" title={p.githubRepo || p.repository}>{p.githubRepo || p.repository}</span></span>
+              {p.onboarding ? <span className={cn("size-2 shrink-0 rounded-full", p.onboarding.status === "ready" ? "bg-ok" : p.onboarding.status === "in-progress" ? "bg-loop" : "bg-muted-foreground/40")} role="img" aria-label={`onboarding: ${p.onboarding.status}`} title={`Onboarding: ${p.onboarding.status}`} /> : null}
               {!p.commands.test ? <AlertTriangle className="size-4 shrink-0 text-loop" aria-label="no test command" /> : null}
               {!p.enabled ? <span className="text-[11px] text-muted-foreground">off</span> : null}
             </button>

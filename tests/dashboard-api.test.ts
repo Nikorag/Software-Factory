@@ -151,6 +151,9 @@ describe("dashboard API data (real persisted state, nothing mocked)", () => {
     const zk = (await get(app, "/api/projects")).json().projects.find((p: { id: string }) => p.id === "example-game");
     expect(zk.commands.test).toContain("tests/run.sh");
     expect(zk.githubRepo).toBe("example-user/Example-Game");
+    expect(zk.onboarding.status).toBe("in-progress");                                  // test command + Linear are set; repo and Spec Kit are not confirmed by the (partial) validation
+    expect(zk.onboarding.steps.map((x: { id: string }) => x.id)).toEqual(["repo", "speckit", "test", "linear", "checks"]);
+    expect(zk.onboarding.steps.find((x: { id: string }) => x.id === "test").ok).toBe(true);
     const withReport = s.db.select().from(projects).all()[0]!;
     expect(withReport.id).toBe("p");
   });

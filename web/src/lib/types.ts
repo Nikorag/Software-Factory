@@ -30,6 +30,7 @@ export interface Project {
   id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; overrides: { maxConcurrentJobs?: number; maxRemediationAttempts?: number; models?: Partial<import("./tasks").Routes> } | null;
   linear: { teamKey: string; projectName?: string } | null; commands: Record<string, string | undefined>;
   validation: { ok: boolean; protection: string; findings: string[] } | null; activeJobs: number;
+  onboarding?: { status: "ready" | "in-progress" | "not-started"; steps: { id: string; label: string; ok: boolean; detail: string }[] };
 }
 export interface HealthReport { system: SystemInfo; health: Health[]; scheduler: Scheduler | null }
 

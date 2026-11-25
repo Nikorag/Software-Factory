@@ -9,6 +9,8 @@ export const projects = sqliteTable("projects", {
   configJson: text("config_json").notNull(), // snapshot of validated ProjectConfig
   lastValidatedAt: ts("last_validated_at"),
   validationJson: text("validation_json"),
+  // Result of the last "run this project's commands" check (sandboxed, in a throwaway worktree): { ok, at, ran: [...] }
+  checkJson: text("check_json"),
 });
 
 export const jobs = sqliteTable(

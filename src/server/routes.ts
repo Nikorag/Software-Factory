@@ -14,6 +14,8 @@ import type { Scheduler } from "../service/scheduler.js";
 import { counts, systemInfo, type HealthChecker } from "../service/metrics.js";
 import { readConversation } from "../agents/transcript.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
+import { onboardingOf, type CheckRecord } from "../repo/readiness.js";
+import type { RepoReport } from "../repo/inspect.js";
 import { registerProfileRoutes } from "./profile-routes.js";
 
 export interface ApiDeps {
@@ -133,6 +135,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
         return {
           id: p.id, name: p.name, enabled: p.enabled, autonomy: p.autonomy, repository: p.repository, managed: p.managed, defaultBranch: p.defaultBranch, githubAccount: p.github.account ?? null, overrides: p.overrides ?? null,
           linear: p.linear ?? null, githubRepo: p.github.repo ?? null, commands: p.commands,
+          onboarding: onboardingOf(p, row?.validationJson ? (JSON.parse(row.validationJson) as RepoReport) : null, row?.checkJson ? (JSON.parse(row.checkJson) as CheckRecord) : null),
           validation: report ? { ok: report.ok ?? false, at: ms(row?.lastValidatedAt), protection: report.branchProtection?.status ?? "unknown", findings: (report.findings ?? []).filter((f) => f.severity !== "info").map((f) => `${f.severity}: ${f.message}`) } : null,
           activeJobs: db.select().from(jobs).where(and(eq(jobs.projectId, p.id), inArray(jobs.status, ["queued", "running", "waiting"]))).all().length,
         };

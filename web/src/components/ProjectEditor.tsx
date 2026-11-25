@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { CheckCircle2, Circle, Trash2 } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { api, send } from "@/lib/api";
@@ -75,6 +76,22 @@ export function ProjectEditor({ project, teams, globals, onSaved, onRemoved, onD
               <AlertDialogFooter><AlertDialogCancel>Keep it</AlertDialogCancel><AlertDialogAction onClick={() => void remove()}>Remove</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
         ) : null}
       </div>
+
+      {project?.onboarding ? (
+        <section className="grid gap-2 rounded-lg border bg-muted/20 p-4" aria-label="Onboarding">
+          <div className="flex items-center gap-2"><h3 className="text-sm font-semibold">Onboarding</h3>
+            <Badge variant="outline" className={cn(project.onboarding.status === "ready" ? "border-ok/40 text-ok" : project.onboarding.status === "in-progress" ? "border-loop/40 text-loop" : "text-muted-foreground")}>
+              {project.onboarding.status === "ready" ? "Ready: tickets will be picked up" : project.onboarding.status === "in-progress" ? "Almost there" : "Not started"}</Badge></div>
+          <ul className="grid gap-1.5 text-sm">
+            {project.onboarding.steps.map((st) => (
+              <li key={st.id} className="flex items-start gap-2">
+                {st.ok ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-ok" aria-label="done" /> : <Circle className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-label="to do" />}
+                <span className="min-w-0"><span className={cn(!st.ok && "font-medium")}>{st.label}</span><span className="block truncate text-xs text-muted-foreground" title={st.detail}>{st.detail}</span></span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <Section title="General" hint="One Linear project maps to one repository. Nothing starts until a ticket in that Linear project is labelled and moved to the pickup status.">
         <div className="grid gap-3 sm:grid-cols-2">

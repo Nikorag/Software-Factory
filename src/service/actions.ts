@@ -5,6 +5,9 @@ import { checkProject } from "../repo/check.js";
 import { ensureClone } from "../repo/clone.js";
 import { syncProjects, validateProjects } from "../repo/registry.js";
 import { onboardProject, raiseOnboardingPr } from "../speckit/onboard.js";
+import { eq } from "drizzle-orm";
+import { projects } from "../db/schema.js";
+import { git as realGit } from "../repo/git.js";
 
 export type ActionKind = "sync" | "validate" | "check" | "onboard" | "onboard-pr";
 export const ACTIONS: Record<ActionKind, string> = {
@@ -38,6 +41,8 @@ export function createProjectActions(ctx: Pick<Context, "config" | "handle" | "r
     validate: async (p, log) => {
       if (!(await clone(p, log))) return false;
       syncProjects(ctx.handle.db, config.projects.projects);
+      // Managed clones are the factory's own, so it may fetch to see a just-merged onboarding PR. A checkout of yours is never touched.
+      if (p.managed) await realGit(p.repository, ["fetch", "--quiet", "origin"]).catch(() => { /* offline: validate what we have */ });
       const [r] = await validateProjects(ctx.handle.db, [p]);
       if (!r) return false;
       log(`${r.ok ? "✓" : "✗"} default branch ${r.defaultBranch ?? "?"}, build: ${r.buildSystems.join(", ") || "none"}, protection: ${r.branchProtection.status}`);
@@ -50,6 +55,7 @@ export function createProjectActions(ctx: Pick<Context, "config" | "handle" | "r
         dataDir: config.factory.dataDir, sandbox: config.factory.sandbox, timeoutMs: config.factory.commandTimeoutSeconds * 1000,
         onResult: (r) => log(`${r.ok ? "✓" : "✗"} ${r.kind} (${Math.round(r.durationMs / 1000)}s${r.sandboxed ? "" : ", UNSANDBOXED"}): ${r.command}${r.ok ? "" : `\n${r.tail.slice(-1500)}`}`),
       });
+      ctx.handle.db.update(projects).set({ checkJson: JSON.stringify({ ok: report.ok, at: Date.now(), missingTest: report.missingTest }) }).where(eq(projects.id, p.id)).run(); // feeds the project's onboarding status
       if (report.missingTest) log("! no `test` command is set: the factory will not implement changes for this project");
       log(report.ok ? `✓ all configured commands pass on ${report.baseRef}` : "✗ not ready");
       return report.ok;

@@ -340,4 +340,23 @@ describe("settings and setup", () => {
     await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toBeTruthy());
     expect(JSON.parse(calls.find((c) => c.method === "PUT")!.body!).githubAccount).toBe("jamiebartlett-kps");
   });
+  it("shows each project's onboarding status in the list and a checklist with the next action in its editor", async () => {
+    const steps = (speckit: boolean) => [
+      { id: "repo", label: "Repository reachable", ok: true, detail: "me/my-app" },
+      { id: "speckit", label: "Spec Kit set up on the default branch", ok: speckit, detail: speckit ? "present" : "onboarding pull request is open: merge it, then press Validate" },
+      { id: "test", label: "Test command configured", ok: true, detail: "npm test" } ];
+    routes = { "/api/overview": overview(), "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/projects": { projects: [
+      { ...proj, onboarding: { status: "in-progress", steps: steps(false) } },
+      { ...proj, id: "done", name: "Done", githubRepo: "me/done", onboarding: { status: "ready", steps: steps(true) } } ] } };
+    app("/settings");
+    const nav = await screen.findByRole("navigation", { name: "Projects" });
+    expect(within(nav).getByRole("img", { name: "onboarding: in-progress" })).toBeInTheDocument();
+    expect(within(nav).getByRole("img", { name: "onboarding: ready" })).toBeInTheDocument();
+    const box = within(await screen.findByLabelText("Onboarding"));
+    expect(box.getByText("Almost there")).toBeInTheDocument();
+    expect(box.getByText(/merge it, then press Validate/)).toBeInTheDocument();      // it says what to do next
+    expect(box.getAllByLabelText("done")).toHaveLength(2); expect(box.getAllByLabelText("to do")).toHaveLength(1);
+    await userEvent.click(within(nav).getByRole("button", { name: /Done/ }));
+    expect(await screen.findByText("Ready: tickets will be picked up")).toBeInTheDocument();
+  });
 });
