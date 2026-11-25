@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ModelRouter } from "../src/agents/router.js";
 import { AgentRunner } from "../src/agents/runner.js";
-import { ModelsConfig, ProjectConfig } from "../src/config/schema.js";
+import { FactoryConfig, ModelsConfig, ProjectConfig } from "../src/config/schema.js";
 import { openDb } from "../src/db/client.js";
 import { onboardProject } from "../src/speckit/onboard.js";
 import { commitPaths, findBinary, initSpecKit, isInitialised } from "../src/speckit/tools.js";
@@ -29,7 +29,7 @@ const setup = (agentBehaviour?: (cwd: string) => void) => {
   agent.run = async (req) => { agentBehaviour?.(req.cwd); agent.calls.push(req); return { ok: true, text: "ok", denials: [], exitCode: 0, durationMs: 1 }; };
   const route = { provider: "anthropic" as const, model: "default" };
   const router = new ModelRouter(ModelsConfig.parse({ routes: { classification: route, specification: route, implementation: route, independent_review: route, final_review: route } }), { anthropic: agent, local: agent });
-  const runner = new AgentRunner({ db: openDb(":memory:").db, router, logDir: join(fx.base, "logs"), protectedPaths: [".git/**", ".env"] });
+  const runner = new AgentRunner({ db: openDb(":memory:").db, router, logDir: join(fx.base, "logs"), protectedPaths: FactoryConfig.parse({}).protectedPaths }); // the REAL default list, which includes .claude/** and .specify/scripts/**
   return { fx, project, agent, runner, dataDir: join(fx.base, "data") };
 };
 
@@ -47,6 +47,12 @@ describe("project onboarding", () => {
     expect(call).toMatchObject({ role: "spec-writer", profile: "spec-writer" });
     expect(call.prompt).toContain("speckit-constitution/SKILL.md");
     expect(call.prompt).toMatch(/do not invent standards/i);
+  });
+  it("does not flag the factory's own init commit (which adds protected .claude/ and .specify/ files) as an agent violation, but still catches the agent touching them", async () => {
+    const ok = setup((cwd) => overwrite(cwd, ".specify/memory/constitution.md", "# fine\n"));
+    await expect(onboardProject(ok.project, { runner: ok.runner, dataDir: ok.dataDir, init: { bin: fakeSpecify() } })).resolves.toMatchObject({ status: "created" });
+    const bad = setup((cwd) => overwrite(cwd, ".claude/skills/speckit-specify/SKILL.md", "tampered"));
+    await expect(onboardProject(bad.project, { runner: bad.runner, dataDir: bad.dataDir, init: { bin: fakeSpecify() } })).rejects.toThrow(/boundary violation.*\.claude\/skills/);
   });
   it("is idempotent: a second run does not re-run the agent or overwrite a reviewed constitution", async () => {
     const s = setup((cwd) => overwrite(cwd, ".specify/memory/constitution.md", "# Reviewed\n"));

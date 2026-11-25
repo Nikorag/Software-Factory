@@ -45,9 +45,12 @@ export async function onboardProject(
     await initSpecKit(worktree, d.init);
     if (await commitPaths(worktree, [".specify", ".claude"], "chore: initialise Spec Kit (claude integration)", git)) commits.push("initialise Spec Kit");
   }
+  // The boundary check must cover only what the *agent* changes. The factory's own init commit legitimately adds
+  // .claude/ and .specify/ (protected paths), so the agent's baseline is the commit it starts from, not the default branch.
+  const agentBase = await git(worktree, ["rev-parse", "HEAD"]);
   const r = await d.runner.run({
     task: "specification", role: "spec-writer", cwd: worktree, timeoutMs: d.timeoutMs ?? 15 * 60_000,
-    prompt: skillPrompt("constitution", "specs/_unused", CONSTITUTION_PROMPT), baseRef: project.defaultBranch,
+    prompt: skillPrompt("constitution", "specs/_unused", CONSTITUTION_PROMPT), baseRef: agentBase,
   });
   if (!r.ok) throw new Error(`constitution step failed (${r.failure}): ${r.error}`);
   if (await commitPaths(worktree, [".specify/memory"], "docs: add project constitution (for review)", git)) commits.push("constitution");
