@@ -11,7 +11,7 @@ import * as control from "../core/control.js";
 import type { Engine } from "../core/engine.js";
 import { answerJob, archiveJob, cancelJob, deleteJob, JobError, retryJob } from "../core/jobs.js";
 import type { Scheduler } from "../service/scheduler.js";
-import { counts, systemInfo, type HealthChecker } from "../service/metrics.js";
+import { cachedSystemInfo, counts, type HealthChecker } from "../service/metrics.js";
 import { readConversation } from "../agents/transcript.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
 import { onboardingOf, type CheckRecord } from "../repo/readiness.js";
@@ -74,6 +74,7 @@ function removeLog(dataDir: string, path: string): void {
 export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>): void {
   const { db } = d;
   const actor = "dashboard";
+  const systemInfo = cachedSystemInfo(); // polled every few seconds: do not spawn memory_pressure on every request
 
   app.get("/api/overview", async () => {
     const all = db.select().from(jobs).where(isNull(jobs.archivedAt)).orderBy(desc(jobs.updatedAt)).limit(300).all();
@@ -174,7 +175,11 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   /** "Check for updates" in Settings: ask git now instead of using the cached answer. Read-only on the install (it only fetches tags). */
   app.post("/api/update/check", { preHandler: requireToken }, async () => (await d.updates?.refresh()) ?? { current: null, latest: null, available: false, checkedAt: null });
 
-  app.get("/api/health", async () => ({ system: await systemInfo(d.dataDir ?? "."), health: (await d.health?.check()) ?? [], scheduler: d.scheduler?.status() ?? null }));
+  /** `?refresh=1` re-runs every probe now (sharing any probe already running) instead of using cached results, e.g. right after `gh auth login`. */
+  app.get<{ Querystring: { refresh?: string } }>("/api/health", async (req) => {
+    const refresh = ["1", "true"].includes(req.query.refresh ?? "");
+    return { system: await systemInfo(d.dataDir ?? "."), health: (await d.health?.check({ refresh })) ?? [], scheduler: d.scheduler?.status() ?? null };
+  });
 
   // ---- controls: every one requires the bearer token ----
   const act = (name: string, fn: (reason?: string) => unknown) =>
