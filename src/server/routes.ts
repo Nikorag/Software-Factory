@@ -12,6 +12,7 @@ import type { Engine } from "../core/engine.js";
 import { answerJob, cancelJob, JobError, retryJob } from "../core/jobs.js";
 import type { Scheduler } from "../service/scheduler.js";
 import { counts, systemInfo, type HealthChecker } from "../service/metrics.js";
+import { readConversation } from "../agents/transcript.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
 
 export interface ApiDeps {
@@ -95,7 +96,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
       decisions: db.select().from(decisions).where(eq(decisions.jobId, id)).orderBy(asc(decisions.id)).all()
         .map((x) => ({ id: x.id, kind: x.kind, decision: clip(x.decision, 500), rationale: clip(x.rationale, 1500), actor: x.actor, at: ms(x.createdAt) })),
       invocations: db.select().from(agentInvocations).where(eq(agentInvocations.jobId, id)).orderBy(asc(agentInvocations.id)).all()
-        .map((a) => ({ id: a.id, agent: a.agent, model: a.model, exitCode: a.exitCode, durationMs: a.durationMs, usage: a.usageJson ? JSON.parse(a.usageJson) : null, hasLog: Boolean(a.logPath), at: ms(a.startedAt) })),
+        .map((a) => ({ id: a.id, stageExecutionId: a.stageExecutionId, agent: a.agent, model: a.model, exitCode: a.exitCode, durationMs: a.durationMs, usage: a.usageJson ? JSON.parse(a.usageJson) : null, hasLog: Boolean(a.logPath), at: ms(a.startedAt) })),
       artifacts: db.select().from(artifacts).where(eq(artifacts.jobId, id)).orderBy(asc(artifacts.id)).all().filter((a) => !a.kind.startsWith("step:"))
         .map((a) => ({ kind: a.kind, path: a.path, bytes: a.bytes, at: ms(a.createdAt) })),
       worktree: db.select().from(worktrees).where(eq(worktrees.jobId, id)).get() ?? null,
@@ -110,6 +111,15 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     const out = readLogTail(d.dataDir, inv.logPath, Math.min(Number(req.query.tail) || 20_000, 200_000));
     if (!out) return reply.code(404).send({ error: "log not available" });
     return reply.header("Content-Type", "text/plain; charset=utf-8").header("X-Log-Truncated", String(out.truncated)).send(out.text);
+  });
+
+  /** The back-and-forth of one agent run, as display turns. Poll with `after` = the previous `offset` to follow a run live. */
+  app.get<{ Params: { id: string; iid: string }; Querystring: { after?: string } }>("/api/jobs/:id/invocations/:iid/conversation", async (req, reply) => {
+    const inv = db.select().from(agentInvocations).where(and(eq(agentInvocations.id, Number(req.params.iid)), eq(agentInvocations.jobId, req.params.id))).get();
+    if (!inv?.logPath || !d.dataDir) return reply.code(404).send({ error: "no conversation recorded for this run" });
+    const out = readConversation(d.dataDir, inv.logPath, Number(req.query.after) || 0);
+    if (!out) return reply.code(404).send({ error: "log not available" });
+    return { ...out, done: inv.exitCode !== null, agent: inv.agent, model: inv.model };
   });
 
   app.get("/api/projects", async () => {

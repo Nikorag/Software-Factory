@@ -30,3 +30,13 @@ export function scanForSecrets(lines: string[]): SecretHit[] {
   });
   return hits;
 }
+
+/** For display only (the dashboard's conversation view): replaces anything that looks like a credential. Conservative, like the scanner. */
+export function redactSecrets(text: string): string {
+  let out = text;
+  for (const { rule, re } of RULES) {
+    if (rule === "credential-assignment") out = out.replace(new RegExp(re.source, `${re.flags.replace("g", "")}g`), (m) => (PLACEHOLDER.test(m) ? m : `[redacted:${rule}]`));
+    else out = out.replace(new RegExp(re.source, `${re.flags.replace("g", "")}g`), `[redacted:${rule}]`);
+  }
+  return out;
+}

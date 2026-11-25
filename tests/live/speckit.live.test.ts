@@ -12,6 +12,7 @@ import { enqueue, getJob } from "../../src/core/jobs.js";
 import { openDb } from "../../src/db/client.js";
 import { agentInvocations, decisions, jobs, projects, stageExecutions, worktrees } from "../../src/db/schema.js";
 import { initSpecKit, commitPaths } from "../../src/speckit/tools.js";
+import { readConversation } from "../../src/agents/transcript.js";
 import { readSpecBundle, validateSpecArtifacts } from "../../src/speckit/artifacts.js";
 import { FakeLinear } from "../helpers/fake-linear.js";
 import { makeRepo, sh } from "../helpers/git-fixture.js";
@@ -66,8 +67,16 @@ describe.skipIf(!process.env.FACTORY_LIVE)("SpecKit pipeline (live)", () => {
       `total agent seconds: ${Math.round(calls.reduce((n, c) => n + (c.durationMs ?? 0), 0) / 1000)}`,
     ].join("\n"));
     expect(reached).toEqual(expect.arrayContaining(["REQUIREMENTS_ANALYSIS", "SPECIFICATION_GENERATION", "SPECIFICATION_REVIEW", "SPECIFICATION_VALIDATION"]));
-    expect(job.stage).toBe("BLOCKED"); // stops at IMPLEMENTATION_PREPARATION (Milestone 7)
-    expect(job.heldFromStage).toBe("IMPLEMENTATION_PREPARATION");
+    // This fixture's origin is a local bare repo, not GitHub, so the run goes through implementation and both reviews and stops at the PR step.
+    expect(reached).toEqual(expect.arrayContaining(["IMPLEMENTATION", "AUTOMATED_TESTING", "CLAUDE_REVIEW", "FINAL_VALIDATION"]));
+    expect(job.stage).toBe("FAILED");
+    expect(job.heldFromStage).toBe("PULL_REQUEST_CREATION");
+    // every real agent run left a readable conversation (stream-json), starting with the prompt and ending with the outcome
+    for (const c of calls.filter((x) => x.logPath)) {
+      const conv = readConversation(join(fx.base, "data"), c.logPath!, 0)!;
+      expect(conv.turns[0]?.kind, c.agent).toBe("prompt");
+      expect(conv.turns.at(-1)?.kind, c.agent).toBe("result");
+    }
 
     const wt = ctx.handle.db.select().from(worktrees).where(eq(worktrees.jobId, jobId)).get()!.path;
     const dir = "specs/jam-1-show-overdue-todos-first";

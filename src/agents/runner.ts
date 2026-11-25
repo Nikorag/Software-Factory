@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { eq } from "drizzle-orm";
 import type { FactoryDb } from "../db/client.js";
 import { agentInvocations, decisions } from "../db/schema.js";
@@ -42,6 +43,9 @@ export class AgentRunner {
           jobId: step.jobId, stageExecutionId: step.executionId ?? null, agent: `${route.provider}/${step.role}`, model: route.model, cwd: step.cwd, logPath: logFile,
         }).returning({ id: agentInvocations.id }).get()
       : undefined;
+
+    // The first line of the run's log is the prompt, so the dashboard's conversation view reads from the very start.
+    try { mkdirSync(dirname(logFile), { recursive: true }); appendFileSync(logFile, `${JSON.stringify({ type: "factory_prompt", role: step.role, text: step.prompt })}\n`); } catch { /* the log is a convenience, never a reason to fail the run */ }
 
     const before = profile === "read-only" && route.provider === "anthropic" ? await git(step.cwd, ["status", "--porcelain", "--untracked-files=all"]).catch(() => null) : null;
     const result = await router.run(step.task, {

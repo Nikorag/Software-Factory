@@ -5,7 +5,7 @@ import type { Agent, AgentFailure, AgentRequest, AgentResult } from "./types.js"
 
 /**
  * Claude Code CLI adapter. Flags verified against `claude --help` (2.1.332):
- *  -p/--print, --output-format json, --json-schema, --tools, --allowedTools, --disallowedTools, --permission-mode,
+ *  -p/--print, --output-format stream-json (with --verbose), --json-schema, --tools, --allowedTools, --disallowedTools, --permission-mode,
  *  --setting-sources, --strict-mcp-config, --model, --append-system-prompt, --resume, --no-session-persistence.
  * Deliberately NOT used: --bare (it never reads OAuth/keychain, so it cannot use a subscription login) and
  * --dangerously-skip-permissions.
@@ -14,7 +14,7 @@ export function buildClaudeArgs(req: AgentRequest): string[] {
   const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow, roots: pathRoots(req.cwd) });
   const args = [
     "-p",
-    "--output-format", "json",
+    "--output-format", "stream-json", "--verbose", // one JSON event per line, as it happens: the whole conversation is logged live, and the last line is the result
     "--permission-mode", "dontAsk", // anything not explicitly allowed is refused, never prompted for
     "--setting-sources", "", // ignore user/project settings files: the factory defines permissions, not the repo
     "--strict-mcp-config", // no MCP servers unless the factory passes some
@@ -50,11 +50,16 @@ export function classifyFailure(raw: RawResult | undefined, stderr: string, exit
 /** Pure: turn the CLI's stdout/stderr/exit into an AgentResult. */
 export function parseClaudeOutput(run: Pick<RunResult, "stdout" | "stderr" | "exitCode" | "durationMs">): AgentResult {
   let raw: RawResult | undefined;
-  try { raw = JSON.parse(run.stdout) as RawResult; } catch { /* handled below */ }
+  // stream-json: one event per line and the last `result` event carries the outcome. A single JSON document is still understood.
+  for (const line of run.stdout.split("\n")) {
+    if (!line.startsWith("{")) continue;
+    try { const o = JSON.parse(line) as RawResult; if (o.type === "result") raw = o; } catch { /* a partial or non-JSON line */ }
+  }
+  if (!raw) { try { raw = JSON.parse(run.stdout) as RawResult; } catch { /* handled below */ } }
   const denials = (raw?.permission_denials ?? []).map((d) => ({ tool: d.tool_name ?? "?", input: JSON.stringify(d.tool_input ?? {}).slice(0, 300) }));
   const base = { denials, exitCode: run.exitCode, durationMs: run.durationMs };
   if (!raw || raw.type !== "result") {
-    return { ...base, ok: false, text: run.stdout.slice(0, 2000), failure: classifyFailure(undefined, run.stderr, run.exitCode), error: `unparseable Claude Code output (exit ${run.exitCode}): ${run.stderr.slice(0, 500)}` };
+    return { ...base, ok: false, text: run.stdout.slice(-2000), failure: classifyFailure(undefined, run.stderr, run.exitCode), error: `unparseable Claude Code output (exit ${run.exitCode}): ${run.stderr.slice(0, 500)}` };
   }
   const common = { ...base, text: raw.result ?? "", sessionId: raw.session_id, costUsd: raw.total_cost_usd, usage: raw.usage, numTurns: raw.num_turns };
   if (raw.is_error || raw.subtype !== "success" || (run.exitCode ?? 0) !== 0) {

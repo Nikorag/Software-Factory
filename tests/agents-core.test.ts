@@ -97,7 +97,7 @@ describe("buildClaudeArgs", () => {
     expect(a).not.toContain("--bare");
     expect(a.join(" ")).not.toMatch(/dangerously|bypassPermissions/);
     expect(a.join(" ")).not.toContain("SECRET PROMPT TEXT");
-    expect(a).toEqual(expect.arrayContaining(["-p", "--output-format", "json", "--strict-mcp-config"]));
+    expect(a).toEqual(expect.arrayContaining(["-p", "--output-format", "stream-json", "--verbose", "--strict-mcp-config"]));
     expect(a[a.indexOf("--permission-mode") + 1]).toBe("dontAsk");
     expect(a[a.indexOf("--setting-sources") + 1]).toBe("");
   });

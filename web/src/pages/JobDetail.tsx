@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { Conversation } from "@/components/Conversation";
 import { FlowChart, FlowLegend } from "@/components/FlowChart";
 import { StatusBadge, toneOf } from "@/components/StatusBadge";
 import { api, apiText, post } from "@/lib/api";
@@ -26,6 +27,7 @@ export function JobDetail() {
   const [msg, setMsg] = useState<string | null>(null);
   const [answer, setAnswer] = useState("");
   const [log, setLog] = useState<string | null>(null);
+  const [watch, setWatch] = useState<number | null>(null); // the agent run whose conversation is open
   const flow = useMemo(() => (d ? deriveFlow(d.job, d.executions, d.invocations) : null), [d]);
   if (error && !d) return <Alert variant="destructive"><AlertDescription>Cannot load: {error}</AlertDescription></Alert>;
   if (!d || !flow) return <Skeleton className="h-96 w-full" />;
@@ -86,22 +88,26 @@ export function JobDetail() {
         <Card><CardContent className="grid gap-4 md:grid-cols-2">
           <div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Selected step</div><h3 className="text-base font-semibold">{node.label}</h3><div className="font-mono text-xs text-muted-foreground">{node.stage}</div>
             <p className="mt-2 text-sm">{({ done: "Finished", run: "Running now", wait: "Waiting", fail: "Stopped here", idle: "Not reached yet" })[flow.state[node.id] ?? "idle"]}{(flow.attempts[node.id] ?? 0) > 1 ? ` · ${flow.attempts[node.id]} attempts` : ""}{flow.duration[node.id] ? ` · ${dur(flow.duration[node.id])}` : ""}</p>
+            {(() => { const ids = new Set(execs.map((e) => e.id)); const runs = d.invocations.filter((i) => i.stageExecutionId !== null && ids.has(i.stageExecutionId)); return runs.length ? (
+              <div className="mt-3 flex flex-wrap gap-2">{runs.map((r) => <Button key={r.id} size="sm" variant="secondary" onClick={() => { setWatch(r.id); document.getElementById("agent-runs-tab")?.click(); }}>{r.exitCode === null ? "Watch live" : "Conversation"}: {r.agent.split("/")[1] ?? r.agent}</Button>)}</div>) : null; })()}
             <Button variant="ghost" size="sm" className="mt-2" onClick={() => setSel(null)}>Show all steps</Button></div>
           <div className="grid gap-3 text-sm"><div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">What happens here</div><p>{node.what}</p></div><div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">If it finds problems</div><p>{node.issues}</p></div></div>
         </CardContent></Card>
       ) : null}
 
       <Tabs defaultValue="history">
-        <TabsList><TabsTrigger value="history">Stage history</TabsTrigger><TabsTrigger value="agents">Agent runs</TabsTrigger><TabsTrigger value="decisions">Decisions</TabsTrigger><TabsTrigger value="more">Artifacts &amp; write-back</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="history">Stage history</TabsTrigger><TabsTrigger value="agents" id="agent-runs-tab">Agent runs</TabsTrigger><TabsTrigger value="decisions">Decisions</TabsTrigger><TabsTrigger value="more">Artifacts &amp; write-back</TabsTrigger></TabsList>
         <TabsContent value="history"><Card><CardContent>
           {node ? <p className="mb-2 text-xs text-muted-foreground">Filtered to {node.label}.</p> : null}
           <Table><TableHeader><TableRow>{["Stage", "#", "Outcome", "Took", "Detail"].map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
             <TableBody>{execs.map((e) => <TableRow key={e.id}><TableCell className="font-mono text-xs">{e.stage}</TableCell><TableCell>{e.attempt}</TableCell><TableCell className={toneOf(e.outcome)}>{e.outcome}</TableCell><TableCell>{e.finishedAt && e.startedAt ? dur(e.finishedAt - e.startedAt) : "…"}</TableCell><TableCell className={e.error ? "text-destructive" : "text-muted-foreground"}>{(e.error || "").slice(0, 200)}</TableCell></TableRow>)}</TableBody></Table>
         </CardContent></Card></TabsContent>
         <TabsContent value="agents"><Card><CardContent>
-          <Table><TableHeader><TableRow>{["Agent", "Model", "Took", "Exit", "Denied", "Log"].map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
+          <Table><TableHeader><TableRow>{["Agent", "Model", "Took", "Exit", "Denied", "", "Log"].map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
             <TableBody>{d.invocations.map((a) => <TableRow key={a.id}><TableCell>{a.agent}</TableCell><TableCell>{a.model || ""}</TableCell><TableCell>{dur(a.durationMs)}</TableCell><TableCell>{a.exitCode ?? ""}</TableCell><TableCell className={a.usage?.denials ? "text-loop" : "text-muted-foreground"}>{a.usage?.denials ?? ""}</TableCell>
+              <TableCell>{a.hasLog ? <Button variant={watch === a.id ? "default" : "outline"} size="sm" onClick={() => setWatch(watch === a.id ? null : a.id)}>{a.exitCode === null ? "Watch live" : "Conversation"}</Button> : ""}</TableCell>
               <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={async () => { try { setLog(await apiText(`/api/jobs/${j.id}/invocations/${a.id}/log?tail=30000`)); } catch (e) { setLog(`No log: ${(e as Error).message}`); } }}>view</Button> : ""}</TableCell></TableRow>)}</TableBody></Table>
+          {watch !== null ? <div className="mt-4 max-h-[70vh] overflow-auto rounded-md border p-3"><Conversation jobId={j.id} runId={watch} running={d.invocations.find((i) => i.id === watch)?.exitCode === null} /></div> : null}
           {log !== null ? <pre className="mt-3 max-h-96 overflow-auto rounded-md border bg-muted/40 p-3 text-xs whitespace-pre-wrap">{log}</pre> : null}
         </CardContent></Card></TabsContent>
         <TabsContent value="decisions"><Card><CardContent>

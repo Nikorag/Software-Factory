@@ -20,6 +20,7 @@ import { createProjectActions } from "./actions.js";
 import { resolveSecret, saveSecret } from "./secrets.js";
 import { TaskManager } from "./tasks.js";
 import { UpdateChecker } from "./versions.js";
+import { pruneAgentLogs } from "./retention.js";
 
 const run = promisify(execFile);
 
@@ -66,6 +67,11 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
   try {
     await app.listen({ host: config.factory.server.host, port });
   } catch (e) { lock.release(); throw e; }
+  // Conversation logs are sensitive (ticket text, code, command output): prune on start and then daily.
+  const agentLogs = join(config.factory.dataDir, "logs", "agents");
+  const prune = () => { try { const n = pruneAgentLogs(agentLogs, config.factory.logRetentionDays); if (n) logger.info({ removed: n, days: config.factory.logRetentionDays }, "pruned old agent logs"); } catch { /* best effort */ } };
+  prune();
+  const pruneTimer = setInterval(prune, 24 * 3600_000); pruneTimer.unref();
   scheduler?.start();
   logger.info({ port, scheduler: Boolean(scheduler), dryRun: config.factory.dryRun, mergeMode: config.factory.mergeMode }, "factory service started");
 

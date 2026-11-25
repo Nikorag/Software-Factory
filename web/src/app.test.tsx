@@ -85,7 +85,7 @@ describe("dashboard", () => {
   });
   it("renders hostile ticket/agent-derived text as inert text: no elements, no script, no javascript: links", async () => {
     const j = job({ lastError: `${XSS} boom`, prUrl: "javascript:window.__pwned=1", stage: "BLOCKED", status: "waiting", heldFromStage: "IMPLEMENTATION" });
-    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [{ ...exec("DISCOVERED", "failed"), error: XSS }], { decisions: [{ id: 1, kind: XSS, decision: XSS, rationale: XSS, actor: XSS, at: 1 }], invocations: [{ id: 1, agent: XSS, model: XSS, exitCode: 0, durationMs: 1, usage: null, hasLog: false, at: 1 }] }) };
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [{ ...exec("DISCOVERED", "failed"), error: XSS }], { decisions: [{ id: 1, kind: XSS, decision: XSS, rationale: XSS, actor: XSS, at: 1 }], invocations: [{ id: 1, stageExecutionId: null, agent: XSS, model: XSS, exitCode: 0, durationMs: 1, usage: null, hasLog: false, at: 1 }] }) };
     const { container } = app("/jobs/j1");
     await screen.findAllByText(/<img src=x onerror=/);
     expect(container.querySelectorAll("img, script, iframe, object, embed").length).toBe(0);
@@ -271,5 +271,34 @@ describe("settings and setup", () => {
     await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toBeTruthy());
     const sent = JSON.parse(calls.find((c) => c.method === "PUT")!.body!);
     expect(sent.overrides).toEqual({ maxRemediationAttempts: 1, models: { implementation: { provider: "anthropic", model: "opus" } } }); // concurrency + other models: follow global
+  });
+  it("shows an agent run's conversation: prompt, messages, tool calls with their results, and the outcome", async () => {
+    const run = { id: 7, stageExecutionId: null, agent: "anthropic/implementer", model: "claude-opus-5-5", exitCode: 0, durationMs: 5000, usage: null, hasLog: true, at: 1 };
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [run] }), "/api/jobs/j1/invocations/7/conversation?after=0": { offset: 500, done: true, agent: "anthropic/implementer", model: "claude-opus-5-5", turns: [
+      { kind: "prompt", text: "Implement the due-date feature" }, { kind: "session", model: "claude-opus-5-5", tools: 6 }, { kind: "text", text: "I'll start by reading the tests." },
+      { kind: "tool", id: "t1", name: "Bash", input: "npm test" }, { kind: "tool_result", id: "t1", text: "12 passed", error: false }, { kind: "result", ok: true, text: "Done", turns: 3 } ] } };
+    app("/jobs/j1");
+    await userEvent.click(await screen.findByRole("tab", { name: "Agent runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Conversation" }));
+    expect(await screen.findByText("I'll start by reading the tests.")).toBeInTheDocument();
+    expect(screen.getByText("Prompt sent to Claude")).toBeInTheDocument();
+    expect(screen.queryByText("Implement the due-date feature")).toBeNull();          // the prompt is collapsed until asked for
+    const tool = screen.getByRole("button", { name: /Bash.*npm test/ });
+    expect(screen.queryByText("12 passed")).toBeNull();                               // so is the tool output
+    await userEvent.click(tool);
+    expect(screen.getByText("12 passed")).toBeInTheDocument();
+    expect(screen.getByText(/Finished after 3 turns/)).toBeInTheDocument();
+  });
+  it("renders hostile text in a conversation as inert text", async () => {
+    const run = { id: 8, stageExecutionId: null, agent: "anthropic/implementer", model: null, exitCode: 0, durationMs: 1, usage: null, hasLog: true, at: 1 };
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [run] }), "/api/jobs/j1/invocations/8/conversation?after=0": { offset: 1, done: true, agent: "x", model: null, turns: [
+      { kind: "text", text: XSS }, { kind: "tool", id: "a", name: XSS, input: XSS }, { kind: "tool_result", id: "a", text: XSS, error: false } ] } };
+    const { container } = app("/jobs/j1");
+    await userEvent.click(await screen.findByRole("tab", { name: "Agent runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Conversation" }));
+    await screen.findAllByText(/<img src=x onerror=/);
+    expect(container.querySelectorAll("img, script, iframe, object, embed").length).toBe(0);
+    expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
+    expect([...container.querySelectorAll("*")].some((e) => [...e.attributes].some((a) => /^on/i.test(a.name)))).toBe(false);
   });
 });

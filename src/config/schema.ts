@@ -22,6 +22,8 @@ export const FactoryConfig = z.object({
   sandbox: z.object({ required: z.boolean().default(true), readAllow: z.array(z.string()).optional(), writeAllow: z.array(z.string()).optional() }).prefault({}),
   commandTimeoutSeconds: z.number().int().min(10).default(900),
   pollIntervalSeconds: z.number().int().min(10).default(60),
+  // Agent conversation logs hold ticket text, code and command output. They are deleted after this many days (0 = keep forever).
+  logRetentionDays: z.number().int().min(0).max(3650).default(30),
   // Paths agents may never write to in any project. Enforced twice: as permission denies given to Claude Code,
   // and by verifying the worktree diff after every agent run. (The factory itself can never be a project: see loadConfig.)
   protectedPaths: z.array(z.string()).default([".git/**", ".env", ".env.*", "**/*.pem", "**/*.key", "**/id_rsa*", "**/id_ed25519*", "**/secrets/**", ".github/workflows/**",
