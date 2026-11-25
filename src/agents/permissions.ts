@@ -28,6 +28,7 @@ const editRules = (patterns: string[], roots: string[]) => patterns.flatMap((p) 
 //  - path scoping uses `Edit(<glob>)`, which governs both the Edit and Write tools;
 //  - a bare `Write` / `Edit` allow is needed to enable those tools at all;
 //  - `Bash(git:*)` allow plus `Bash(git push:*)` deny permits git but not push;
+//  - NEVER allow bare `Write`/`Edit` either (they permit writes anywhere the user can write); scope with `Edit(//abs/root/**)`;
 //  - NEVER allow bare `Read`/`Grep`/`Glob`: with no rule, Claude Code confines them to the working directory, but a
 //    bare allow lets the agent read any file the user can (other projects, ~/.ssh, the factory database). Found by
 //    live test; Bash read-only built-ins (cat, ls, grep) are likewise refused outside the working directory.
@@ -60,7 +61,9 @@ export function toolPolicy(profile: PermissionProfile, opts: { protectedPaths?: 
     case "implementer":
       return {
         tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash"],
-        allow: [...readOnly, "Write", "Edit", ...GIT_WRITE.map(bash), ...(opts.bashAllow ?? []).map(bash)],
+        // NEVER a bare `Write`/`Edit`: that allows writing anywhere the user can (found live: an implementer wrote to
+        // $HOME and to a sibling directory). Writes are scoped to the worktree by absolute path only.
+        allow: [...readOnly, ...roots.map((r) => `Edit(${absRule(r, "**")})`), ...GIT_WRITE.map(bash), ...(opts.bashAllow ?? []).map(bash)],
         deny: [...editRules(protectedPaths, roots), ...ALWAYS_DENY_BASH.map(bash)],
       };
   }

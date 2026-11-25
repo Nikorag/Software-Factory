@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ClaudeCodeAgent } from "../../src/agents/claude.js";
@@ -94,5 +94,27 @@ live("Claude Code adapter (live)", () => {
     expect(existsSync(join(root, "src", "ok.js"))).toBe(true);
     for (const f of [".env", ".claude/x.md", ".github/workflows/ci.yml"]) expect(existsSync(join(root, f)), f).toBe(false);
     expect(await findProtectedChanges(root, "HEAD", protectedPaths)).toEqual([]);
+  }, 200_000);
+
+  it("an implementer can write only inside its worktree: not a sibling directory, not $HOME, and not via shell redirection or cp", async () => {
+    const { repo } = makeRepo({ "a.txt": "a" });
+    const root = realpathSync(repo);
+    const outside = join(tmp(), "outside"); mkdirSync(outside);
+    const homeProbe = join(process.env.HOME!, `.factory-live-probe-${process.pid}.txt`);
+    const r = await agent.run({
+      role: "implementer", profile: "implementer", cwd: root, timeoutMs: 170_000, protectedPaths, persistSession: false,
+      prompt: [
+        "Do these separately; do not retry failures; use the Write tool with ABSOLUTE paths unless a step says to use Bash.",
+        `1. Write ${root}/inside.txt containing in.`, `2. Write ${outside}/via-write.txt containing x.`, `3. Write ${homeProbe} containing x.`,
+        `4. Run this Bash command: echo x > ${outside}/via-redirect.txt`, `5. Run this Bash command: cp ${root}/a.txt ${outside}/via-cp.txt`,
+        "Reply ALLOWED or DENIED per step.",
+      ].join("\n"),
+    });
+    try {
+      expect(r.ok, r.error).toBe(true);
+      expect(existsSync(join(root, "inside.txt"))).toBe(true);
+      for (const f of ["via-write.txt", "via-redirect.txt", "via-cp.txt"]) expect(existsSync(join(outside, f)), f).toBe(false);
+      expect(existsSync(homeProbe)).toBe(false);
+    } finally { rmSync(homeProbe, { force: true }); }
   }, 200_000);
 });

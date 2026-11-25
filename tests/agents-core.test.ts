@@ -24,8 +24,8 @@ describe("permission profiles", () => {
     expect(p.allow.join()).not.toMatch(/git add|git commit/);
   });
   it("implementer can edit and commit but not push, fetch, branch-switch, shell out to the network or use gh", () => {
-    const p = toolPolicy("implementer", { protectedPaths: prot, bashAllow: ["pnpm test"] });
-    expect(p.allow).toEqual(expect.arrayContaining(["Write", "Edit", "Bash(git commit:*)", "Bash(git add:*)", "Bash(pnpm test:*)"]));
+    const p = toolPolicy("implementer", { protectedPaths: prot, bashAllow: ["pnpm test"], roots: ["/w"] });
+    expect(p.allow).toEqual(expect.arrayContaining(["Edit(//w/**)", "Bash(git commit:*)", "Bash(git add:*)", "Bash(pnpm test:*)"]));
     for (const d of ["git push", "git fetch", "git checkout", "git config", "git remote", "gh", "curl", "ssh", "sudo", "rm -rf"]) expect(p.deny).toContain(`Bash(${d}:*)`);
   });
   it("denies edits to every protected path, including .env and the workflows directory", () => {
@@ -40,10 +40,18 @@ describe("permission profiles", () => {
     expect(p.allow).not.toContain("Write");
     expect(p.allow).not.toContain("Edit");
   });
+  it("never grants bare Write/Edit: the implementer may only edit inside its worktree (absolute scope)", () => {
+    const p = toolPolicy("implementer", { protectedPaths: prot, roots: ["/work/JAM-1", "/alias/JAM-1"] });
+    expect(p.allow).not.toContain("Write");
+    expect(p.allow).not.toContain("Edit");
+    expect(p.allow).toEqual(expect.arrayContaining(["Edit(//work/JAM-1/**)", "Edit(//alias/JAM-1/**)"]));
+    expect(p.allow.filter((a) => a.startsWith("Edit("))).toHaveLength(2); // nothing broader than the roots
+    expect(toolPolicy("implementer", { protectedPaths: prot }).allow.some((a) => a.startsWith("Edit"))).toBe(false); // no roots, no writes
+  });
   it("never grants bare Read/Grep/Glob, which would let agents read outside their worktree", () => {
     for (const prof of ["read-only", "spec-writer", "implementer"] as const) {
       const allow = toolPolicy(prof, { protectedPaths: prot }).allow;
-      for (const t of ["Read", "Grep", "Glob", "Bash"]) expect(allow).not.toContain(t);
+      for (const t of ["Read", "Grep", "Glob", "Bash", "Write", "Edit"]) expect(allow).not.toContain(t);
     }
   });
   it("a deny is never also an allow", () => {
