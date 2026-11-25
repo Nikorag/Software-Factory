@@ -1,4 +1,4 @@
-# ADR 0011: Work only a human can do is deferred to the PR, never looped on
+# ADR 0012: Work only a human can do is deferred to the PR, never looped on
 The factory is autonomous until the pull request is raised. Some work cannot be done by a sandboxed agent: manual or visual testing, a walkthrough in a real window, real devices or servers, credentials, or a command the check tool does not offer (for example generating a migration). Before this decision, such work became a blocking finding the implementer could only reject, and every rejection bought a full test + review + final-validation cycle until the remediation cap (JAM-414: a manual quickstart walkthrough, rejected three times). The converge step had the same failure mode (job 9c1de607: 14 passes on a migration the implementer could not generate).
 
 Decision:

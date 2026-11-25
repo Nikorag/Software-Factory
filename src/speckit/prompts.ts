@@ -28,7 +28,7 @@ const AUTOMATED = [
 ].join(" ");
 
 /**
- * The human-deferral rule (ADR 0011): the run is autonomous until the pull request, so work only a person can do is tagged
+ * The human-deferral rule (ADR 0012): the run is autonomous until the pull request, so work only a person can do is tagged
  * and listed on the PR, never looped on. The `[HUMAN]` tag keeps the task unticked (it is not done) without blocking.
  */
 export const HUMAN_ONLY_TASKS = "Some tasks can only be done by a person: manual or visual testing, a walkthrough in a real browser, window or app, real devices or hardware, external servers, accounts or credentials, or anything else that cannot run in a sandbox with no network. Tag each such task `[HUMAN]` straight after its id, e.g. `- [ ] T023 [HUMAN] Walk through quickstart.md in a real browser`. The factory never waits for these: it lists them on the pull request for a person to verify. Never tag work an agent can do (code, automated tests, docs).";

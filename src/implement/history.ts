@@ -9,7 +9,7 @@ import { NON_CODE } from "./diff.js";
 /**
  * Memory across fix cycles, derived only from what is already recorded (stage outputs and decisions): which findings each
  * review raised, what the implementer did with them, and what was deferred to a human. It lets reviewers stop re-raising
- * settled findings, and lets the factory notice when a cycle would only repeat the previous one (see ADR 0011).
+ * settled findings, and lets the factory notice when a cycle would only repeat the previous one (see ADR 0012).
  */
 
 export interface Finding { id: string; severity: string; file?: string; line?: number | null; issue?: string; fix?: string; tasks?: string[] }
