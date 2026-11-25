@@ -7,7 +7,7 @@ import { createContext, type Context } from "../src/app/context.js";
 import { ModelsConfig, ProjectConfig, type LoadedConfig } from "../src/config/schema.js";
 import { Engine } from "../src/core/engine.js";
 import { jobs as jobsTable } from "../src/db/schema.js";
-import { enqueue, getJob } from "../src/core/jobs.js";
+import { answerJob, enqueue, getJob, retryJob } from "../src/core/jobs.js";
 import { openDb } from "../src/db/client.js";
 import { projects as projectsTable, agentInvocations, artifacts, decisions, linearOutbox, stageExecutions, worktrees } from "../src/db/schema.js";
 import { createLinearReporter } from "../src/linear/reporter.js";
@@ -182,6 +182,8 @@ describe("independent review fallback (only for a local route)", () => {
   });
 });
 
+const specFixes = (h: ReturnType<typeof harness>) => h.ctx.handle.db.select().from(decisions).where(eq(decisions.kind, "remediation")).all().length;
+
 describe("review -> remediation loop", () => {
   it("fixes blocking findings, records rejected ones with their reasons, and tells the agent exactly what to fix", async () => {
     const h = harness();
@@ -193,7 +195,8 @@ describe("review -> remediation loop", () => {
     h.claude.b.onRemediate = (req, dir) => overwrite(req.cwd, `${dir}/spec.md`, fixture("spec.md") + "\n\n<!-- R1: date format clarified -->\n");
     await h.engine.tick();
     expect(h.stages().slice(2, 8)).toEqual(["REQUIREMENTS_ANALYSIS", "SPECIFICATION_GENERATION", "SPECIFICATION_REVIEW", "SPECIFICATION_REMEDIATION", "SPECIFICATION_VALIDATION", "IMPLEMENTATION_PREPARATION"]);
-    expect(job(h).remediationAttempts).toBe(1);
+    expect(specFixes(h)).toBe(1);
+    expect(job(h).remediationAttempts).toBe(0); // the code phase starts with a fresh fix-cycle budget
     const rem = h.claude.calls.find((c) => "accepted" in ((c.jsonSchema?.properties ?? {}) as object))!;
     expect(rem.prompt).toContain("R1");
     expect(rem.prompt).toContain("R2");
@@ -221,7 +224,8 @@ describe("specification validation", () => {
     await h.engine.tick();
     const findings = h.claude.calls.find((c) => "accepted" in ((c.jsonSchema?.properties ?? {}) as object))!.prompt;
     expect(findings).toContain("check:has-requirements");
-    expect(job(h).remediationAttempts).toBe(1);
+    expect(specFixes(h)).toBe(1);
+    expect(job(h).remediationAttempts).toBe(0); // the code phase starts with a fresh fix-cycle budget
     expect(h.stages()).toContain("SPECIFICATION_REMEDIATION");
     expect(h.stages().filter((s) => s === "SPECIFICATION_VALIDATION")).toHaveLength(2);
   });
@@ -232,7 +236,8 @@ describe("specification validation", () => {
       ? [{ id: "A1", category: "Inconsistency", severity: "HIGH", location: "plan.md", summary: "plan contradicts spec", recommendation: "align" }, { id: "A2", category: "Style", severity: "LOW", location: "t", summary: "nit", recommendation: "r" }]
       : [{ id: "A2", category: "Style", severity: "MEDIUM", location: "t", summary: "nit", recommendation: "r" }] });
     await h.engine.tick();
-    expect(job(h).remediationAttempts).toBe(1);
+    expect(specFixes(h)).toBe(1);
+    expect(job(h).remediationAttempts).toBe(0); // the code phase starts with a fresh fix-cycle budget
     expect(h.claude.calls.find((c) => "accepted" in ((c.jsonSchema?.properties ?? {}) as object))!.prompt).toContain("analyze:A1");
     expect(h.stages()).toContain("IMPLEMENTATION_PREPARATION"); // MEDIUM did not block
   });
@@ -321,5 +326,95 @@ describe("preconditions and failure handling", () => {
     await h.engine.tick();
     expect(h.claude.calls.filter((c) => c.role === "spec-writer")).toHaveLength(0);
     expect(decisionKinds(h)).toContain("dry-run");
+  });
+});
+
+describe("answering a held job's questions", () => {
+  const QUESTIONS = "\n\n## Open questions requiring a human\n\n- Should overdue items notify the owner?\n";
+  const remediations = (h: Harness) => h.claude.calls.filter((c) => "accepted" in ((c.jsonSchema?.properties ?? {}) as object));
+  const specWithQuestions = (h: Harness) => { h.claude.b.onStep = (step, req, dir) => { if (step === "tasks") overwrite(req.cwd, `${dir}/spec.md`, fixture("spec.md") + QUESTIONS); }; };
+
+  it("spec open questions: the answer reaches the spec-writer with its question, and validation then passes", async () => {
+    const h = harness();
+    specWithQuestions(h);
+    let reviews = 0;
+    h.claude.b.review = () => (++reviews === 1
+      ? { verdict: "changes_required", findings: [{ id: "R1", severity: "blocker", section: "FR-002", issue: "Date format is ambiguous", fix: "Specify ISO 8601" }] }
+      : { verdict: "approve", findings: [] });
+    let fixes = 0;
+    // The first remediation (for R1) leaves the open question in place; the one after the answer resolves it.
+    h.claude.b.onRemediate = (req, dir) => overwrite(req.cwd, `${dir}/spec.md`, fixture("spec.md") + (++fixes === 1 ? QUESTIONS : "\n\n## Open questions requiring a human\n\nNone.\n"));
+    await h.engine.tick();
+    expect(job(h)).toMatchObject({ stage: "BLOCKED", heldFromStage: "SPECIFICATION_VALIDATION" });
+    expect(job(h).lastError).toContain("Answer on the job page");
+
+    answerJob(h.ctx.handle.db, h.jobId, "Yes, email the owner when an item becomes overdue.", "dashboard");
+    await h.engine.tick();
+
+    const rem = remediations(h);
+    expect(rem).toHaveLength(2);
+    const prompt = rem[1]!.prompt;
+    expect(prompt).toContain('"id": "human-questions"');
+    expect(prompt).toContain("Should overdue items notify the owner?");
+    expect(prompt).toContain("Yes, email the owner when an item becomes overdue.");
+    expect(prompt).toContain("asked at SPECIFICATION_VALIDATION");
+    expect(prompt).not.toContain('"id": "R1"'); // already fixed: not re-sent
+    expect(h.hist().slice(-3)).toEqual(["SPECIFICATION_REMEDIATION:succeeded", "SPECIFICATION_VALIDATION:succeeded", "IMPLEMENTATION_PREPARATION:failed"]);
+    expect(job(h).heldFromStage).toBe("IMPLEMENTATION_PREPARATION");
+    expect(sh(wt(h), "log", "--format=%s", "-1")).toBe("spec(JAM-1): apply answers to open questions");
+  });
+
+  it("spec open questions: answering in the ticket and retrying goes through remediation instead of blocking again", async () => {
+    const h = harness();
+    specWithQuestions(h);
+    h.claude.b.onRemediate = (req, dir) => overwrite(req.cwd, `${dir}/spec.md`, fixture("spec.md"));
+    await h.engine.tick();
+    expect(job(h)).toMatchObject({ stage: "BLOCKED", heldFromStage: "SPECIFICATION_VALIDATION" });
+    h.linear.issues.get(job(h).externalId)!.comments.push({ id: "c1", body: "Overdue items should notify the owner.", createdAt: "now", userName: "Jamie" });
+
+    retryJob(h.ctx.handle.db, h.jobId, "dashboard");
+    await h.engine.tick();
+
+    const rem = remediations(h);
+    expect(rem).toHaveLength(1);
+    expect(rem[0]!.prompt).toContain("Should overdue items notify the owner?");
+    expect(rem[0]!.prompt).toContain("Overdue items should notify the owner."); // the ticket comment
+    expect(rem[0]!.prompt).toContain("answer in the ticket");
+    expect(h.stages()).toContain("IMPLEMENTATION_PREPARATION");
+  });
+
+  it("blocks again, rather than looping, when the answers do not resolve the questions", async () => {
+    const h = harness();
+    specWithQuestions(h);
+    await h.engine.tick(); // default remediation changes nothing
+    answerJob(h.ctx.handle.db, h.jobId, "not sure yet", "dashboard");
+    await h.engine.tick();
+    expect(remediations(h)).toHaveLength(1);
+    expect(job(h)).toMatchObject({ stage: "BLOCKED", heldFromStage: "SPECIFICATION_VALIDATION" });
+    expect(job(h).lastError).toContain("Should overdue items notify the owner?");
+  });
+
+  it("requirements clarification: resumes at analysis and the analyst sees each question paired with its answer", async () => {
+    const h = harness();
+    let analyses = 0;
+    h.claude.b.analysis = () => (++analyses === 1
+      ? { verdict: "needs_clarification", summary: "vague", questions: ["Which database?", "Who can edit?"], risks: [] }
+      : { verdict: "ready", summary: "clear", questions: [], risks: [] });
+    await h.engine.tick();
+    expect(job(h)).toMatchObject({ stage: "BLOCKED", heldFromStage: "REQUIREMENTS_ANALYSIS" });
+
+    expect(answerJob(h.ctx.handle.db, h.jobId, "SQLite; only the owner.", "dashboard").stage).toBe("REQUIREMENTS_ANALYSIS");
+    await h.engine.tick();
+
+    const analyst = h.claude.calls.filter((c) => c.role === "requirements-analyst");
+    expect(analyst).toHaveLength(2);
+    const prompt = analyst[1]!.prompt;
+    expect(prompt).toContain("asked at REQUIREMENTS_ANALYSIS");
+    expect(prompt).toMatch(/1\. Which database\?\n2\. Who can edit\?\nHuman's answer:\nSQLite; only the owner\./);
+    expect(prompt).toContain("treat those questions as resolved");
+    expect(prompt).not.toContain("Answer on the job page"); // the advice to the human is not part of the question
+    expect(h.stages()).toContain("SPECIFICATION_VALIDATION");
+    // later agents see the pair too
+    expect(h.claude.calls.find((c) => c.role === "spec-writer")!.prompt).toContain("Which database?");
   });
 });

@@ -23,7 +23,7 @@ export const SPEC_FILES = ["spec.md", "plan.md", "tasks.md", "research.md", "dat
 
 export interface H { github: FakeGitHub; linear: FakeLinear; ctx: Context; claude: ImplAgent; haiku: ImplAgent; repo: string; jobId: string; engine: Engine; wt: string; hist: () => string[]; stages: () => string[] }
 
-export async function harness(o: { passes?: number; projectPasses?: number; commands?: Record<string, string>; baseTest?: string; github?: FakeGitHub; timing?: Partial<DeliveryTiming>; clockStepMs?: number } = {}): Promise<H> {
+export async function harness(o: { passes?: number; projectPasses?: number; commands?: Record<string, string>; baseTest?: string; github?: FakeGitHub; timing?: Partial<DeliveryTiming>; clockStepMs?: number; now?: () => Date } = {}): Promise<H> {
   const { repo } = makeRepo({
     "package.json": JSON.stringify({ name: "todo", type: "module", scripts: { test: "node --test" } }),
     "src/todos.js": "export const list = () => [];\n",
@@ -44,7 +44,7 @@ export async function harness(o: { passes?: number; projectPasses?: number; comm
   const haiku = claude; // one scripted agent serves both Claude routes; assertions distinguish by req.model
   const linear = new FakeLinear();
   const issue = linear.addIssue({ key: "JAM-1", team: "JAM" }); issue.title = TITLE;
-  const ctx = createContext(config, { db: openDb(":memory:"), logger: pino({ level: "silent" }), linear, agents: { anthropic: claude, local: claude }, github, deliveryNow: o.clockStepMs ? (() => new Date(Date.now() + (virtualCalls++) * o.clockStepMs!)) : undefined, delivery: { ciPollMs: 5, noCiGraceMs: 0, ciMaxMs: 60_000, mergePollMs: 600_000, mergeMaxMs: 3_600_000, ...o.timing } });
+  const ctx = createContext(config, { db: openDb(":memory:"), logger: pino({ level: "silent" }), linear, agents: { anthropic: claude, local: claude }, github, deliveryNow: o.now ?? (o.clockStepMs ? (() => new Date(Date.now() + (virtualCalls++) * o.clockStepMs!)) : undefined), delivery: { ciPollMs: 5, noCiGraceMs: 0, ciMaxMs: 60_000, mergePollMs: 600_000, mergeMaxMs: 3_600_000, ...o.timing } });
   ctx.handle.db.update(projects).set({ validationJson: JSON.stringify({ ok: true }) }).run();
   const jobId = enqueue(ctx.handle.db, { projectId: "p", externalId: issue.id, externalKey: "JAM-1" }).job.id;
   // Arrive at IMPLEMENTATION_PREPARATION the way a real job does: worktree on factory/JAM-1 with the committed spec.
@@ -54,7 +54,7 @@ export async function harness(o: { passes?: number; projectPasses?: number; comm
   write(info.path, `${dir}/ticket.md`, `# JAM-1: ${TITLE}\n`);
   await commitPaths(info.path, [dir], "spec(JAM-1): all");
   ctx.handle.db.update(jobs).set({ stage: "IMPLEMENTATION_PREPARATION" }).where(eq(jobs.id, jobId)).run();
-  const engine = new Engine({ db: ctx.handle.db, logger: pino({ level: "silent" }), config, handlers: ctx.handlers, backoffBaseMs: 0, observer: createLinearReporter(ctx.handle.db) });
+  const engine = new Engine({ db: ctx.handle.db, logger: pino({ level: "silent" }), config, handlers: ctx.handlers, backoffBaseMs: 0, observer: createLinearReporter(ctx.handle.db), ...(o.now ? { now: o.now } : {}) });
   const hist = () => ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.jobId, jobId)).all().map((x) => `${x.stage}:${x.outcome}`);
   return { github, linear, ctx, claude, haiku, repo, jobId, engine, wt: info.path, hist, stages: () => hist().map((h) => h.split(":")[0]!) };
 }

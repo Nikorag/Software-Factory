@@ -96,7 +96,7 @@ describe("scheduler", () => {
   });
   it("graceful stop aborts the running agent, re-queues the job untouched, and a restarted service finishes it", async () => {
     let started = false;
-    const hang: HandlerRegistry = { ...simulatedHandlers(), IMPLEMENTATION: () => new Promise(() => { started = true; }) };
+    const hang: HandlerRegistry = { ...simulatedHandlers(), IMPLEMENTATION: ({ signal }) => new Promise((res) => { started = true; signal.addEventListener("abort", () => res({ kind: "ok" })); }) };
     const r = rig(hang); const j = r.add(); r.sched.start();
     expect(await until(() => started)).toBe(true);
     await r.sched.stop();
@@ -109,7 +109,7 @@ describe("scheduler", () => {
   });
   it("an emergency stop during a run holds the job and the scheduler starts nothing until resumed", async () => {
     let started = false;
-    const hang: HandlerRegistry = { ...simulatedHandlers(), IMPLEMENTATION: () => new Promise(() => { started = true; }) };
+    const hang: HandlerRegistry = { ...simulatedHandlers(), IMPLEMENTATION: ({ signal }) => new Promise((res) => { started = true; signal.addEventListener("abort", () => res({ kind: "ok" })); }) };
     const r = rig(hang); const j = r.add(); r.sched.start();
     expect(await until(() => started)).toBe(true);
     control.emergencyStop(r.db, "t"); r.engine.abortActive("estop");

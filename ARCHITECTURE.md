@@ -28,7 +28,7 @@ Layers: `src/core` (engine, jobs, control), `src/linear`, `src/repo`, `src/githu
 - `decisions` records every autonomous decision with actor and rationale; `agent_invocations` records every agent run (logs on disk).
 
 ## Safety invariants (enforced in code, not prompts)
-Loopback-only HTTP with Host/Origin checks and a bearer token for controls; no secrets in config (keychain/env only); log redaction; protected paths enforced as permission denies and re-verified on every diff; project code sandboxed; no default-branch pushes, no force-push, **no merge capability at all** (PR-only); one agent per worktree; remediation capped at 3; secrets scanned across branch history; an emergency stop that terminates running agents immediately.
+Loopback-only HTTP with Host/Origin checks and a bearer token for controls; no secrets in config (keychain/env only); log redaction; protected paths enforced as permission denies and re-verified on every diff; project code sandboxed; no default-branch pushes, no force-push, **no merge capability at all** (PR-only); one agent per worktree; remediation capped at 3 per phase (spec, code, CI); secrets scanned across branch history; an emergency stop that terminates running agents immediately.
 
 ## Decisions
 See `docs/adr/`.
