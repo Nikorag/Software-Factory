@@ -23,7 +23,7 @@ export const SPEC_FILES = ["spec.md", "plan.md", "tasks.md", "research.md", "dat
 
 export interface H { github: FakeGitHub; linear: FakeLinear; ctx: Context; claude: ImplAgent; haiku: ImplAgent; repo: string; jobId: string; engine: Engine; wt: string; hist: () => string[]; stages: () => string[] }
 
-export async function harness(o: { commands?: Record<string, string>; baseTest?: string; github?: FakeGitHub; timing?: Partial<DeliveryTiming>; clockStepMs?: number } = {}): Promise<H> {
+export async function harness(o: { passes?: number; projectPasses?: number; commands?: Record<string, string>; baseTest?: string; github?: FakeGitHub; timing?: Partial<DeliveryTiming>; clockStepMs?: number } = {}): Promise<H> {
   const { repo } = makeRepo({
     "package.json": JSON.stringify({ name: "todo", type: "module", scripts: { test: "node --test" } }),
     "src/todos.js": "export const list = () => [];\n",
@@ -32,10 +32,10 @@ export async function harness(o: { commands?: Record<string, string>; baseTest?:
   });
   const base = fixtureConfig();
   const commands = o.commands ?? { test: "node --test", lint: "node --check src/todos.js" };
-  const project = ProjectConfig.parse({ id: "p", name: "P", repository: repo, linear: { teamKey: "JAM" }, github: { repo: "Nikorag/todo" }, commands });
+  const project = ProjectConfig.parse({ id: "p", name: "P", repository: repo, linear: { teamKey: "JAM" }, github: { repo: "Nikorag/todo" }, commands, overrides: o.projectPasses ? { maxImplementationPasses: o.projectPasses } : undefined });
   const r = (provider: string, model: string) => ({ provider, model });
   const config: LoadedConfig = {
-    ...base, factory: { ...base.factory, dataDir: join(repo, "..", "data") }, projects: { projects: [project] },
+    ...base, factory: { ...base.factory, dataDir: join(repo, "..", "data"), ...(o.passes ? { maxImplementationPasses: o.passes } : {}) }, projects: { projects: [project] },
     models: ModelsConfig.parse({ routes: { classification: r("anthropic", "haiku"), specification: r("anthropic", "default"), implementation: r("anthropic", "default"), independent_review: r("anthropic", "haiku"), final_review: r("anthropic", "default") } }),
   };
   let virtualCalls = 0; // a virtual clock for delivery waits: each reading is clockStepMs later, independent of how fast the machine is

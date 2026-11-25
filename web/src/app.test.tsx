@@ -250,6 +250,27 @@ describe("settings and setup", () => {
     await waitFor(() => expect(calls.find((c) => c.method === "PUT")?.url).toBe("/api/settings/global"));
     expect(JSON.parse(calls.find((c) => c.method === "PUT")!.body!)).toMatchObject({ maxConcurrentJobs: 3, maxRemediationAttempts: 5, routes: { implementation: { provider: "anthropic", model: "opus" }, classification: { model: "haiku" } } });
   });
+  it("sets the number of implementation passes, separately from the fix cycle limit, and explains the difference", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": { ...globalSettings, maxImplementationPasses: 3 } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Workflow" }));
+    const passes = await screen.findByLabelText("Implementation passes");
+    expect(passes).toHaveValue(3);
+    expect(screen.getByText(/separate from the fix cycle limit/)).toBeInTheDocument();
+    await userEvent.clear(passes); await userEvent.type(passes, "8");
+    await userEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toBeTruthy());
+    expect(JSON.parse(calls.find((c) => c.method === "PUT")!.body!)).toMatchObject({ maxImplementationPasses: 8, maxRemediationAttempts: 3 });
+  });
+  it("a project can have its own number of implementation passes", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": { ...globalSettings, maxImplementationPasses: 4 }, "/api/settings/projects/my-app": { ok: true } };
+    app("/settings");
+    expect(await screen.findByText("global: 4")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Implementation passes"), "9");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toBeTruthy());
+    expect(JSON.parse(calls.find((c) => c.method === "PUT")!.body!).overrides).toMatchObject({ maxImplementationPasses: 9 });
+  });
   it("keeps concurrency inside 1-8 and warns when the reviewer is the same model as the writer", async () => {
     routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings };
     app("/settings");
@@ -263,7 +284,7 @@ describe("settings and setup", () => {
   it("a project can override a setting, and one it leaves alone is not sent", async () => {
     routes = { "/api/overview": overview(), "/api/projects": { projects: [proj] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings, "/api/settings/projects/my-app": { ok: true } };
     app("/settings");
-    expect(await screen.findByText("global: 3")).toBeInTheDocument(); // the fix-cycle default is shown beside the field
+    expect((await screen.findAllByText("global: 3")).length).toBeGreaterThanOrEqual(1); // the fix-cycle default (and the passes default) are shown beside their fields
     await userEvent.type(screen.getByLabelText("Fix cycle limit"), "1");
     const row = screen.getByText("Implementation model").closest("div")!.parentElement!;
     await userEvent.click(within(row).getByRole("button", { name: "Override for this project" }));

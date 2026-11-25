@@ -19,6 +19,8 @@ import { findProtectedChanges } from "../agents/guard.js";
 
 export interface ImplDeps extends StageKitDeps {
   dataDir: string;
+  /** How many implement-and-converge rounds a project allows (live: read each stage). */
+  maxPasses?: (projectId: string) => number;
   settings: { protectedPaths: string[]; commandTimeoutSeconds: number; sandbox: { required: boolean; readAllow?: string[]; writeAllow?: string[] } };
   runCommand?: typeof runProjectCommand; // injectable for tests
 }
@@ -27,7 +29,7 @@ const MIN = 60_000;
 const CHECK_ORDER: Exclude<CommandKind, "install">[] = ["build", "typecheck", "lint", "test"];
 const BLOCKING = new Set(["blocker", "major", "critical", "high"]);
 export const isBlocking = (sev: string) => BLOCKING.has(sev);
-const MAX_PASSES = 3;
+const DEFAULT_PASSES = 3;
 
 /** Paths/keywords that make a change worth a dedicated security review. */
 const SECURITY_PATHS = /(^|\/)(auth|crypto|security|session|login|password|token|secret|permission|acl|sandbox|exec|shell|sql|db|database|migrations?)\b|package(-lock)?\.json$|pnpm-lock\.yaml$|yarn\.lock$|Dockerfile|\.github\//i;
@@ -132,7 +134,8 @@ export function createImplementationHandlers(d: ImplDeps) {
     const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands);
     let session: string | undefined;
     let appended = "";
-    for (let pass = 1; pass <= MAX_PASSES; pass++) {
+    const maxPasses = d.maxPasses?.(project.id) ?? DEFAULT_PASSES;
+    for (let pass = 1; pass <= maxPasses; pass++) {
       const r = await agent(ctx, {
         task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: ImplementResult, bashAllow: [wrapper], resumeSessionId: session,
         prompt: implementPrompt({ featureDir: p.featureDir, wrapper, checks, pass, appended }),
@@ -152,7 +155,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       if (c.data!.converged) return { kind: "ok", output: { passes: pass, summary: r.data!.summary, skipped: r.data!.tasksSkipped, files: (await changedFiles(p.cwd, p.info.base, { code: true }, git)).length } };
       appended = `Appended tasks: ${c.data!.summary}`;
     }
-    return { kind: "needs_attention", reason: `The implementation did not converge with the spec after ${MAX_PASSES} passes; tasks remain. See the worktree and tasks.md.` };
+    return { kind: "needs_attention", reason: `The implementation did not converge with the spec after ${maxPasses} passes; tasks remain. See the worktree and tasks.md. (Raise "Implementation passes" in Settings → Workflow, then retry the job: it resumes in the same worktree.)` };
   };
 
   const automatedTesting: StageHandler = async (ctx) => {
