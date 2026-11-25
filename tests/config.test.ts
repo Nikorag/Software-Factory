@@ -59,3 +59,29 @@ describe("linear config", () => {
     expect(() => loadConfig(dir({ "models.yaml": MODELS, "linear.yaml": "apiKey: lin_api_x" }))).toThrow(/secret/);
   });
 });
+
+describe("project bindings", () => {
+  const P = (...entries: string[]) => `projects:\n${entries.join("\n")}`;
+  const e = (id: string, repo: string, linear = "") => `  - { id: ${id}, name: ${id}, repository: ${repo}${linear ? `, linear: ${linear}` : ""} }`;
+  const load = (y: string) => loadConfig(dir({ "models.yaml": MODELS, "projects.yaml": y }));
+  it("accepts different Linear projects mapped to different repos", () => {
+    const c = load(P(e("a", "/r/a", "{ teamKey: JAM, projectName: Alpha }"), e("b", "/r/b", "{ teamKey: JAM, projectName: Beta }")));
+    expect(c.projects.projects).toHaveLength(2);
+  });
+  it("rejects two repos bound to the same Linear project (case-insensitive)", () => {
+    expect(() => load(P(e("a", "/r/a", "{ teamKey: JAM, projectName: Alpha }"), e("b", "/r/b", "{ teamKey: JAM, projectName: alpha }")))).toThrow(/same Linear target/);
+  });
+  it("rejects two team-wide bindings for one team", () => {
+    expect(() => load(P(e("a", "/r/a", "{ teamKey: JAM }"), e("b", "/r/b", "{ teamKey: JAM }")))).toThrow(/same Linear target/);
+  });
+  it("rejects one repository enrolled twice", () => {
+    expect(() => load(P(e("a", "/r/a"), e("b", "/r/a")))).toThrow(/same repository/);
+  });
+  it("allows a team-wide fallback alongside project-specific bindings", () => {
+    expect(() => load(P(e("a", "/r/a", "{ teamKey: JAM, projectName: Alpha }"), e("b", "/r/b", "{ teamKey: JAM }")))).not.toThrow();
+  });
+  it("reads github.account", () => {
+    const c = load(P("  - { id: a, name: a, repository: /r/a, github: { account: Nikorag } }"));
+    expect(c.projects.projects[0]!.github.account).toBe("Nikorag");
+  });
+});

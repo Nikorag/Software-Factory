@@ -102,6 +102,11 @@ program
       console.log("! no projects are bound to a Linear team (set `linear.teamKey` in config/projects.yaml). Teams visible to this key:");
       for (const t of teams) console.log(`    ${t.key}  ${t.name}`);
     }
+    for (const t of teams.filter((t) => keys.length === 0 || keys.includes(t.key))) {
+      const ps = await client.projects(t.id);
+      console.log(`  Linear projects in ${t.key}: ${ps.length ? "" : "(none)"}`);
+      for (const p of ps) console.log(`    ${p.name}  [${p.id}]`);
+    }
     let missing = 0;
     for (const key of keys) {
       const team = teams.find((t) => t.key === key);

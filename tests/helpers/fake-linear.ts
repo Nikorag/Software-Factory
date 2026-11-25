@@ -33,12 +33,13 @@ export class FakeLinear implements LinearClient {
   private rec(s: string) { this.calls.push(s); }
 
   async viewer() { this.rec("viewer"); return { id: "u1", name: "Test User" }; }
+  async projects() { return [...new Set([...this.issues.values()].flatMap((i) => (i.project ? [JSON.stringify(i.project)] : [])))].map((j) => JSON.parse(j) as { id: string; name: string }); }
   async teams() { return [{ id: "team-1", key: "ENG", name: "Engineering" }]; }
   async listIssues(q: IssueQuery): Promise<LinearIssue[]> {
     this.rec(`listIssues:${q.teamKey}:${q.projectId ?? "-"}`);
     this.maybeFail("listIssues");
     return [...this.issues.values()].filter((i) =>
-      i.team.key === q.teamKey && i.state.name === q.stateName && i.labels.some((l) => l.name === q.labelName) && (!q.projectId || i.project?.id === q.projectId));
+      i.team.key === q.teamKey && i.state.name === q.stateName && i.labels.some((l) => l.name === q.labelName) && (!q.projectId || i.project?.id === q.projectId) && (!q.projectName || i.project?.name === q.projectName));
   }
   async getIssue(id: string) { this.rec(`getIssue:${id}`); this.maybeFail("getIssue"); const i = this.issues.get(id); if (!i) throw new LinearApiError("not found", false); return structuredClone(i); }
   async workflowStates() { return this.states; }

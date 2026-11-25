@@ -69,6 +69,14 @@ describe("inspectRepository", () => {
       expect(codes(r)).not.toContain("no-branch-protection");
       expect(codes(r)).toContain("protection-unverified");
     });
+    it("recognises the GitHub free-plan limitation on private repos as 'unavailable', not 'unprotected'", async () => {
+      const plan: GhApi = async (path) => (/\/branches\//.test(path) ? { status: 403, body: "Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)" } : { status: 200, body: {} });
+      const r = await inspectRepository(proj(withGithub(), { autonomy: "full" }), { gh: plan });
+      expect(r.branchProtection.status).toBe("unavailable");
+      expect(codes(r)).toContain("protection-unavailable");
+      expect(codes(r)).not.toContain("no-branch-protection");
+      expect(r.ok).toBe(true); // a warning, but the project must not auto-merge (enforced in Milestone 8)
+    });
     it("does not require protection for supervised projects", async () => {
       const r = await inspectRepository(proj(withGithub()), { gh: gh(404) });
       expect(codes(r)).not.toContain("no-branch-protection");

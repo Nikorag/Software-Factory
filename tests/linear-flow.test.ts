@@ -104,6 +104,15 @@ describe("discovery", () => {
     const r2 = await run([scoped, twin]);
     expect(r2.skipped.some((s) => s.key === "ENG-3" && /ambiguous/.test(s.reasons[0]!))).toBe(true);
   });
+  it("binds each Linear project (by name) to its own repo, and never crosses them", async () => {
+    fake.addIssue({ key: "JAM-1", team: "JAM", project: "Alpha" }); fake.addIssue({ key: "JAM-2", team: "JAM", project: "Beta" }); fake.addIssue({ key: "JAM-3", team: "JAM", project: "Gamma" });
+    const mkp = (id: string, name: string) => proj({ id, repository: repo, linear: { teamKey: "JAM", projectName: name } });
+    const [a, b] = [mkp("alpha", "Alpha"), mkp("beta", "Beta")];
+    syncProjects(h.db, [a, b]);
+    await validateProjects(h.db, [a, b], { gh: async (path) => ({ status: /branches/.test(path) ? 404 : 200, body: {} }) });
+    const r = await run([a, b]);
+    expect(Object.fromEntries(r.enqueued.map((e) => [e.key, e.projectId]))).toEqual({ "JAM-1": "alpha", "JAM-2": "beta" }); // Gamma is unmapped: ignored
+  });
   it("one failing project does not stop discovery for the others", async () => {
     fake.addIssue({ key: "ENG-1" });
     fake.failOn("listIssues", new LinearApiError("boom", false), 1);

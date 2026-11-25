@@ -15,7 +15,7 @@ export interface DiscoveryReport {
   errors: { projectId: string; error: string }[];
 }
 
-const specificity = (p: ProjectConfig) => (p.linear?.projectId ? 2 : 1);
+const specificity = (p: ProjectConfig) => (p.linear?.projectId || p.linear?.projectName ? 2 : 1);
 
 /**
  * One polling pass. Reads Linear, decides eligibility, creates idempotent jobs. Never changes issue state
@@ -33,7 +33,7 @@ export async function discoverIssues(deps: {
   for (const p of bound) {
     try {
       const issues = await client.listIssues({
-        teamKey: p.linear!.teamKey, projectId: p.linear!.projectId,
+        teamKey: p.linear!.teamKey, projectId: p.linear!.projectId, projectName: p.linear!.projectName,
         stateName: linear.statuses.readyForSpecification, labelName: linear.labels.enabled,
       });
       for (const issue of issues) {

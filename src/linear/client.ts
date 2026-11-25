@@ -13,7 +13,7 @@ export interface LinearIssue {
   labels: LinearLabel[];
 }
 export interface LinearIssueDetail extends LinearIssue { comments: LinearComment[] }
-export interface IssueQuery { teamKey: string; projectId?: string; stateName: string; labelName: string }
+export interface IssueQuery { teamKey: string; projectId?: string; projectName?: string; stateName: string; labelName: string }
 
 /** Everything the factory needs from Linear. Real implementation below; tests supply a fake. */
 export interface LinearClient {
@@ -24,6 +24,7 @@ export interface LinearClient {
   /** Workspace-level labels plus those belonging to the team. */
   labels(teamId: string): Promise<LinearLabel[]>;
   teams(): Promise<{ id: string; key: string; name: string }[]>;
+  projects(teamId: string): Promise<{ id: string; name: string }[]>;
   setState(issueId: string, stateId: string): Promise<void>;
   addLabel(issueId: string, labelId: string): Promise<void>;
   removeLabel(issueId: string, labelId: string): Promise<void>;
@@ -116,6 +117,10 @@ export function createLinearClient(opts: HttpClientOptions): LinearClient {
       const d = await request<Raw>("query { teams(first: 100) { nodes { id key name } } }");
       return d.teams.nodes;
     },
+    async projects(teamId) {
+      const d = await request<Raw>(`query($id: String!) { team(id: $id) { projects(first: 100) { nodes { id name } } } }`, { id: teamId });
+      return d.team.projects.nodes;
+    },
     async listIssues(q) {
       const filter: Raw = {
         team: { key: { eq: q.teamKey } },
@@ -123,6 +128,7 @@ export function createLinearClient(opts: HttpClientOptions): LinearClient {
         labels: { some: { name: { eq: q.labelName } } },
       };
       if (q.projectId) filter.project = { id: { eq: q.projectId } };
+      else if (q.projectName) filter.project = { name: { eq: q.projectName } };
       const out: LinearIssue[] = [];
       let after: string | null = null;
       do {

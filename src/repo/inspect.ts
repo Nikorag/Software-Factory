@@ -5,12 +5,13 @@ import { promisify } from "node:util";
 import type { ProjectConfig } from "../config/schema.js";
 import { expandHome } from "../config/load.js";
 import { git as realGit, type GitFn } from "./git.js";
+import { ghEnv, GhAccountError } from "./gh.js";
 
 const exec = promisify(execFile);
 
 export type Severity = "error" | "warn" | "info";
 export interface Finding { severity: Severity; code: string; message: string }
-export type Protection = { status: "protected"; requiredChecks: string[]; requiresReviews: boolean } | { status: "unprotected" } | { status: "unknown"; reason: string };
+export type Protection = { status: "protected"; requiredChecks: string[]; requiresReviews: boolean } | { status: "unprotected" } | { status: "unavailable"; reason: string } | { status: "unknown"; reason: string };
 
 export interface RepoReport {
   projectId: string;
@@ -34,11 +35,13 @@ export interface RepoReport {
 /** Read-only GitHub API access. Injected so tests never touch the network. */
 export type GhApi = (path: string) => Promise<{ status: number; body: unknown }>;
 
-export const ghApi: GhApi = async (path) => {
+/** Read-only GitHub API access via gh, as the project's configured account (or gh's active login). */
+export const createGhApi = (account?: string): GhApi => async (path) => {
   try {
-    const { stdout } = await exec("gh", ["api", path], { timeout: 20_000 });
+    const { stdout } = await exec("gh", ["api", path], { timeout: 20_000, env: await ghEnv(account) });
     return { status: 200, body: JSON.parse(stdout) };
   } catch (e) {
+    if (e instanceof GhAccountError) return { status: 0, body: e.message };
     const msg = ((e as { stderr?: string }).stderr ?? "") + String((e as Error).message);
     const m = /HTTP (\d{3})/.exec(msg);
     return { status: m ? Number(m[1]) : 0, body: msg };
@@ -90,12 +93,15 @@ export async function checkBranchProtection(remote: { owner: string; repo: strin
     return { status: "protected", requiredChecks: [...new Set(checks)], requiresReviews: Boolean(b.required_pull_request_reviews) };
   }
   if (res.status === 404) return { status: "unprotected" };
+  if (res.status === 403 && /upgrade to github pro|make this repository public/i.test(String(typeof res.body === "string" ? res.body : JSON.stringify(res.body)))) {
+    return { status: "unavailable", reason: "GitHub plan does not offer branch protection for private repositories" };
+  }
   return { status: "unknown", reason: `GitHub API returned ${res.status || "no response"} (private repo on a free plan, or insufficient access)` };
 }
 
 export async function inspectRepository(project: ProjectConfig, deps: { git?: GitFn; gh?: GhApi } = {}): Promise<RepoReport> {
   const git = deps.git ?? realGit;
-  const gh = deps.gh ?? ghApi;
+  const gh = deps.gh ?? createGhApi(project.github.account);
   const path = expandHome(project.repository);
   const findings: Finding[] = [];
   const add = (severity: Severity, code: string, message: string) => findings.push({ severity, code, message });
@@ -152,11 +158,15 @@ export async function inspectRepository(project: ProjectConfig, deps: { git?: Gi
   report.ciWorkflows = existsSync(wfDir) ? readdirSync(wfDir).filter((f) => /\.ya?ml$/.test(f)) : [];
   if (report.ciWorkflows.length === 0) add("warn", "no-ci", "No GitHub Actions workflows found: no CI signal before merging");
 
+  if (project.github.account && report.remote?.github && report.remote.github.owner.toLowerCase() !== project.github.account.toLowerCase()) {
+    add("info", "owner-differs-from-account", `Repository owner "${report.remote.github.owner}" differs from gh account "${project.github.account}" (fine for organisation repos)`);
+  }
   report.branchProtection = await checkBranchProtection(report.remote?.github ?? null, project.defaultBranch, gh);
   const bp = report.branchProtection;
   if (project.autonomy === "full") {
     if (bp.status === "unprotected") add("error", "no-branch-protection", "Full autonomy requires branch protection on the default branch");
     else if (bp.status === "protected" && bp.requiredChecks.length === 0) add("error", "no-required-checks", "Full autonomy requires at least one required status check");
+    else if (bp.status === "unavailable") add("warn", "protection-unavailable", `${bp.reason}. GitHub cannot enforce required checks here, so auto-merge is refused until you upgrade the plan, make the repo public, or explicitly accept factory-side enforcement`);
     else if (bp.status === "unknown") add("warn", "protection-unverified", `Could not verify branch protection (${bp.reason}); auto-merge will be refused until verified`);
   }
 

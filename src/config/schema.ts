@@ -56,7 +56,10 @@ export const ProjectConfig = z.object({
   enabled: z.boolean().default(true),
   specKit: z.boolean().default(true),
   autonomy: AutonomyLevel.default("supervised"),
-  linear: z.object({ teamKey: z.string(), projectId: z.string().optional() }).optional(),
+  // Bind to a Linear team, optionally narrowed to one Linear project (by name or id). One repo per Linear project.
+  linear: z.object({ teamKey: z.string(), projectName: z.string().optional(), projectId: z.string().optional() }).optional(),
+  // GitHub account that owns/accesses this repo. gh is invoked as this account per call; the global gh login is never switched.
+  github: z.object({ account: z.string().optional() }).prefault({}),
   commands: z
     .object({ test: z.string().optional(), lint: z.string().optional(), typecheck: z.string().optional() })
     .default({}),

@@ -54,9 +54,20 @@ export function loadConfig(configDir = process.env.FACTORY_CONFIG_DIR ?? "config
   const linear = readYaml(dir, "linear.yaml", LinearConfig, false);
 
   const ids = new Set<string>();
+  const bindings = new Map<string, string>();
+  const repos = new Map<string, string>();
   for (const p of projects.projects) {
     if (ids.has(p.id)) throw new ConfigError(`projects.yaml: duplicate project id "${p.id}"`);
     ids.add(p.id);
+    const repo = resolve(expandHome(p.repository));
+    if (repos.has(repo)) throw new ConfigError(`projects.yaml: "${p.id}" and "${repos.get(repo)}" use the same repository (${repo}); repositories must never be shared`);
+    repos.set(repo, p.id);
+    if (p.linear) {
+      // Each Linear project (or team-wide fallback) maps to exactly one repo.
+      const key = `${p.linear.teamKey}/${(p.linear.projectId ?? p.linear.projectName ?? "*").toLowerCase()}`;
+      if (bindings.has(key)) throw new ConfigError(`projects.yaml: "${p.id}" and "${bindings.get(key)}" are bound to the same Linear target (${key}); each Linear project must map to a different repository`);
+      bindings.set(key, p.id);
+    }
   }
   return { linear, factory: { ...factory, dataDir: expandHome(factory.dataDir) }, models, projects, workflows };
 }
