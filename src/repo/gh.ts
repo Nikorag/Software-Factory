@@ -29,3 +29,18 @@ export class GhAccountError extends Error {
 }
 
 export const forgetGhTokens = () => tokens.clear();
+
+/**
+ * Environment that authenticates git's HTTPS operations to github.com as `account`, for one child process.
+ * Uses GIT_CONFIG_* env vars (not command-line args) so the token never appears in `ps`, and nothing is
+ * written to the repository's config. With no account, returns undefined and git uses its normal credentials.
+ */
+export async function gitAuthEnv(account?: string, tokenFor: (a: string) => Promise<string> = async (a) => (await ghEnv(a)).GH_TOKEN!): Promise<NodeJS.ProcessEnv | undefined> {
+  if (!account) return undefined;
+  const basic = Buffer.from(`x-access-token:${await tokenFor(account)}`).toString("base64");
+  return {
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: "credential.helper", GIT_CONFIG_VALUE_0: "", // don't consult other stored credentials
+    GIT_CONFIG_KEY_1: "http.https://github.com/.extraheader", GIT_CONFIG_VALUE_1: `AUTHORIZATION: basic ${basic}`,
+  };
+}

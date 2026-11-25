@@ -1,19 +1,106 @@
 # Enrolled repositories. One Linear project <-> one repository, all under the Nikorag GitHub account.
-# New projects start `supervised`; raise to `full` only once validation passes cleanly (see docs/integrations.md).
+# Entries with `github.repo` and no `repository` are factory-managed clones in <dataDir>/projects/<id>
+# (`pnpm factory project:sync` creates them). The factory never works in your own checkouts for these.
+# Everything starts `supervised`; raise to `full` only after validation passes cleanly (see docs/integrations.md).
+# Enrolling does not start work: only issues labelled factory:enabled in "Ready for specification" are picked up.
 projects:
   - id: zonto-hub
     name: Zonto Hub
-    repository: ~/projects/personal/Zonto/Zonto-Hub
+    repository: ~/projects/personal/Zonto/Zonto-Hub   # your existing checkout (left untouched; factory worktrees are separate)
     defaultBranch: main
-    enabled: true
-    specKit: true
     autonomy: supervised
     github: { account: Nikorag }
     linear: { teamKey: JAM, projectName: "Zonto Hub" }
 
-  # Proposed mappings, not enrolled (no local checkout yet). Uncomment with `repository:` set once cloned.
-  #   Brotherly Love -> Nikorag/Brotherly-Love    Blobs -> Nikorag/Blobs           Cycic Citizen -> Nikorag/CycicCitizen
-  #   Hungry Birds   -> Nikorag/HungryBirds       Iron -> Nikorag/Iron             Meaven In Space -> Nikorag/Meaven-In-Space
-  #   Pine           -> Nikorag/pine              Static -> Nikorag/static         Time Sheriff -> Nikorag/Time-Sheriff
-  #   Zonto Kart     -> Nikorag/Zonto-Kart        Carve the Fate -> Nikorag/Carve-The-Fate
-  #   No obvious repo: Fruit Heist (heist?), Peggy!, Tin Can, Quad Bikes, Animorphs
+  - id: brotherly-love
+    name: "Brotherly Love"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/Brotherly-Love }
+    linear: { teamKey: JAM, projectName: "Brotherly Love" }
+
+  - id: blobs
+    name: "Blobs"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/Blobs }
+    linear: { teamKey: JAM, projectName: "Blobs" }
+
+  - id: cycic-citizen
+    name: "Cycic Citizen"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/CycicCitizen }
+    linear: { teamKey: JAM, projectName: "Cycic Citizen" }
+
+  - id: hungry-birds
+    name: "Hungry Birds"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/HungryBirds }
+    linear: { teamKey: JAM, projectName: "Hungry Birds" }
+
+  - id: iron
+    name: "Iron"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/Iron }
+    linear: { teamKey: JAM, projectName: "Iron" }
+
+  - id: meaven-in-space
+    name: "Meaven In Space"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/Meaven-In-Space }
+    linear: { teamKey: JAM, projectName: "Meaven In Space" }
+
+  - id: pine
+    name: "Pine"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/pine }
+    linear: { teamKey: JAM, projectName: "Pine" }
+
+  - id: static
+    name: "Static"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/static }
+    linear: { teamKey: JAM, projectName: "Static" }
+
+  - id: time-sheriff
+    name: "Time Sheriff"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/Time-Sheriff }
+    linear: { teamKey: JAM, projectName: "Time Sheriff" }
+
+  - id: zonto-kart
+    name: "Zonto Kart"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/Zonto-Kart }
+    linear: { teamKey: JAM, projectName: "Zonto Kart" }
+
+  - id: carve-the-fate
+    name: "Carve the Fate"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/Carve-The-Fate }
+    linear: { teamKey: JAM, projectName: "Carve the Fate" }
+
+  - id: fruit-heist
+    name: "Fruit Heist"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/heist }
+    linear: { teamKey: JAM, projectName: "Fruit Heist" }
+
+  - id: peggy
+    name: "Peggy!"
+    defaultBranch: main
+    autonomy: supervised
+    github: { account: Nikorag, repo: Nikorag/Molkky }
+    linear: { teamKey: JAM, projectName: "Peggy!" }
+
+# Not enrolled (no repository identified yet): Tin Can, Quad Bikes, Animorphs.

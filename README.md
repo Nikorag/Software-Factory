@@ -16,6 +16,7 @@ npm install -g pnpm          # if pnpm is missing
 pnpm install
 pnpm factory doctor          # audit environment and integrations
 pnpm factory config:check    # validate config/*.yaml
+pnpm factory project:sync       # clone factory-managed repos (idempotent)
 pnpm factory project:validate   # inspect enrolled repos (read-only)
 pnpm factory linear:check       # verify LINEAR_API_KEY and configured statuses/labels (read-only)
 pnpm factory serve           # loopback service on 127.0.0.1:4780 (GET /health)

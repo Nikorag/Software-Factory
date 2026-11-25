@@ -29,6 +29,7 @@ export class WorktreeManager {
     workspacesRoot: string; // <dataDir>/workspaces
     repoPath: (projectId: string) => string; // path of the original checkout
     defaultBranch: (projectId: string) => string;
+    networkEnv?: (projectId: string) => Promise<NodeJS.ProcessEnv | undefined>; // account-scoped auth for fetch
     git?: GitFn;
   }) {
     this.git = o.git ?? realGit;
@@ -102,7 +103,7 @@ export class WorktreeManager {
     if (mine) db.delete(worktrees).where(eq(worktrees.jobId, job.id)).run(); // stale row: recreate below
     await this.git(repo, ["worktree", "prune"]);
 
-    await this.git(repo, ["fetch", "--quiet", "origin", def], { timeoutMs: 120_000 }).catch((e) => logger.warn({ err: String(e) }, "fetch failed; using local refs"));
+    await this.git(repo, ["fetch", "--quiet", "origin", def], { timeoutMs: 120_000, env: await this.o.networkEnv?.(job.projectId) }).catch((e) => logger.warn({ err: String(e) }, "fetch failed; using local refs"));
     let base = "";
     for (const cand of [`refs/remotes/origin/${def}`, `refs/heads/${def}`]) {
       if (await this.git(repo, ["rev-parse", "--verify", "--quiet", cand]).then(() => true, () => false)) { base = cand.replace(/^refs\/(remotes|heads)\//, ""); break; }

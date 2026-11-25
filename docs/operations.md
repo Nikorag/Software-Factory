@@ -9,3 +9,8 @@ Layout: `<dataDir>/workspaces/<projectId>/<ISSUE-KEY>` on branch `factory/<ISSUE
 - **Cleanup:** `remove` refuses (and preserves) dirty worktrees. It deletes the branch with `-d`; after a verified merge callers may pass `deleteBranch: "force"` (needed for squash merges). Failed jobs should call `preserve`.
 - **Drift:** `reconcile(projectId)` reports DB rows with no directory (`missing`) and git worktrees with no row (`orphans`); it never deletes anything.
 - **Submodules** are initialised recursively on creation.
+
+## Factory-managed clones
+A project with `github.repo` and no `repository` is cloned to `<dataDir>/projects/<id>` by `pnpm factory project:sync` and owned by the factory; your own checkouts are never used for these. `project:sync` is idempotent and refuses to touch a directory that is not a clone of the configured repo.
+Network access (clone, fetch, later push) authenticates over HTTPS as the project's `github.account`: the token is read from `gh`'s keyring and handed to the single git process through `GIT_CONFIG_*` environment variables, so it is never in `ps` output, the repo's `.git/config`, the database or logs (verified after the first real clone). Clone origins are plain `https://github.com/<owner>/<repo>.git`.
+Projects with an explicit `repository:` (e.g. `zonto-hub`) keep using that checkout as the *origin of worktrees*; its working tree is never touched.

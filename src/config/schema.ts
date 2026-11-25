@@ -51,7 +51,8 @@ export type ModelsConfig = z.infer<typeof ModelsConfig>;
 export const ProjectConfig = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
   name: z.string(),
-  repository: z.string(),
+  repository: z.string(), // always an absolute-ish path after loading
+  managed: z.boolean().default(false), // true: the factory owns this clone under <dataDir>/projects
   defaultBranch: z.string().default("main"),
   enabled: z.boolean().default(true),
   specKit: z.boolean().default(true),
@@ -59,12 +60,23 @@ export const ProjectConfig = z.object({
   // Bind to a Linear team, optionally narrowed to one Linear project (by name or id). One repo per Linear project.
   linear: z.object({ teamKey: z.string(), projectName: z.string().optional(), projectId: z.string().optional() }).optional(),
   // GitHub account that owns/accesses this repo. gh is invoked as this account per call; the global gh login is never switched.
-  github: z.object({ account: z.string().optional() }).prefault({}),
+  github: z
+    .object({
+      account: z.string().optional(),
+      // owner/name. If `repository` is omitted the factory clones this into <dataDir>/projects/<id> and owns that clone.
+      repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional(),
+    })
+    .prefault({}),
   commands: z
     .object({ test: z.string().optional(), lint: z.string().optional(), typecheck: z.string().optional() })
     .default({}),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;
+/** What projects.yaml may contain: `repository` can be omitted when `github.repo` is given (factory-managed clone). */
+export const ProjectInput = ProjectConfig.extend({ repository: z.string().optional() }).refine((p) => p.repository || p.github.repo, {
+  message: "set `repository` (existing checkout) or `github.repo` (factory-managed clone)",
+});
+export const ProjectsFile = z.object({ projects: z.array(ProjectInput).default([]) });
 export const ProjectsConfig = z.object({ projects: z.array(ProjectConfig).default([]) });
 
 export const STAGES = [

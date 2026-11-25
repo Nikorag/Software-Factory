@@ -9,6 +9,7 @@ import { cancelJob, listJobs, retryJob } from "./core/jobs.js";
 import * as control from "./core/control.js";
 import { runSimulation } from "./core/simulation.js";
 import { syncProjects, validateProjects } from "./repo/registry.js";
+import { ensureClone } from "./repo/clone.js";
 import { createLinearClient, type LinearClient } from "./linear/client.js";
 import { discoverIssues } from "./linear/discovery.js";
 import { flushOutbox } from "./linear/outbox.js";
@@ -69,6 +70,21 @@ for (const [name, fn] of [["pause", control.pause], ["resume", control.resume], 
     const { handle } = openFactoryDb(); (fn as (d: typeof handle.db, a: string) => void)(handle.db, ACTOR); console.log(`${name}: ok`); handle.close();
   });
 }
+
+program
+  .command("project:sync [id]")
+  .description("Clone any factory-managed repositories that are missing (never touches existing checkouts)")
+  .action(async (id: string | undefined) => {
+    const config = loadConfig();
+    const selected = config.projects.projects.filter((p) => p.enabled && (!id || p.id === id));
+    let failed = 0;
+    for (const p of selected) {
+      const r = await ensureClone(p);
+      if (r.status === "error") failed++;
+      console.log(`${r.status === "error" ? "✗" : "✓"} ${p.id.padEnd(18)} ${r.status}${"path" in r ? `  ${r.path}` : ""}${"reason" in r ? `  (${r.reason})` : ""}${"error" in r ? `  ${r.error}` : ""}`);
+    }
+    process.exitCode = failed ? 1 : 0;
+  });
 
 program
   .command("project:validate [id]")

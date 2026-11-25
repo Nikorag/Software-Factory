@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
-import { FactoryConfig, LinearConfig, ModelsConfig, ProjectsConfig, WorkflowsConfig, type LoadedConfig } from "./schema.js";
+import { FactoryConfig, LinearConfig, ModelsConfig, ProjectsConfig, ProjectsFile, WorkflowsConfig, type LoadedConfig } from "./schema.js";
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -49,7 +49,15 @@ export function loadConfig(configDir = process.env.FACTORY_CONFIG_DIR ?? "config
   const dir = resolve(configDir);
   const factory = readYaml(dir, "factory.yaml", FactoryConfig, false);
   const models = readYaml(dir, "models.yaml", ModelsConfig, true);
-  const projects = readYaml(dir, "projects.yaml", ProjectsConfig, false);
+  const projectsFile = readYaml(dir, "projects.yaml", ProjectsFile, false);
+  const dataDir = expandHome(factory.dataDir);
+  const projects = ProjectsConfig.parse({
+    projects: projectsFile.projects.map((p) => ({
+      ...p,
+      managed: !p.repository,
+      repository: p.repository ? expandHome(p.repository) : join(dataDir, "projects", p.id),
+    })),
+  });
   const workflows = readYaml(dir, "workflows.yaml", WorkflowsConfig, false);
   const linear = readYaml(dir, "linear.yaml", LinearConfig, false);
 

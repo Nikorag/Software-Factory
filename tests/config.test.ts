@@ -85,3 +85,21 @@ describe("project bindings", () => {
     expect(c.projects.projects[0]!.github.account).toBe("Nikorag");
   });
 });
+
+describe("managed clones", () => {
+  const load = (y: string, f = "") => loadConfig(dir({ "models.yaml": MODELS, "projects.yaml": y, ...(f ? { "factory.yaml": f } : {}) }));
+  it("resolves a repository-less project to <dataDir>/projects/<id> and marks it managed", () => {
+    const c = load("projects:\n  - { id: kart, name: Kart, github: { repo: Nikorag/Zonto-Kart, account: Nikorag } }", "dataDir: /data");
+    expect(c.projects.projects[0]).toMatchObject({ repository: "/data/projects/kart", managed: true });
+  });
+  it("keeps an explicit repository path unmanaged", () => {
+    const c = load("projects:\n  - { id: a, name: A, repository: /r/a }");
+    expect(c.projects.projects[0]).toMatchObject({ repository: "/r/a", managed: false });
+  });
+  it("requires either repository or github.repo", () => {
+    expect(() => load("projects:\n  - { id: a, name: A }")).toThrow(/repository.*github\.repo/);
+  });
+  it("rejects malformed github.repo", () => {
+    expect(() => load("projects:\n  - { id: a, name: A, github: { repo: not-a-slug } }")).toThrow(ConfigError);
+  });
+});

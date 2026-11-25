@@ -48,7 +48,7 @@ export function assertSafeGitArgs(args: string[], protectedBranches: readonly st
   }
 }
 
-export interface GitOptions { timeoutMs?: number; protectedBranches?: readonly string[] }
+export interface GitOptions { timeoutMs?: number; protectedBranches?: readonly string[]; env?: NodeJS.ProcessEnv }
 export type GitFn = (cwd: string, args: string[], opts?: GitOptions) => Promise<string>;
 
 /** Runs git without a shell (no injection), never prompting for credentials. */
@@ -59,7 +59,7 @@ export const git: GitFn = async (cwd, args, opts = {}) => {
       cwd,
       timeout: opts.timeoutMs ?? 60_000,
       maxBuffer: 32 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" },
+      env: { ...process.env, ...opts.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" },
     });
     return stdout.replace(/\n$/, "");
   } catch (e) {
