@@ -1,3 +1,4 @@
+import type { Hosts } from "../host/index.js";
 import { onboardingOf, type CheckRecord, type Onboarding } from "./readiness.js";
 import { eq } from "drizzle-orm";
 import { expandHome } from "../config/load.js";
@@ -24,11 +25,11 @@ export function getProjectConfig(db: FactoryDb, id: string): ProjectConfig | und
 
 /** Validate (read-only) and persist the report. Disabled projects are skipped. */
 export async function validateProjects(
-  db: FactoryDb, configured: ProjectConfig[], deps: { git?: GitFn; gh?: GhApi; now?: () => Date } = {},
+  db: FactoryDb, configured: ProjectConfig[], deps: { git?: GitFn; gh?: GhApi; now?: () => Date; hosts?: Hosts } = {},
 ): Promise<RepoReport[]> {
   const reports: RepoReport[] = [];
   for (const p of configured.filter((c) => c.enabled)) {
-    const report = await inspectRepository(p, deps);
+    const report = await inspectRepository(p, { ...deps, bitbucketProtection: deps.hosts && p.host === "bitbucket" ? (slug) => deps.hosts!.protection(p, slug) : undefined });
     db.update(projects).set({ lastValidatedAt: (deps.now ?? (() => new Date()))(), validationJson: JSON.stringify(report) }).where(eq(projects.id, p.id)).run();
     reports.push(report);
   }

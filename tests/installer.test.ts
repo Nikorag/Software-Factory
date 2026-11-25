@@ -28,25 +28,21 @@ describe.skipIf(process.platform !== "darwin")("install.sh preflight", () => {
     for (const x of ["macOS", "git", "Node.js", "Spec Kit", "Claude Code (signed in)", "GitHub CLI (signed in)"]) expect(r.out).toContain(`✓ ${x}`);
   });
   it("stops before changing anything and says exactly how to fix each missing tool", () => {
-    const { claude: _c, specify: _s, gh: _g, ...rest } = GOOD; void _c; void _s; void _g;
+    const { claude: _c, specify: _s, ...rest } = GOOD; void _c; void _s;
     const r = check(rest);
     expect(r.code).not.toBe(0);
     expect(r.out).toContain("✗ Claude Code is not installed");
     expect(r.out).toMatch(/fix: curl -fsSL https:\/\/claude\.ai\/install\.sh/);
     expect(r.out).toContain("✗ Spec Kit ('specify') is not installed");
     expect(r.out).toContain("fix: uv tool install specify-cli");
-    expect(r.out).toContain("✗ GitHub CLI ('gh') is not installed");
-    expect(r.out).toContain("brew install gh");
-    expect(r.out).toContain("3 requirement(s) missing. Nothing was installed or changed");
+    expect(r.out).toContain("2 requirement(s) missing. Nothing was installed or changed");
     expect(r.touched).toEqual([]); // not a single file created
   });
   it("catches tools that are installed but not signed in", () => {
-    const r = check({ ...GOOD, claude: "echo '{\"loggedIn\": false}'", gh: "exit 1" });
+    const r = check({ ...GOOD, claude: "echo '{\"loggedIn\": false}'" });
     expect(r.code).not.toBe(0);
     expect(r.out).toContain("✗ Claude Code is installed but not signed in");
     expect(r.out).toContain("/login");
-    expect(r.out).toContain("✗ GitHub CLI is installed but not signed in");
-    expect(r.out).toContain("fix: gh auth login");
   });
   it("rejects an old Node", () => {
     const r = check({ ...GOOD, node: "case \"$1\" in -v) echo v18.0.0;; -p) echo 18;; esac" });
@@ -59,5 +55,15 @@ describe.skipIf(process.platform !== "darwin")("install.sh preflight", () => {
     const r = check({ ...noUv, python3: old });
     expect(r.out).toContain("✗ Python 3.11 or newer is required for Spec Kit (found Python 3.9.6)");
     expect(r.out).toContain("✗ uv is not installed");
+  });
+  it("only warns about the GitHub CLI (Bitbucket projects do not need it), and still passes", () => {
+    const { gh: _g, ...noGh } = GOOD; void _g;
+    const missing = check(noGh);
+    expect(missing.code).toBe(0);
+    expect(missing.out).toContain("! GitHub CLI ('gh') is not installed (needed for GitHub projects; Bitbucket projects do not need it)");
+    const signedOut = check({ ...GOOD, gh: "exit 1" });
+    expect(signedOut.code).toBe(0);
+    expect(signedOut.out).toContain("! GitHub CLI is installed but not signed in (needed for GitHub projects)");
+    expect(signedOut.out).toContain("all requirements are in place");
   });
 });

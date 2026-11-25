@@ -27,6 +27,7 @@ export interface JobDetail {
   outbox: { id: number; kind: string; status: string; attempts: number; lastError: string | null }[];
 }
 export interface Project {
+  host?: "github" | "bitbucket"; bitbucketRepo?: string | null; bitbucketCredential?: string;
   id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; overrides: { maxImplementationPasses?: number; pickupMode?: "automatic" | "manual"; maxConcurrentJobs?: number; maxRemediationAttempts?: number; models?: Partial<import("./tasks").Routes> } | null;
   linear: { teamKey: string; projectName?: string } | null; commands: Record<string, string | undefined>;
   validation: { ok: boolean; protection: string; findings: string[] } | null; activeJobs: number;
@@ -49,3 +50,4 @@ export interface JiraStatus { tracker: "linear" | "jira"; clientId: string | nul
 export interface JiraMetadata { projects: { key: string; name: string }[]; project: string | null; statuses: string[]; labels: string[] }
 export interface JiraMapping { statuses: Record<string, string>; labels: Record<string, string>; required: { statuses: string[]; labels: string[]; automaticStatus: string; automaticLabel: string } }
 export interface JiraCheck { ok: boolean; projects: { projectId: string; jiraProject: string; found: boolean; missing: string[] }[] }
+export interface BitbucketCredential { name: string; kind: "access-token" | "api-token"; email: string | null; hasToken: boolean; usedBy: string[] }

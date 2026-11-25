@@ -485,4 +485,54 @@ describe("settings and setup", () => {
     await userEvent.click(screen.getByRole("button", { name: "Switch" }));
     await waitFor(() => expect(JSON.parse(calls.find((c) => c.url === "/api/settings/tracker")!.body!)).toEqual({ tracker: "jira" }));
   });
+  const bbCreds = { credentials: [{ name: "work", kind: "access-token", email: null, hasToken: true, usedBy: ["my-app"] }, { name: "me", kind: "api-token", email: "me@x.com", hasToken: false, usedBy: [] }] };
+  it("manages Bitbucket credentials: lists them with the projects that use them, never shows a token, and saves a new one", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings, "/api/bitbucket/credentials": bbCreds, "/api/bitbucket/credentials/new-one": { ok: true } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    expect(await screen.findByText("used by my-app")).toBeInTheDocument();
+    expect(screen.getByText("me@x.com")).toBeInTheDocument();
+    expect(screen.getByText("no token")).toBeInTheDocument();                                          // a credential that still needs its token is flagged
+    await userEvent.clear(screen.getByLabelText("Name")); await userEvent.type(screen.getByLabelText("Name"), "new-one");
+    await userEvent.type(screen.getByLabelText(/^Token/), "ATBB-secret-token-value");
+    await userEvent.click(screen.getByRole("button", { name: "Save credential" }));
+    await waitFor(() => expect(JSON.parse(calls.find((c) => c.method === "PUT" && c.url === "/api/bitbucket/credentials/new-one")!.body!)).toEqual({ kind: "access-token", token: "ATBB-secret-token-value" }));
+    expect(await screen.findByText(/Saved "new-one"/)).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("ATBB-secret-token-value")).toBeNull();                          // cleared once saved
+  });
+  it("an API token needs the account email before it can be saved", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings, "/api/bitbucket/credentials": { credentials: [] } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    await userEvent.type(await screen.findByLabelText(/^Token/), "tok-123456789");
+    await userEvent.click(screen.getByRole("combobox", { name: "kind of token" }));
+    await userEvent.click(await screen.findByRole("option", { name: /API token/ }));
+    expect(screen.getByRole("button", { name: "Save credential" })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("Atlassian account email"), "me@x.com");
+    expect(screen.getByRole("button", { name: "Save credential" })).toBeEnabled();
+  });
+  it("a project picks its host: GitHub shows the gh account, Bitbucket shows the repo and a credential, and both are saved per project", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [{ ...proj, host: "bitbucket", bitbucketRepo: "acme/widgets", bitbucketCredential: "work", githubRepo: null }] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings, "/api/bitbucket/credentials": bbCreds, "/api/settings/projects/my-app": { ok: true }, "/api/bitbucket/credentials/work/test": { ok: true, name: "acme/widgets", isPrivate: true, mainBranch: "main" } };
+    app("/settings");
+    expect(await screen.findByDisplayValue("acme/widgets")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "host" })).toHaveTextContent("Bitbucket");
+    expect(screen.queryByRole("combobox", { name: "GitHub account" })).toBeNull();                   // no gh account for a Bitbucket project
+    await userEvent.click(screen.getByRole("button", { name: "Test access" }));
+    expect(await screen.findByText(/acme\/widgets is reachable \(default branch main\)/)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Name"), " 2");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toBeTruthy());
+    expect(JSON.parse(calls.find((c) => c.method === "PUT")!.body!)).toMatchObject({ host: "bitbucket", bitbucket: { repo: "acme/widgets", credential: "work" } });
+    expect(JSON.parse(calls.find((c) => c.method === "PUT")!.body!).github).toBeUndefined();
+  });
+  it("a GitHub project is saved as GitHub, with its gh account, and no Bitbucket section", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings, "/api/bitbucket/credentials": bbCreds, "/api/settings/projects/my-app": { ok: true }, "/api/setup/github": { accounts: [{ login: "Nikorag", active: true }], defaultAccount: null } };
+    app("/settings");
+    await userEvent.type(await screen.findByLabelText("Name"), "!");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toBeTruthy());
+    const sent = JSON.parse(calls.find((c) => c.method === "PUT")!.body!);
+    expect(sent).toMatchObject({ host: "github", github: { repo: "me/my-app" } });
+    expect(sent.bitbucket).toBeUndefined();
+  });
 });

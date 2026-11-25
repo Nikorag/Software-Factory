@@ -1,6 +1,5 @@
 import type { Context } from "../app/context.js";
 import type { ProjectConfig } from "../config/schema.js";
-import { createGhClient } from "../github/client.js";
 import { checkProject } from "../repo/check.js";
 import { ensureClone } from "../repo/clone.js";
 import { syncProjects, validateProjects } from "../repo/registry.js";
@@ -18,20 +17,20 @@ export type ActionFn = (p: ProjectConfig, log: (l: string) => void) => Promise<b
 export type ProjectActions = Record<ActionKind, ActionFn>;
 
 /** The same operations as the project:* CLI commands, for the settings UI. Nothing here merges anything: onboarding raises a PR for a human. */
-export function createProjectActions(ctx: Pick<Context, "config" | "handle" | "runner">): ProjectActions {
+export function createProjectActions(ctx: Pick<Context, "config" | "handle" | "runner" | "hosts">): ProjectActions {
   const { config } = ctx;
   const clone = async (p: ProjectConfig, log: (l: string) => void): Promise<boolean> => {
     if (!p.managed) return true;
-    const r = await ensureClone(p);
+    const r = await ensureClone(p, { hosts: ctx.hosts });
     log(r.status === "error" ? `✗ clone failed: ${r.error}` : `✓ clone ${r.status}${"path" in r ? ` (${r.path})` : ""}`);
     return r.status !== "error";
   };
   const onboard = (pr: boolean): ActionFn => async (p, log) => {
     if (!(await clone(p, log))) return false;
-    const r = await onboardProject(p, { runner: ctx.runner, dataDir: config.factory.dataDir });
+    const r = await onboardProject(p, { runner: ctx.runner, dataDir: config.factory.dataDir, hosts: ctx.hosts });
     log(r.status === "already-initialised" ? "✓ Spec Kit is already set up" : `✓ created branch ${r.branch} (${r.commits.join(", ")})`);
     if (pr && r.status !== "already-initialised") {
-      const o = await raiseOnboardingPr(p, { github: createGhClient({ account: p.github.account }), worktree: r.worktree });
+      const o = await raiseOnboardingPr(p, { github: ctx.hosts.pr(p), hosts: ctx.hosts, worktree: r.worktree });
       log(`${o.reused ? "PR already open" : "PR raised"}: ${o.pr.url} (not merged: a human reviews and merges it)`);
     }
     return true;
@@ -42,8 +41,8 @@ export function createProjectActions(ctx: Pick<Context, "config" | "handle" | "r
       if (!(await clone(p, log))) return false;
       syncProjects(ctx.handle.db, config.projects.projects);
       // Managed clones are the factory's own, so it may fetch to see a just-merged onboarding PR. A checkout of yours is never touched.
-      if (p.managed) await realGit(p.repository, ["fetch", "--quiet", "origin"]).catch(() => { /* offline: validate what we have */ });
-      const [r] = await validateProjects(ctx.handle.db, [p]);
+      if (p.managed) await realGit(p.repository, ["fetch", "--quiet", "origin"], { env: await ctx.hosts.gitAuth(p).catch(() => undefined) }).catch(() => { /* offline: validate what we have */ });
+      const [r] = await validateProjects(ctx.handle.db, [p], { hosts: ctx.hosts });
       if (!r) return false;
       log(`${r.ok ? "✓" : "✗"} default branch ${r.defaultBranch ?? "?"}, build: ${r.buildSystems.join(", ") || "none"}, protection: ${r.branchProtection.status}`);
       for (const f of r.findings) log(`  ${f.severity} ${f.code}: ${f.message}`);
@@ -52,7 +51,7 @@ export function createProjectActions(ctx: Pick<Context, "config" | "handle" | "r
     check: async (p, log) => {
       if (!(await clone(p, log))) return false;
       const report = await checkProject(p, {
-        dataDir: config.factory.dataDir, sandbox: config.factory.sandbox, timeoutMs: config.factory.commandTimeoutSeconds * 1000,
+        hosts: ctx.hosts, dataDir: config.factory.dataDir, sandbox: config.factory.sandbox, timeoutMs: config.factory.commandTimeoutSeconds * 1000,
         onResult: (r) => log(`${r.ok ? "✓" : "✗"} ${r.kind} (${Math.round(r.durationMs / 1000)}s${r.sandboxed ? "" : ", UNSANDBOXED"}): ${r.command}${r.ok ? "" : `\n${r.tail.slice(-1500)}`}`),
       });
       ctx.handle.db.update(projects).set({ checkJson: JSON.stringify({ ok: report.ok, at: Date.now(), missingTest: report.missingTest }) }).where(eq(projects.id, p.id)).run(); // feeds the project's onboarding status

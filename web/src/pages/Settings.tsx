@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checks } from "@/components/Integrations";
 import { TrackerSetup } from "@/components/TrackerSetup";
+import { BitbucketSetup } from "@/components/BitbucketSetup";
 import { ProjectEditor } from "@/components/ProjectEditor";
 import { api } from "@/lib/api";
 import { WorkflowSettings } from "@/pages/WorkflowSettings";
@@ -74,6 +75,7 @@ export function Settings() {
       <TabsContent value="workflow"><WorkflowSettings value={globals} onSaved={() => void reloadGlobals()} /></TabsContent>
       <TabsContent value="integrations" className="grid gap-4">
         <Card><CardHeader><CardTitle className="text-sm">Status</CardTitle></CardHeader><CardContent><Checks /></CardContent></Card>
+        <Card><CardHeader><CardTitle className="text-sm">Bitbucket</CardTitle></CardHeader><CardContent><BitbucketSetup /></CardContent></Card>
         <Card><CardHeader><CardTitle className="text-sm">Issue tracker</CardTitle></CardHeader><CardContent><TrackerSetup info={info} onChanged={() => void reloadInfo()} onKey={() => void reloadInfo()} onTeams={setTeams} /></CardContent></Card>
       </TabsContent>
       <TabsContent value="profiles"><ProfilesSettings /></TabsContent>

@@ -6,6 +6,7 @@
 # What it does (nothing needs sudo, and nothing outside the places listed here is touched):
 #   1. checks that macOS, git, Node 22+, Python 3.11+, uv, Spec Kit, Claude Code (signed in) and the GitHub CLI (signed in) are
 #      all present, and if anything is missing prints exactly how to install it and stops before changing anything
+#      (the GitHub CLI is only a warning: Bitbucket projects use a token instead)
 #   2. downloads the factory into  $FACTORY_HOME/app        (default ~/.software-factory/app)
 #   3. installs its dependencies and builds the dashboard
 #   4. adds a `software-factory` command to  $FACTORY_BIN   (default ~/.local/bin)
@@ -44,7 +45,7 @@ main() {
   say "version: $REF"
 
   # 1. preflight: everything the factory drives must already be installed and signed in. Nothing is downloaded or changed until all of it passes.
-  local OK=() BAD=() HOWTO=()
+  local OK=() BAD=() HOWTO=() SOFT=()
   pass() { OK+=("$1"); }
   need() { BAD+=("$1"); HOWTO+=("$2"); } # need "what is wrong" "how to fix it"
   have() { command -v "$1" >/dev/null 2>&1; }
@@ -66,13 +67,15 @@ main() {
     if claude auth status 2>/dev/null | grep -q '"loggedIn": *true'; then pass "Claude Code (signed in)"
     else need "Claude Code is installed but not signed in" "Run 'claude', then type /login and sign in with your Claude subscription. The factory uses that login: no API key."; fi
   else need "Claude Code is not installed" "curl -fsSL https://claude.ai/install.sh | bash   (or: npm install -g @anthropic-ai/claude-code). Then run 'claude' and /login."; fi
+  # GitHub CLI: only GitHub projects need it (a Bitbucket project uses a token instead), so this warns rather than blocks.
   if have gh; then
-    if gh auth status >/dev/null 2>&1; then pass "GitHub CLI (signed in)"; else need "GitHub CLI is installed but not signed in" "gh auth login   (run it again for each GitHub account you want to use)"; fi
-  else need "GitHub CLI ('gh') is not installed" "brew install gh   then   gh auth login"; fi
+    if gh auth status >/dev/null 2>&1; then pass "GitHub CLI (signed in)"; else SOFT+=("GitHub CLI is installed but not signed in (needed for GitHub projects): gh auth login"); fi
+  else SOFT+=("GitHub CLI ('gh') is not installed (needed for GitHub projects; Bitbucket projects do not need it): brew install gh, then gh auth login"); fi
 
   say "checking your machine"
   local i
   for i in "${OK[@]:-}"; do [ -n "$i" ] && printf '   \033[32m✓\033[0m %s\n' "$i"; done
+  for i in "${SOFT[@]:-}"; do [ -n "$i" ] && printf '   \033[33m!\033[0m %s\n' "$i"; done
   if [ "${#BAD[@]}" -gt 0 ]; then
     for i in "${!BAD[@]}"; do printf '   \033[31m✗\033[0m %s\n       fix: %s\n' "${BAD[$i]}" "${HOWTO[$i]}"; done
     printf '\n'

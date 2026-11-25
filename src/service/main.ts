@@ -20,6 +20,7 @@ import { createProjectActions } from "./actions.js";
 import { saveSecret } from "./secrets.js";
 import { TaskManager } from "./tasks.js";
 import { UpdateChecker } from "./versions.js";
+import { bbStore } from "../bitbucket/auth.js";
 import { keychainStore, trackerConfigured } from "../tracker/index.js";
 import { pruneAgentLogs } from "./retention.js";
 import { addProfile, DEFAULT_PROFILE, factoryRoot, listProfiles, removeProfile } from "../config/profiles.js";
@@ -57,8 +58,8 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     discover: async () => config.projects.projects.length === 0 ? { enqueued: [], skipped: [], errors: [] } : discoverIssues({ db: ctx.handle.db, client: ctx.linear(), linear: config.linear, projects: config.projects.projects, logger, dryRun: config.factory.dryRun, requireOnboarding: true, pickupMode: config.factory.pickupMode }),
     flush: async () => (config.factory.dryRun ? { sent: 0, failed: 0, pending: 0 } : flushOutbox({ db: ctx.handle.db, client: ctx.linear(), linear: config.linear, logger })),
     validate: async () => {
-      for (const p of config.projects.projects.filter((x) => x.enabled && x.managed)) { const c = await ensureClone(p); if (c.status === "error") logger.warn({ project: p.id, err: c.error }, "clone failed"); }
-      await validateProjects(ctx.handle.db, config.projects.projects);
+      for (const p of config.projects.projects.filter((x) => x.enabled && x.managed)) { const c = await ensureClone(p, { hosts: ctx.hosts }); if (c.status === "error") logger.warn({ project: p.id, err: c.error }, "clone failed"); }
+      await validateProjects(ctx.handle.db, config.projects.projects, { hosts: ctx.hosts });
     },
   });
 
@@ -67,7 +68,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     tasks: new TaskManager(), actions: createProjectActions(ctx), linear: () => ctx.linear(), linearKeyPresent: () => trackerConfigured(config),
     saveLinearKey: async (key: string) => { const me = await createLinearClient({ apiKey: key }).viewer(); saveSecret(keySrc, key); return { name: me.name }; },
   };
-  const app = buildServer({ db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, jira: { store: keychainStore(config.jira.keychainService), port }, updates: new UpdateChecker(), profiles: {
+  const app = buildServer({ db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: keychainStore(config.jira.keychainService), port }, updates: new UpdateChecker(), profiles: {
     current: process.env.FACTORY_PROFILE ?? DEFAULT_PROFILE, list: () => listProfiles(), add: (n) => addProfile(n), remove: (n) => removeProfile(n),
     start: (p) => launchService(p, factoryRoot()), isUp: (p) => isUp(p),
   } });

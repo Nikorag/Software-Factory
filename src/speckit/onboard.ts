@@ -6,6 +6,7 @@ import { git as realGit, type GitFn } from "../repo/git.js";
 import { gitAuthEnv } from "../repo/gh.js";
 import { skillPrompt } from "./prompts.js";
 import { commitPaths, initSpecKit, isInitialised, type InitDeps } from "./tools.js";
+import type { Hosts } from "../host/index.js";
 import { GitHubError, type GitHubClient, type PrInfo } from "../github/client.js";
 import { repoSlug } from "../delivery/handlers.js";
 import { pushBranch } from "../repo/push.js";
@@ -25,7 +26,7 @@ const CONSTITUTION_PROMPT = [
  */
 export async function onboardProject(
   project: ProjectConfig,
-  d: { runner: AgentRunner; dataDir: string; init?: InitDeps; git?: GitFn; timeoutMs?: number },
+  d: { runner: AgentRunner; dataDir: string; init?: InitDeps; git?: GitFn; timeoutMs?: number; hosts?: Hosts },
 ): Promise<OnboardResult> {
   const git = d.git ?? realGit;
   const repo = project.repository;
@@ -34,7 +35,7 @@ export async function onboardProject(
 
   if (!existsSync(worktree)) {
     mkdirSync(join(d.dataDir, "workspaces", project.id), { recursive: true });
-    await git(repo, ["fetch", "--quiet", "origin", project.defaultBranch], { env: await gitAuthEnv(project.github.account), timeoutMs: 120_000 }).catch(() => undefined);
+    await git(repo, ["fetch", "--quiet", "origin", project.defaultBranch], { env: d.hosts ? await d.hosts.gitAuth(project).catch(() => undefined) : await gitAuthEnv(project.github.account), timeoutMs: 120_000 }).catch(() => undefined);
     const base = await git(repo, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${project.defaultBranch}`]).then(() => `origin/${project.defaultBranch}`, () => project.defaultBranch);
     const exists = await git(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).then(() => true, () => false);
     await git(repo, exists ? ["worktree", "add", worktree, branch] : ["worktree", "add", "-b", branch, worktree, base]);
@@ -85,14 +86,14 @@ async function withRetry<T>(fn: () => Promise<T>, sleepMs: number): Promise<T> {
   }
 }
 
-export async function raiseOnboardingPr(project: ProjectConfig, d: { github: GitHubClient; worktree: string; branch?: string; git?: GitFn; push?: typeof pushBranch; retryDelayMs?: number }): Promise<{ pr: PrInfo; reused: boolean }> {
+export async function raiseOnboardingPr(project: ProjectConfig, d: { github: GitHubClient; worktree: string; branch?: string; git?: GitFn; push?: typeof pushBranch; retryDelayMs?: number; hosts?: Hosts }): Promise<{ pr: PrInfo; reused: boolean }> {
   const git = d.git ?? realGit;
   const branch = d.branch ?? "factory/onboard-speckit";
   const log = await git(d.worktree, ["log", "--format=%s", `${project.defaultBranch}..HEAD`]).catch(() => "");
   if (!/add project constitution/.test(log)) throw new Error("the onboarding branch has no constitution commit yet: run `factory project:onboard` first");
   if ((await git(d.worktree, ["status", "--porcelain"])).length) throw new Error("the onboarding worktree has uncommitted changes; refusing to push");
   const repo = await repoSlug(project, git);
-  await (d.push ?? pushBranch)(d.worktree, branch, { defaultBranch: project.defaultBranch, account: project.github.account, git });
+  await (d.push ?? pushBranch)(d.worktree, branch, { defaultBranch: project.defaultBranch, account: project.github.account, env: d.hosts && project.host === "bitbucket" ? await d.hosts.gitAuth(project) : undefined, git });
   const delay = d.retryDelayMs ?? 2000;
   const existing = await withRetry(() => d.github.findPr(repo, branch), delay);
   if (existing?.state === "OPEN") return { pr: existing, reused: true };

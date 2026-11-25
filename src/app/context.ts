@@ -13,13 +13,13 @@ import { createTrackerClient } from "../tracker/index.js";
 import { createIntakeHandlers } from "../linear/handlers.js";
 import { createLinearReporter } from "../linear/reporter.js";
 import { createLogger } from "../logging/logger.js";
-import { gitAuthEnv } from "../repo/gh.js";
+import { createHosts, type Hosts } from "../host/index.js";
 import { syncProjects } from "../repo/registry.js";
 import { WorktreeManager } from "../repo/worktrees.js";
 import { createSpecKitHandlers } from "../speckit/handlers.js";
 import { createImplementationHandlers, type ImplDeps } from "../implement/handlers.js";
 import { createDeliveryHandlers, type DeliveryDeps } from "../delivery/handlers.js";
-import { createGhClient, type GitHubClient } from "../github/client.js";
+import type { GitHubClient } from "../github/client.js";
 
 export interface Context {
   config: LoadedConfig;
@@ -32,10 +32,11 @@ export interface Context {
   project: (id: string) => ProjectConfig;
   handlers: HandlerRegistry;
   engine: Engine;
+  hosts: Hosts;
 }
 
 /** Wires every real component together. Tests substitute `agents`, `linear` and `db`; nothing here is a mock. */
-export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logger?: Logger; linear?: LinearClient; claudeBin?: string; agents?: ConstructorParameters<typeof ModelRouter>[1]; runCommand?: ImplDeps["runCommand"]; github?: GitHubClient; delivery?: DeliveryDeps["timing"]; deliveryNow?: DeliveryDeps["now"]; push?: DeliveryDeps["push"] } = {}): Context {
+export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logger?: Logger; linear?: LinearClient; claudeBin?: string; agents?: ConstructorParameters<typeof ModelRouter>[1]; runCommand?: ImplDeps["runCommand"]; github?: GitHubClient; hosts?: Hosts; delivery?: DeliveryDeps["timing"]; deliveryNow?: DeliveryDeps["now"]; push?: DeliveryDeps["push"] } = {}): Context {
   const dataDir = config.factory.dataDir;
   const logger = opts.logger ?? createLogger({ level: config.factory.logLevel, file: join(dataDir, "logs", "factory.log") });
   const handle = opts.db ?? openDb(join(dataDir, "database", "factory.sqlite"));
@@ -47,6 +48,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     return p;
   };
 
+  const hosts = opts.hosts ?? createHosts(config);
   const router = new ModelRouter(config.models, opts.agents ?? {
     anthropic: new ClaudeCodeAgent({ bin: opts.claudeBin }),
     local: new LocalModelClient({ baseUrl: config.models.local.baseUrl }),
@@ -55,7 +57,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
   const worktrees = new WorktreeManager({
     db: handle.db, logger, workspacesRoot: join(dataDir, "workspaces"),
     repoPath: (id) => project(id).repository, defaultBranch: (id) => project(id).defaultBranch,
-    networkEnv: (id) => gitAuthEnv(project(id).github.account),
+    networkEnv: (id) => hosts.gitAuth(project(id)),
   });
   const linear = (): LinearClient => (opts.linear ? opts.linear : createTrackerClient(config));
 
@@ -69,9 +71,9 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     // PR-only delivery: push + open the PR, watch CI, report readiness, wait for a human to merge. The factory never merges.
     ...createDeliveryHandlers({
       db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger, dataDir,
-      github: (p) => opts.github ?? createGhClient({ account: p.github.account }), timing: opts.delivery, now: opts.deliveryNow, push: opts.push,
+      github: (p) => opts.github ?? hosts.pr(p), hosts, timing: opts.delivery, now: opts.deliveryNow, push: opts.push,
     }),
   };
   const engine = new Engine({ db: handle.db, logger, config, handlers, observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun }) });
-  return { config, handle, logger, router, runner, worktrees, linear, project, handlers, engine };
+  return { config, handle, logger, router, runner, worktrees, linear, project, handlers, engine, hosts };
 }
