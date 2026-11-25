@@ -35,6 +35,8 @@ export interface ApiDeps {
   jira?: Omit<import("./jira-routes.js").JiraRouteDeps, "db" | "config">;
   updates?: { status(): Promise<import("../service/versions.js").UpdateStatus>; refresh(): Promise<import("../service/versions.js").UpdateStatus> };
   settings?: Omit<import("./settings-routes.js").SettingsDeps, "db" | "config">;
+  /** Begins a graceful shutdown of this service (how `software-factory shutdown` stops it without signalling a pid). */
+  shutdown?: () => void;
 }
 
 const ms = (d: Date | null | undefined) => (d ? d.getTime() : null);
@@ -190,6 +192,15 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   act("stop", (r) => {
     control.emergencyStop(db, actor, r ?? "emergency stop from the dashboard"); // 1. nothing new starts
     d.engine?.abortActive("estop"); //                                           2. running agents are terminated now, not at the next heartbeat
+  });
+
+  // Graceful shutdown, the same as SIGTERM. Answered first; the service then stops in the background.
+  app.post("/api/control/shutdown", { preHandler: requireToken }, async (_req, reply) => {
+    if (!d.shutdown) return reply.code(501).send({ error: "this service cannot be shut down over the API" });
+    d.logger.warn({ control: "shutdown", actor }, "control action");
+    const go = d.shutdown;
+    setTimeout(go, 50).unref();
+    return { ok: true, pid: process.pid };
   });
 
   app.post<{ Params: { id: string } }>("/api/jobs/:id/cancel", { preHandler: requireToken }, async (req, reply) => {

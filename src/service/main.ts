@@ -25,19 +25,29 @@ import { keychainStore, trackerConfigured } from "../tracker/index.js";
 import { pruneAgentLogs } from "./retention.js";
 import { addProfile, DEFAULT_PROFILE, factoryRoot, listProfiles, removeProfile } from "../config/profiles.js";
 import { isUp, startService as launchService } from "./launch.js";
+import { drainChildren, killAllChildren, reapOrphans, setChildPidDir } from "../agents/children.js";
+import { agentPidDir, clearStopMarker, writeStopMarker } from "./runstate.js";
 
 const run = promisify(execFile);
 
-export interface Service { ctx: Context; scheduler?: Scheduler; app: FastifyInstance; token: string; port: number; stop(): Promise<void> }
+export interface Service { ctx: Context; scheduler?: Scheduler; app: FastifyInstance; token: string; port: number; stop(reason?: string): Promise<void> }
 
 /**
  * Starts the factory: single-instance lock, the dashboard/API on loopback, and (unless disabled) the scheduler that
  * discovers tickets and runs jobs. Everything persistent lives in SQLite, so stopping and starting is always safe.
  */
-export async function startService(config: LoadedConfig, opts: { scheduler?: boolean; ctx?: Context; port?: number } = {}): Promise<Service> {
-  const lock = acquireLock(join(config.factory.dataDir, "factory.lock"));
+export async function startService(config: LoadedConfig, opts: { scheduler?: boolean; ctx?: Context; port?: number; requestShutdown?: () => void; childGraceMs?: number } = {}): Promise<Service> {
+  const dataDir = config.factory.dataDir;
+  const lock = acquireLock(join(dataDir, "factory.lock"));
+  clearStopMarker(dataDir);
   const ctx = opts.ctx ?? createContext(config);
   const { logger } = ctx;
+  // Before anything can recover a job: kill agents (and their test runs) left behind by a previous service that died without
+  // stopping them, or crash recovery would re-run the stage in the same worktree while the orphan is still editing it.
+  const pidDir = agentPidDir(dataDir);
+  const reaped = await reapOrphans(pidDir);
+  if (reaped.killed.length) logger.warn({ processGroups: reaped.killed }, "killed agent processes left behind by the previous service");
+  setChildPidDir(pidDir);
   const port = opts.port ?? config.factory.server.port;
   const token = loadOrCreateToken(config.factory.dataDir);
 
@@ -68,13 +78,13 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     tasks: new TaskManager(), actions: createProjectActions(ctx), linear: () => ctx.linear(), linearKeyPresent: () => trackerConfigured(config),
     saveLinearKey: async (key: string) => { const me = await createLinearClient({ apiKey: key }).viewer(); saveSecret(keySrc, key); return { name: me.name }; },
   };
-  const app = buildServer({ db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: keychainStore(config.jira.keychainService), port }, updates: new UpdateChecker(), profiles: {
+  const app = buildServer({ shutdown: opts.requestShutdown, db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: keychainStore(config.jira.keychainService), port }, updates: new UpdateChecker(), profiles: {
     current: process.env.FACTORY_PROFILE ?? DEFAULT_PROFILE, list: () => listProfiles(), add: (n) => addProfile(n), remove: (n) => removeProfile(n),
     start: (p) => launchService(p, factoryRoot()), isUp: (p) => isUp(p),
   } });
   try {
     await app.listen({ host: config.factory.server.host, port });
-  } catch (e) { lock.release(); throw e; }
+  } catch (e) { setChildPidDir(null); lock.release(); throw e; }
   // Conversation logs are sensitive (ticket text, code, command output): prune on start and then daily.
   const agentLogs = join(config.factory.dataDir, "logs", "agents");
   const prune = () => { try { const n = pruneAgentLogs(agentLogs, config.factory.logRetentionDays); if (n) logger.info({ removed: n, days: config.factory.logRetentionDays }, "pruned old agent logs"); } catch { /* best effort */ } };
@@ -86,12 +96,19 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
   let stopped = false;
   return {
     ctx, scheduler, app, token, port,
-    async stop() {
+    async stop(reason = "stop requested") {
       if (stopped) return; stopped = true;
-      logger.info("factory service stopping");
+      writeStopMarker(dataDir, reason); // first, so the app can tell this stop from a crash however it ends
+      logger.info({ reason }, "factory service stopping");
       await scheduler?.stop();
+      // The engine is idle once each aborted stage has returned, which can be before its process group has exited (it gets
+      // SIGTERM, then SIGKILL after a grace period). Wait for every child here, bounded, and kill whatever is left.
+      killAllChildren("SIGTERM");
+      const forced = await drainChildren(opts.childGraceMs ?? 8000);
+      if (forced) logger.warn({ processGroups: forced }, "shutdown: killed agent processes that did not exit in time");
       await app.close();
       ctx.handle.close();
+      setChildPidDir(null);
       lock.release();
     },
   };

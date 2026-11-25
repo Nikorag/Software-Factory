@@ -200,6 +200,19 @@ describe("controls", () => {
     await post(s.app, "/api/control/clear-stop"); expect(await state()).toMatchObject({ paused: true, emergencyStop: false }); // still paused: resume is explicit
     expect(s.db.select().from(decisions).all().filter((d) => d.actor === "dashboard").map((d) => d.kind)).toEqual(["control.pause", "control.resume", "control.emergency_stop", "control.clear_emergency_stop"]);
   });
+  it("shutdown over the control API needs the token, answers first, then stops the service (and says so when it cannot)", async () => {
+    const s = setup();
+    let calls = 0;
+    const app = buildServer({ db: s.db, logger: pino({ level: "silent" }), config: s.config, dataDir: s.dataDir, port: 4780, controlToken: TOKEN, shutdown: () => { calls++; } });
+    expect((await post(app, "/api/control/shutdown", HOST)).statusCode).toBe(401);
+    expect((await post(app, "/api/control/shutdown", { ...HOST, authorization: "Bearer wrong" })).statusCode).toBe(401);
+    const r = await post(app, "/api/control/shutdown");
+    expect(r.statusCode).toBe(200); expect(r.json()).toMatchObject({ ok: true, pid: process.pid });
+    expect(calls).toBe(0); // answered before stopping
+    await new Promise((res) => setTimeout(res, 120));
+    expect(calls).toBe(1);
+    expect((await post(s.app, "/api/control/shutdown")).statusCode).toBe(501); // no shutdown hook (tests, embedded use)
+  });
   it("EMERGENCY STOP terminates a running agent immediately and holds its job (not waiting for a heartbeat)", async () => {
     const s = setup(true);
     let started = false;

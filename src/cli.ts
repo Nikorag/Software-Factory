@@ -29,6 +29,8 @@ import { applyUpdate, planUpdate } from "./service/update.js";
 import { activateProfile, addProfile, DEFAULT_PROFILE, factoryRoot, getProfile, listProfiles, ProfileError, removeProfile } from "./config/profiles.js";
 import { desktopEntry, isUp, openDesktop, pidOf, startService as launchService, stopService, urlOf } from "./service/launch.js";
 import { agentStatus, installAgent, uninstallAgent } from "./service/launchd.js";
+import { LockHeldError } from "./service/lock.js";
+import { installCrashHandlers, shutdownController } from "./agents/children.js";
 
 const openFactoryDb = () => {
   const config = loadConfig();
@@ -304,7 +306,8 @@ program
   .description("Shut down the background factory of every profile (or one with --profile). Running agents are aborted and their jobs re-queued untouched.")
   .action(async () => {
     const only = program.opts<{ profile?: string }>().profile;
-    for (const p of listProfiles().filter((x) => !only || x.name === only)) console.log(`${p.name.padEnd(12)} ${await stopService(p)}`);
+    const say = { stopped: "stopped", "not-running": "not running", killed: "did not stop in time: killed it and its agents (its jobs resume at the next start)" } as const;
+    for (const p of listProfiles().filter((x) => !only || x.name === only)) console.log(`${p.name.padEnd(12)} ${say[await stopService(p)]}`);
   });
 
 program
@@ -342,14 +345,28 @@ program
   .action(async (opts: { scheduler: boolean; dryRun?: boolean; open?: boolean }) => {
     const config = loadConfig();
     if (opts.dryRun) config.factory.dryRun = true;
-    const svc = await startService(config, { scheduler: opts.scheduler });
+    const logger = createLogger({ level: "info" });
+    // Whatever ends this process, the agents it started go with it (see src/agents/children.ts).
+    installCrashHandlers((kind, err) => logger.fatal({ err }, `${kind}: the factory service is exiting and killing its agents`));
+    let svc: Awaited<ReturnType<typeof startService>> | undefined;
+    const shutdown = shutdownController(async (reason) => { await svc?.stop(reason); });
+    process.on("SIGINT", () => void shutdown("SIGINT"));
+    process.on("SIGTERM", () => void shutdown("SIGTERM"));
+    try {
+      svc = await startService(config, { scheduler: opts.scheduler, requestShutdown: () => void shutdown("shutdown requested over the control API", false) });
+    } catch (e) {
+      // Another factory already serves this profile (e.g. `start` ran it and then the LaunchAgent was loaded). Nothing is wrong,
+      // so exit 0: a failure exit would make launchd retry every 30 seconds for as long as the other one runs.
+      if (e instanceof LockHeldError && (await fetch(`http://127.0.0.1:${config.factory.server.port}/health`, { signal: AbortSignal.timeout(2000) }).then((r) => r.ok).catch(() => false))) {
+        console.log(`${e.message}\nIt is healthy, so there is nothing to do.`);
+        process.exit(0);
+      }
+      throw e;
+    }
     const url = `http://127.0.0.1:${svc.port}/${config.projects.projects.length === 0 ? "#/setup" : ""}`;
     console.log(`factory running on ${url}`);
     if (opts.open && process.platform === "darwin") execFileSync("open", [url]);
     if (config.factory.dryRun) console.log("DRY RUN: nothing will be changed in repositories, Linear or GitHub");
-    const shutdown = async () => { await svc.stop(); process.exit(0); };
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
   });
 
 program
@@ -384,17 +401,28 @@ program
     if (opts.open) execFileSync("open", [url]);
   });
 
+const currentProfile = () => process.env.FACTORY_PROFILE ?? DEFAULT_PROFILE;
 program
   .command("launchd:install")
-  .description("Install the LaunchAgent. NOTE: once installed it starts automatically at every login (RunAtLoad); --load also starts it now.")
+  .description("Install the LaunchAgent for this profile (--profile; one per profile). NOTE: once installed it starts automatically at every login (RunAtLoad); --load also starts it now.")
   .option("--load", "also load it now (starts the service, which polls Linear and runs jobs autonomously)")
-  .action((opts: { load?: boolean }) => {
+  .action(async (opts: { load?: boolean }) => {
     const config = loadConfig();
-    const r = installAgent({ dataDir: config.factory.dataDir, configDir: process.env.FACTORY_CONFIG_DIR ? resolve(process.env.FACTORY_CONFIG_DIR) : undefined, load: opts.load });
+    const name = currentProfile();
+    if (opts.load) {
+      // Hand over: a copy started by `start` holds the profile, so launchd's copy could not run. Stop it first and let launchd own it.
+      const p = getProfile(name);
+      const agent = agentStatus({ profile: name });
+      if ((await isUp(p)) && !(agent.loaded && agent.pid !== undefined && agent.pid === pidOf(p))) {
+        console.log(`${name}: stopping the copy started by \`software-factory start\` so launchd can run it instead (running jobs are re-queued untouched)`);
+        await stopService(p);
+      }
+    }
+    const r = installAgent({ dataDir: config.factory.dataDir, configDir: process.env.FACTORY_CONFIG_DIR ? resolve(process.env.FACTORY_CONFIG_DIR) : undefined, load: opts.load, profile: name, root: factoryRoot() });
     console.log(`wrote ${r.path}`);
-    console.log(r.loaded ? "loaded: the factory service is now running in the background and will start at every login" : "installed but not started now. It WILL start automatically at your next login. Start now: --load. Undo: pnpm factory launchd:uninstall");
+    console.log(r.loaded ? `loaded: the "${name}" factory is now running in the background and will start at every login` : `installed but not started now. It WILL start automatically at your next login. Start now: --load. Undo: software-factory launchd:uninstall${name === DEFAULT_PROFILE ? "" : ` --profile ${name}`}`);
   });
-program.command("launchd:uninstall").description("Stop and remove the LaunchAgent").action(() => console.log(uninstallAgent().removed ? "removed" : "was not installed"));
-program.command("launchd:status").description("Is the LaunchAgent installed and running?").action(() => console.log(JSON.stringify(agentStatus(), null, 2)));
+program.command("launchd:uninstall").description("Stop and remove this profile's LaunchAgent").action(() => console.log(uninstallAgent({ profile: currentProfile() }).removed ? "removed" : "was not installed"));
+program.command("launchd:status").description("Is this profile's LaunchAgent installed and running?").action(() => console.log(JSON.stringify(agentStatus({ profile: currentProfile() }), null, 2)));
 
 await program.parseAsync();

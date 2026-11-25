@@ -4,6 +4,8 @@ Updates: `software-factory update` (add `--check` to only look). Releases are gi
 
 ## Unreleased
 
+- **Service lifecycle fixes.** Agent processes can no longer outlive the service: every process group is recorded under `<dataDir>/run/agents`, a shutdown waits for them (and SIGKILLs stragglers), a crash kills them, and leftovers from a killed service are reaped at the next start before any job is recovered. A second Ctrl-C/SIGTERM escalates instead of exiting mid-shutdown. The lock records the holder's start time, so a reused pid after a reboot no longer blocks the service (or its LaunchAgent) forever, and `shutdown` and the app's "Stop the Factory and Quit" never signal an unrelated process: they ask the service over its control API and boot out a loaded LaunchAgent so the stop sticks. The LaunchAgent runs at normal priority (no `Background` throttling of Claude and test suites), can be installed per profile, hands over cleanly from a `start`ed copy, and exits 0 instead of restart-looping when a healthy factory already runs. The menu bar app notifies you when a factory stops unexpectedly.
+
 - **Bitbucket Cloud support** as an alternative to GitHub, chosen per project, with named token credentials (access tokens or Atlassian API tokens) in the keychain. See docs/bitbucket.md.
 
 - **Jira support** (Jira Cloud, OAuth 2.0 3LO) as an alternative to Linear, chosen per profile. Statuses and labels are mapped to existing ones in Settings because Jira statuses cannot be created. See docs/jira.md.

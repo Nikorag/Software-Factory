@@ -27,4 +27,22 @@ function newInterruptions(profile, jobs, seen, seeded) {
   }
   return out;
 }
-module.exports = { interruptionOf, newInterruptions };
+/**
+ * A factory that was answering and now is not, without having been asked to stop (no stop marker: see src/service/runstate.ts),
+ * crashed or was killed. `start`ed services have no supervisor, so this is how you find out.
+ * `wasUp` is a Map of profile name -> last seen state (mutated); the first look at a profile only records it.
+ * @param {{name: string, up: boolean, stoppedOnPurpose: boolean}[]} statuses
+ * @returns {{profile: string, title: string, body: string}[]}
+ */
+function unexpectedStops(statuses, wasUp) {
+  const out = [];
+  for (const s of statuses) {
+    const before = wasUp.get(s.name);
+    wasUp.set(s.name, s.up);
+    if (before === true && !s.up && !s.stoppedOnPurpose) {
+      out.push({ profile: s.name, title: `The ${s.name} factory stopped unexpectedly`, body: "It crashed or was killed. Its jobs resume where they were when it starts again (Start all profiles). The logs are in its logs folder." });
+    }
+  }
+  return out;
+}
+module.exports = { interruptionOf, newInterruptions, unexpectedStops };

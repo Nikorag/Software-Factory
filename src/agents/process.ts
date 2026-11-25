@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { trackChild } from "./children.js";
 
 export interface RunOptions {
   cmd: string;
@@ -51,6 +52,8 @@ export function runProcess(o: RunOptions): Promise<RunResult> {
     try {
       child = spawn(o.cmd, o.args, { cwd: o.cwd, env: o.env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
     } catch (e) { return done({ spawnError: (e as Error).message }); }
+    // Recorded so a shutdown waits for it, a crash kills it, and a service that died without either reaps it at its next start.
+    const untrack = child.pid ? trackChild(child.pid, o.cmd) : () => {};
 
     const killGroup = (sig: NodeJS.Signals) => { try { if (child.pid) process.kill(-child.pid, sig); } catch { /* already gone */ } };
     let killTimer: NodeJS.Timeout | undefined;
@@ -64,9 +67,9 @@ export function runProcess(o: RunOptions): Promise<RunResult> {
 
     child.stdout!.on("data", (d: Buffer) => { log?.write(d); if (stdout.length < max) stdout += d.toString(); });
     child.stderr!.on("data", (d: Buffer) => { log?.write(`[stderr] ${d}`); if (stderr.length < max) stderr += d.toString(); });
-    child.on("error", (e) => done({ spawnError: e.message }));
+    child.on("error", (e) => { untrack(); done({ spawnError: e.message }); });
     // "close" (not "exit") so all output is drained. Make sure nothing in the group outlives a finished run.
-    child.on("close", (code) => { killGroup("SIGKILL"); done({ exitCode: code }); });
+    child.on("close", (code) => { killGroup("SIGKILL"); untrack(); done({ exitCode: code }); });
     child.stdin!.on("error", () => { /* child exited before reading stdin */ });
     child.stdin!.end(o.stdin ?? "");
   });
