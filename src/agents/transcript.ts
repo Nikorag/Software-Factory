@@ -47,8 +47,11 @@ export function parseLine(line: string): Turn[] {
 /**
  * Reads a run's log from byte `after`, returning the turns in the complete lines since then and the offset to resume from.
  * Only files under <dataDir>/logs are readable (no path traversal, no symlink escapes). A partial last line waits for the next call.
+ * At most `maxBytes` are read per call, and every call makes progress: a single line longer than that (a huge tool result) is skipped
+ * with a note, and a read that starts in the middle of a line (the rest of a skipped one) drops that fragment. `more` says the window was
+ * full, so there is more to read right now.
  */
-export function readConversation(dataDir: string, path: string, after: number, maxBytes = 1_000_000): { turns: Turn[]; offset: number; size: number } | null {
+export function readConversation(dataDir: string, path: string, after: number, maxBytes = 1_000_000): { turns: Turn[]; offset: number; size: number; more: boolean } | null {
   try {
     const root = realpathSync(join(dataDir, "logs"));
     const real = realpathSync(resolve(path));
@@ -56,12 +59,23 @@ export function readConversation(dataDir: string, path: string, after: number, m
     const size = statSync(real).size;
     const start = Math.min(Math.max(0, after), size);
     const len = Math.min(size - start, maxBytes);
-    const buf = Buffer.alloc(len);
+    // one byte before `start` tells us whether we are at the beginning of a line
+    const lead = start > 0 ? 1 : 0;
+    const raw = Buffer.alloc(len + lead);
     const fd = openSync(real, "r");
-    try { readSync(fd, buf, 0, len, start); } finally { closeSync(fd); }
+    try { readSync(fd, raw, 0, len + lead, start - lead); } finally { closeSync(fd); }
+    const midLine = lead === 1 && raw[0] !== 0x0a;
+    const buf = raw.subarray(lead);
+    const full = len === maxBytes && start + len < size;
     const lastNl = buf.lastIndexOf(0x0a);
+    if (lastNl === -1) {
+      // no line ends in this window. If the window is full the line is too long to show: skip past it (noting it once, at its start).
+      if (!full) return { turns: [], offset: start, size, more: false }; // a line still being written: wait for it
+      return { turns: midLine ? [] : [{ kind: "raw", text: `(a log line over ${maxBytes} bytes was too long to show and was skipped)` }], offset: start + len, size, more: true };
+    }
     // a final line without a newline is still being written, unless it is the end of a finished file (the caller knows `done`)
-    const complete = lastNl === -1 ? Buffer.alloc(0) : buf.subarray(0, lastNl + 1);
-    return { turns: complete.toString("utf8").split("\n").flatMap(parseLine), offset: start + complete.length, size };
+    let complete = buf.subarray(0, lastNl + 1);
+    if (midLine) complete = complete.subarray(complete.indexOf(0x0a) + 1); // the tail of a line skipped by the previous call
+    return { turns: complete.toString("utf8").split("\n").flatMap(parseLine), offset: start + lastNl + 1, size, more: start + lastNl + 1 < size && full };
   } catch { return null; }
 }

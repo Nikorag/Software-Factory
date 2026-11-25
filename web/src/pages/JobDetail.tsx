@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Archive, ArchiveRestore, ArrowLeft, ExternalLink, RotateCcw, Search, Send, X } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, ExternalLink, Loader2, RotateCcw, Search, Send, X } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -24,11 +24,15 @@ import { ago, dur, HELD, safeUrl, stageLabel } from "@/lib/format";
 import { deriveFlow, NODE, NODES } from "@/lib/pipeline";
 import type { JobDetail as D } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
+import { ConnectionBanner, useOffline } from "@/components/ConnectionBanner";
 import { cn } from "@/lib/utils";
 
 export function JobDetail() {
   const { id = "" } = useParams();
-  const { data: d, error, reload } = usePoll(() => api<D>(`/api/jobs/${encodeURIComponent(id)}`), 3000, [id]);
+  const { data: polled, error, updatedAt, reload } = usePoll((signal) => api<D>(`/api/jobs/${encodeURIComponent(id)}`, signal), 3000, [id]);
+  const d = polled?.job.id === id ? polled : null; // never show (or act on) the previous job while the next one loads
+  const offline = useOffline() || error !== null;
+  const [pending, setPending] = useState<string | null>(null); // the action in flight: its buttons stay disabled until it settles
   const [sel, setSel] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [answer, setAnswer] = useState("");
@@ -41,18 +45,26 @@ export function JobDetail() {
   const histRows = useMemo(() => execAll.filter((e) => (!nodeStage || e.stage === nodeStage) && matches(fh, e.stage, e.outcome, e.error)), [execAll, nodeStage, fh]);
   const agentRows = useMemo(() => (d?.invocations ?? []).filter((a) => matches(fa, a.agent, a.model, a.exitCode)), [d?.invocations, fa]);
   const decRows = useMemo(() => (d?.decisions ?? []).filter((x) => matches(fd, x.kind, x.decision, x.rationale, x.actor)), [d?.decisions, fd]);
-  const hist = usePaged(histRows), agents = usePaged(agentRows), decs = usePaged(decRows);
+  const hist = usePaged(histRows, 10, `${id}|${nodeStage}|${fh}`), agents = usePaged(agentRows, 10, `${id}|${fa}`), decs = usePaged(decRows, 10, `${id}|${fd}`);
   const flow = useMemo(() => (d ? deriveFlow(d.job, d.executions, d.invocations) : null), [d]);
-  if (error && !d) return <Alert variant="destructive"><AlertDescription>Cannot load: {error}</AlertDescription></Alert>;
-  if (!d || !flow) return <Skeleton className="h-96 w-full" />;
+  const banner = <ConnectionBanner error={error} updatedAt={updatedAt} what="job" />;
+  if (!d || !flow) return error ? banner : <Skeleton className="h-96 w-full" />;
   const j = d.job, held = HELD.includes(j.stage), canRetry = held || j.status === "failed", canCancel = ["queued", "running", "waiting"].includes(j.status);
   const pr = safeUrl(j.prUrl);
-  const run = async (path: string, body?: unknown) => { const err = await post(path, body); setMsg(err); if (!err) { setAnswer(""); void reload(); } };
+  /** One action at a time: a double click must not send a second request (which the server would refuse, showing a false error). */
+  const guard = async (name: string, fn: () => Promise<void>) => {
+    if (pending) return;
+    setPending(name);
+    try { await fn(); } finally { setPending(null); }
+  };
+  const run = (name: string, path: string, body?: unknown) => guard(name, async () => { const err = await post(path, body); setMsg(err); if (!err) { if (name === "answer") setAnswer(""); await reload(); } });
+  const locked = pending !== null || offline;
+  const archived = Boolean(j.archivedAt);
   const watchRun = watch !== null ? d.invocations.find((i) => i.id === watch) : undefined;
   const node = sel ? NODE[sel] : null;
   const execs = node ? execAll.filter((e) => e.stage === node.stage) : execAll;
-  const archiveIt = async (archived: boolean) => { const r = await send("POST", `/api/jobs/${j.id}/${archived ? "archive" : "unarchive"}`); setMsg(r.ok ? null : r.error); void reload(); };
-  const deleteIt = async () => { const r = await send("DELETE", `/api/jobs/${j.id}`); if (r.ok) nav("/jobs"); else setMsg(r.error); };
+  const archiveIt = (to: boolean) => guard("archive", async () => { const r = await send("POST", `/api/jobs/${j.id}/${to ? "archive" : "unarchive"}`); setMsg(r.ok ? null : r.error); await reload(); });
+  const deleteIt = () => guard("delete", async () => { const r = await send("DELETE", `/api/jobs/${j.id}`); if (r.ok) nav("/jobs"); else setMsg(r.error); });
   const finished = ["done", "failed", "cancelled"].includes(j.status);
   const cycles = j.remediationAttempts, cap = d.remediationCap ?? 3;
 
@@ -64,13 +76,13 @@ export function JobDetail() {
           <div className="flex flex-wrap items-center gap-2"><h2 className="font-mono text-base font-semibold">{j.key}</h2><StatusBadge status={j.status} /><span className="text-sm text-muted-foreground">{j.project} · {j.workflow}{j.autonomous ? " · autonomous" : ""}{j.dryRun ? " · dry run" : ""}</span></div>
           <div className="mt-2 flex flex-wrap gap-2">
             {pr ? <Button variant="outline" size="sm" asChild><a href={pr} target="_blank" rel="noopener noreferrer"><ExternalLink />pull request</a></Button> : null}
-            {canRetry ? <Button size="sm" onClick={() => void run(`/api/jobs/${j.id}/retry`)}><RotateCcw />Retry</Button> : null}
-            {finished ? <Button size="sm" variant="outline" onClick={() => void archiveIt(!j.archivedAt)}>{j.archivedAt ? <><ArchiveRestore />Restore</> : <><Archive />Archive</>}</Button> : null}
-            {finished ? <DeleteJobButton job={j} label="Delete" onConfirm={() => void deleteIt()} /> : null}
+            {canRetry ? <Button size="sm" disabled={locked} title={archived ? "Retrying restores this job from the archive" : undefined} onClick={() => void run("retry", `/api/jobs/${j.id}/retry`)}>{pending === "retry" ? <Loader2 className="animate-spin" /> : <RotateCcw />}{archived ? "Retry and restore" : "Retry"}</Button> : null}
+            {finished ? <Button size="sm" variant="outline" disabled={locked} onClick={() => void archiveIt(!j.archivedAt)}>{j.archivedAt ? <><ArchiveRestore />Restore</> : <><Archive />Archive</>}</Button> : null}
+            {finished ? <DeleteJobButton job={j} label="Delete" disabled={locked} onConfirm={() => void deleteIt()} /> : null}
             {canCancel ? (
-              <AlertDialog><AlertDialogTrigger asChild><Button variant="destructive" size="sm"><X />Cancel</Button></AlertDialogTrigger>
+              <AlertDialog><AlertDialogTrigger asChild><Button variant="destructive" size="sm" disabled={locked}><X />Cancel</Button></AlertDialogTrigger>
                 <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Cancel {j.key}?</AlertDialogTitle><AlertDialogDescription>A running agent is stopped at its next check. The worktree is kept.</AlertDialogDescription></AlertDialogHeader>
-                  <AlertDialogFooter><AlertDialogCancel>Keep it</AlertDialogCancel><AlertDialogAction onClick={() => void run(`/api/jobs/${j.id}/cancel`)}>Cancel job</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+                  <AlertDialogFooter><AlertDialogCancel>Keep it</AlertDialogCancel><AlertDialogAction onClick={() => void run("cancel", `/api/jobs/${j.id}/cancel`)}>Cancel job</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
             ) : null}
           </div>
         </div>
@@ -81,6 +93,8 @@ export function JobDetail() {
         <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground"><div><b className="block text-base text-foreground tabular-nums">{dur(flow.elapsedMs)}</b>elapsed</div><div><b className="block text-base text-foreground tabular-nums">{dur(flow.agentMs)}</b>agent time</div></div>
       </CardContent></Card>
 
+      {error ? banner : null}
+      {archived && canRetry ? <Alert role="status"><ArchiveRestore /><AlertDescription>This job is archived. Retrying will restore this job from the archive (it shows in the job list again).</AlertDescription></Alert> : null}
       {j.lastError ? <Alert variant="destructive"><AlertDescription className="whitespace-pre-wrap">{j.lastError}</AlertDescription></Alert> : null}
       {held ? <Alert><AlertDescription>Held at {stageLabel(j.stage)}{j.heldFromStage ? ` (was ${stageLabel(j.heldFromStage)})` : ""}. Retry resumes there, with fresh counters.</AlertDescription></Alert> : null}
       {msg ? <Alert variant="destructive" role="alert"><AlertDescription>{msg}</AlertDescription></Alert> : null}
@@ -88,7 +102,7 @@ export function JobDetail() {
       {held && j.stage !== "CANCELLED" ? (
         <Card><CardHeader><CardTitle className="text-sm">Answer &amp; resume</CardTitle></CardHeader><CardContent className="grid gap-2">
           <Textarea rows={5} value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="Your answer to the questions above. It is given to the agent as authoritative, then the job resumes." />
-          <div><Button disabled={!answer.trim()} onClick={() => void run(`/api/jobs/${j.id}/answer`, { answer })}><Send />Answer &amp; resume</Button></div>
+          <div><Button disabled={!answer.trim() || locked} onClick={() => void run("answer", `/api/jobs/${j.id}/answer`, { answer })}>{pending === "answer" ? <Loader2 className="animate-spin" /> : <Send />}Answer &amp; resume</Button></div>
         </CardContent></Card>
       ) : null}
 
@@ -105,7 +119,7 @@ export function JobDetail() {
           <div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Selected step</div><h3 className="text-base font-semibold">{node.label}</h3><div className="font-mono text-xs text-muted-foreground">{node.stage}</div>
             <p className="mt-2 text-sm">{({ done: "Finished", run: "Running now", wait: "Waiting", fail: "Stopped here", idle: "Not reached yet" })[flow.state[node.id] ?? "idle"]}{(flow.attempts[node.id] ?? 0) > 1 ? ` · ${flow.attempts[node.id]} attempts` : ""}{flow.duration[node.id] ? ` · ${dur(flow.duration[node.id])}` : ""}</p>
             {(() => { const ids = new Set(execs.map((e) => e.id)); const runs = d.invocations.filter((i) => i.stageExecutionId !== null && ids.has(i.stageExecutionId)); return runs.length ? (
-              <div className="mt-3 flex flex-wrap gap-2">{runs.map((r) => <Button key={r.id} size="sm" variant="secondary" onClick={() => setWatch(r.id)}>{r.exitCode === null ? "Watch live" : "Conversation"}: {r.agent.split("/")[1] ?? r.agent}</Button>)}</div>) : null; })()}
+              <div className="mt-3 flex flex-wrap gap-2">{runs.map((r) => <Button key={r.id} size="sm" variant="secondary" onClick={() => setWatch(r.id)}>{r.finished ? "Conversation" : "Watch live"}: {r.agent.split("/")[1] ?? r.agent}</Button>)}</div>) : null; })()}
             <Button variant="ghost" size="sm" className="mt-2" onClick={() => setSel(null)}>Show all steps</Button></div>
           <div className="grid gap-3 text-sm"><div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">What happens here</div><p>{node.what}</p></div><div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">If it finds problems</div><p>{node.issues}</p></div></div>
         </CardContent></Card>
@@ -113,8 +127,8 @@ export function JobDetail() {
 
       <Dialog open={watch !== null} onOpenChange={(o) => { if (!o) setWatch(null); }}>
         <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-4xl">
-          <DialogHeader><DialogTitle>{watchRun ? `${watchRun.exitCode === null ? "Live" : "Conversation"}: ${watchRun.agent.split("/")[1] ?? watchRun.agent}` : "Conversation"}</DialogTitle><DialogDescription>{watchRun?.model ?? "Claude"} · the full back-and-forth for this agent run.</DialogDescription></DialogHeader>
-          <div className="min-h-0 flex-1 overflow-auto rounded-md border p-3">{watch !== null ? <Conversation jobId={j.id} runId={watch} running={watchRun?.exitCode === null} /> : null}</div>
+          <DialogHeader><DialogTitle>{watchRun ? `${watchRun.finished ? "Conversation" : "Live"}: ${watchRun.agent.split("/")[1] ?? watchRun.agent}` : "Conversation"}</DialogTitle><DialogDescription>{watchRun?.model ?? "Claude"} · the full back-and-forth for this agent run.</DialogDescription></DialogHeader>
+          <div className="min-h-0 flex-1 overflow-auto rounded-md border p-3">{watch !== null ? <Conversation jobId={j.id} runId={watch} running={watchRun ? !watchRun.finished : false} /> : null}</div>
         </DialogContent>
       </Dialog>
 
@@ -129,8 +143,8 @@ export function JobDetail() {
         <TabsContent value="agents"><Card><CardContent>
           <div className="mb-3 relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter agent runs" className="pl-8" value={fa} onChange={(e) => setFa(e.target.value)} placeholder="Filter by agent or model" /></div>
           <Table><TableHeader><TableRow>{["Agent", "Model", "Took", "Exit", "Denied", "", "Log"].map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
-            <TableBody>{agents.slice.map((a) => <TableRow key={a.id}><TableCell>{a.agent}</TableCell><TableCell>{a.model || ""}</TableCell><TableCell>{dur(a.durationMs)}</TableCell><TableCell>{a.exitCode ?? ""}</TableCell><TableCell className={a.usage?.denials ? "text-loop" : "text-muted-foreground"}>{a.usage?.denials ?? ""}</TableCell>
-              <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={() => setWatch(a.id)}>{a.exitCode === null ? "Watch live" : "Conversation"}</Button> : ""}</TableCell>
+            <TableBody>{agents.slice.map((a) => <TableRow key={a.id}><TableCell>{a.agent}</TableCell><TableCell>{a.model || ""}</TableCell><TableCell>{dur(a.durationMs)}</TableCell><TableCell>{a.exitCode ?? (a.finished ? <span className="text-muted-foreground" title="The run ended without an exit code: it was stopped (timeout, cancel, emergency stop), failed to start, or the service restarted mid-run.">stopped</span> : "")}</TableCell><TableCell className={a.usage?.denials ? "text-loop" : "text-muted-foreground"}>{a.usage?.denials ?? ""}</TableCell>
+              <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={() => setWatch(a.id)}>{a.finished ? "Conversation" : "Watch live"}</Button> : ""}</TableCell>
               <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={async () => { try { setLog(await apiText(`/api/jobs/${j.id}/invocations/${a.id}/log?tail=30000`)); } catch (e) { setLog(`No log: ${(e as Error).message}`); } }}>view</Button> : ""}</TableCell></TableRow>)}</TableBody></Table>
           <Pager page={agents.page} pages={agents.pages} pageSize={agents.pageSize} total={agents.total} onPage={agents.setPage} onPageSize={agents.setPageSize} />
           {log !== null ? <pre className="mt-3 max-h-96 overflow-auto rounded-md border bg-muted/40 p-3 text-xs whitespace-pre-wrap">{log}</pre> : null}

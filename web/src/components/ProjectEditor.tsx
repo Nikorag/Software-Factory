@@ -67,7 +67,16 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
     setBusy(false);
     if (r.ok) { setSaved(true); onSaved(id); } else setErr(r.error);
   };
-  const remove = async () => { const r = await send("DELETE", `/api/settings/projects/${encodeURIComponent(id)}`); if (r.ok) onRemoved?.(); else setErr(r.error); };
+  const [removeErr, setRemoveErr] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const remove = async () => {
+    if (removing) return;
+    setRemoving(true); setRemoveErr(null);
+    const r = await send("DELETE", `/api/settings/projects/${encodeURIComponent(id)}`);
+    setRemoving(false);
+    if (r.ok) onRemoved?.(); else setRemoveErr(r.error); // e.g. 409: the project still has active jobs
+  };
+  const activeJobs = project?.activeJobs ?? 0;
   const run = async (kind: string) => { setErr(null); const r = await startAction(id, kind); if (r.ok) setTask(r.data.taskId); else setErr(r.error); };
   const noTest = !f.commands.test?.trim();
 
@@ -78,11 +87,13 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         {project && !project.enabled ? <Badge variant="outline">disabled</Badge> : null}
         {project?.validation ? <Badge variant="outline" className={project.validation.ok ? "border-ok/40 text-ok" : "border-destructive/40 text-destructive"}>{project.validation.ok ? "validated" : "validation failing"}</Badge> : null}
         {project ? (
-          <AlertDialog><AlertDialogTrigger asChild><Button variant="outline" size="sm"><Trash2 />Remove</Button></AlertDialogTrigger>
+          <AlertDialog><AlertDialogTrigger asChild><Button variant="outline" size="sm" disabled={removing || activeJobs > 0} title={activeJobs > 0 ? `${activeJobs} active job(s): finish or cancel them first` : undefined}><Trash2 />Remove</Button></AlertDialogTrigger>
             <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Remove {project.name}?</AlertDialogTitle><AlertDialogDescription>It stops picking up tickets. Existing jobs, the clone and your repository are left alone.</AlertDialogDescription></AlertDialogHeader>
               <AlertDialogFooter><AlertDialogCancel>Keep it</AlertDialogCancel><AlertDialogAction onClick={() => void remove()}>Remove</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
         ) : null}
       </div>
+      {removeErr ? <p role="alert" className="-mt-4 text-sm text-destructive">Could not remove: {removeErr}</p>
+        : activeJobs > 0 ? <p className="-mt-4 text-xs text-muted-foreground">{activeJobs} active job(s) use this project: it can be removed once they finish or are cancelled.</p> : null}
 
       {project?.onboarding ? (
         <section className="grid gap-2 rounded-lg border bg-muted/20 p-4" aria-label="Onboarding">

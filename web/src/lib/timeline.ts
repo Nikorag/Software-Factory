@@ -57,6 +57,15 @@ export function summarise(output: Record<string, unknown> | null): string | unde
  * The story of a job, oldest first, built from what the factory already records: every step attempt (with how it ended and why), the decisions
  * it made along the way (sent back for fixes, reviews, your answers), and the agent runs behind each step. Nothing here is invented.
  */
+/**
+ * One decision as a line of text. A human answer is stored as "answered while held at <stage>\n\n<questions>" with the answer as the
+ * rationale: show only the first line plus the answer, so a long list of questions cannot push the answer out (old rows are one line).
+ */
+export function decisionText(x: Pick<Decision, "kind" | "decision" | "rationale">): string {
+  const decision = x.kind === "human.answer" ? (x.decision ?? "").split("\n")[0]!.trim() : x.decision;
+  return clip([decision, x.rationale].filter(Boolean).join(" — "), 260);
+}
+
 export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
   const seen = new Map<string, number>();
   // A retry resets the fix budget, so cycles are counted since the last time a person retried the job.
@@ -95,12 +104,12 @@ export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
     const at = x.at ?? 0;
     const home = [...entries].reverse().find((en) => at >= en.at - 1000 && at <= (en.end ?? Number.MAX_SAFE_INTEGER) + 3000);
     if (!home) return false;
-    home.events.push({ at, label: eventLabel(x.kind), text: clip([x.decision, x.rationale].filter(Boolean).join(" — "), 260) });
+    home.events.push({ at, label: eventLabel(x.kind), text: decisionText(x) });
     return true;
   };
   for (const x of [...d.decisions].sort((a, b) => a.id - b.id)) {
     if (x.kind === "worktree.create") continue; // plumbing, not a story
-    if (!attach(x)) entries.push({ key: `d${x.id}`, at: x.at ?? 0, end: null, tone: "info", title: eventLabel(x.kind), run: 1, summary: clip([x.decision, x.rationale].filter(Boolean).join(" — "), 260), events: [], runs: [] });
+    if (!attach(x)) entries.push({ key: `d${x.id}`, at: x.at ?? 0, end: null, tone: "info", title: eventLabel(x.kind), run: 1, summary: decisionText(x), events: [], runs: [] });
   }
   // a held job's current state is the most recent thing that happened
   if (HELD.has(d.job.stage)) {

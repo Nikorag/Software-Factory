@@ -1,9 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir } from "../config/load.js";
 import { applyGlobal, applyProjects, globalSettingsOf, ProjectSettings, removeProject, seedHomeConfig, updateGlobalSettings, upsertProject } from "../config/store.js";
 import type { LoadedConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
+import { jobs } from "../db/schema.js";
 import { auditTeam, type TeamAudit } from "../linear/check.js";
 import { applySetup } from "../linear/setup.js";
 import type { LinearClient } from "../linear/client.js";
@@ -92,6 +94,9 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
     } catch (e) { return fail(reply, e); }
   });
   app.delete<{ Params: { id: string } }>("/api/settings/projects/:id", { preHandler: requireToken }, async (req, reply) => {
+    // a running job needs its project's config: removing it under them fails them with a ConfigError and orphans their worktrees
+    const active = d.db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.projectId, req.params.id), inArray(jobs.status, ["queued", "running", "waiting"]))).all().length;
+    if (active) return reply.code(409).send({ error: `${req.params.id} has ${active} active job(s). Finish or cancel them before removing the project.` });
     try { apply(removeProject(req.params.id, writableDir(d.config))); return { ok: true }; } catch (e) { return fail(reply, e); }
   });
 

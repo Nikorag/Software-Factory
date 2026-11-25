@@ -12,16 +12,17 @@ const FINISHED = ["done", "failed", "cancelled"];
 export interface JobActions { archive: (j: Job, archived: boolean) => void; remove: (j: Job) => void }
 
 /** Delete with a confirmation. Reused by the list and the job page. */
-export function DeleteJobButton({ job, onConfirm, label }: { job: Job; onConfirm: () => void; label?: string }) {
+export function DeleteJobButton({ job, onConfirm, label, disabled }: { job: Job; onConfirm: () => void; label?: string; disabled?: boolean }) {
   return (
-    <AlertDialog><AlertDialogTrigger asChild><Button size="sm" variant="outline" aria-label={`delete ${job.key}`}><Trash2 />{label}</Button></AlertDialogTrigger>
+    <AlertDialog><AlertDialogTrigger asChild><Button size="sm" variant="outline" disabled={disabled} aria-label={`delete ${job.key}`}><Trash2 />{label}</Button></AlertDialogTrigger>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete {job.key} permanently?</AlertDialogTitle>
         <AlertDialogDescription>This removes the job, its history and its agent logs. It cannot be undone. The pull request and the ticket are not touched. To keep the history but hide the job, archive it instead.</AlertDialogDescription></AlertDialogHeader>
         <AlertDialogFooter><AlertDialogCancel>Keep it</AlertDialogCancel><AlertDialogAction onClick={onConfirm}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   );
 }
 
-export function JobsTable({ jobs, actions }: { jobs: Job[]; actions?: JobActions }) {
+/** `disabled`: actions are greyed out (an action is in flight, or the API is unreachable). */
+export function JobsTable({ jobs, actions, disabled }: { jobs: Job[]; actions?: JobActions; disabled?: boolean }) {
   const nav = useNavigate();
   if (!jobs.length) return <p className="text-sm text-muted-foreground">None.</p>;
   return (
@@ -41,8 +42,8 @@ export function JobsTable({ jobs, actions }: { jobs: Job[]; actions?: JobActions
               <TableCell onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                 {FINISHED.includes(j.status) ? (
                   <span className="flex justify-end gap-1">
-                    <Button size="sm" variant="outline" aria-label={`${j.archivedAt ? "restore" : "archive"} ${j.key}`} title={j.archivedAt ? "Restore" : "Archive"} onClick={() => actions.archive(j, !j.archivedAt)}>{j.archivedAt ? <ArchiveRestore /> : <Archive />}</Button>
-                    <DeleteJobButton job={j} onConfirm={() => actions.remove(j)} />
+                    <Button size="sm" variant="outline" disabled={disabled} aria-label={`${j.archivedAt ? "restore" : "archive"} ${j.key}`} title={j.archivedAt ? "Restore" : "Archive"} onClick={() => actions.archive(j, !j.archivedAt)}>{j.archivedAt ? <ArchiveRestore /> : <Archive />}</Button>
+                    <DeleteJobButton job={j} disabled={disabled} onConfirm={() => actions.remove(j)} />
                   </span>
                 ) : null}
               </TableCell>

@@ -15,5 +15,10 @@ export const dur = (ms: number | null | undefined) => {
 export const gb = (b: number) => `${(b / 2 ** 30).toFixed(1)} GB`;
 /** Only https GitHub links are ever turned into anchors: a ticket or agent can put anything in a PR URL field. */
 export const safeUrl = (u: unknown): string | null => (typeof u === "string" && /^https:\/\/github\.com\//.test(u) ? u : null);
+/** Links to the tracker (Linear, Jira cloud or a self-hosted Jira): http(s) only, so a ticket can never smuggle in javascript: or data:. */
+export const safeLink = (u: unknown): string | null => {
+  if (typeof u !== "string") return null;
+  try { const p = new URL(u); return p.protocol === "https:" || p.protocol === "http:" ? p.href : null; } catch { return null; }
+};
 export const stageLabel = (s: string) => s.replaceAll("_", " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 export const HELD = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION"];

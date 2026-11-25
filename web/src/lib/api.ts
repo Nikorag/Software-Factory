@@ -1,13 +1,13 @@
 // Everything that originates from tickets, agents or logs is untrusted. React escapes text children, and this app never injects raw
 // markup or builds HTML strings, so that content can only ever be rendered as text.
-export async function api<T>(path: string): Promise<T> {
-  const res = await fetch(path);
+export async function api<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(path, signal ? { signal } : undefined);
   if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error || `HTTP ${res.status}`);
   return (await res.json()) as T;
 }
 
-export async function apiText(path: string): Promise<string> {
-  const res = await fetch(path);
+export async function apiText(path: string, signal?: AbortSignal): Promise<string> {
+  const res = await fetch(path, signal ? { signal } : undefined);
   if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error || `HTTP ${res.status}`);
   return res.text();
 }

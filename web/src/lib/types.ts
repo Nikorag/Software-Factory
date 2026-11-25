@@ -19,7 +19,7 @@ export interface Overview {
 }
 export interface Execution { id: number; stage: string; attempt: number; outcome: string; error: string | null; output: string | null; startedAt: number | null; finishedAt: number | null }
 export interface Decision { id: number; kind: string; decision: string; rationale: string | null; actor: string; at: number | null }
-export interface Invocation { id: number; stageExecutionId: number | null; agent: string; model: string | null; exitCode: number | null; durationMs: number | null; usage: { denials?: number } | null; hasLog: boolean; at: number | null }
+export interface Invocation { id: number; stageExecutionId: number | null; agent: string; model: string | null; exitCode: number | null; durationMs: number | null; /** the run is over (exit code, signal, local-model failure or service restart): never "live" */ finished: boolean; usage: { denials?: number } | null; hasLog: boolean; at: number | null }
 export interface JobDetail {
   job: Job; remediationCap?: number; stageOrder: string[]; executions: Execution[]; decisions: Decision[]; invocations: Invocation[];
   artifacts: { kind: string; path: string; bytes: number | null; at: number | null }[];

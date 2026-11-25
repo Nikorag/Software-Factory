@@ -8,6 +8,19 @@ Updates: `software-factory update` (add `--check` to only look). Releases are gi
 
 - **Jira support** (Jira Cloud, OAuth 2.0 3LO) as an alternative to Linear, chosen per profile. Statuses and labels are mapped to existing ones in Settings because Jira statuses cannot be created. See docs/jira.md.
 
+- **Dashboard reliability**:
+  - Agent runs that were stopped by a signal (timeout, cancel, emergency stop), failed in the local model, or were cut short by a service restart no longer show "Watch live" forever. The API now returns an explicit `finished` flag, and the conversation view stops polling for those runs.
+  - Polling no longer overlaps and cannot show stale data. Each request is aborted when a newer one starts and old responses are dropped. Polling pauses while the tab is hidden and backs off after errors.
+  - "Connection lost — last updated Xs ago" appears whenever polling fails, and controls are disabled until the connection is back.
+  - Double-clicking Retry, Answer or another action sends one request only.
+  - Live tables keep their page when rows come and go.
+  - The conversation view keeps retrying after a failed request, and moves past log lines over 1 MB.
+  - A project with active jobs cannot be removed (409, with the reason shown in Settings).
+  - Ticket links on the Board accept only http(s) URLs.
+  - Archived jobs say that retrying restores them from the archive.
+  - Human answers in the timeline show the answer rather than the list of questions.
+  - The Health page has a Re-check button.
+
 ## 0.2.0
 
 - **Manual mode and the Board**: choose tickets from a board of your Linear tickets (search by number, key or title) instead of labelling them; the mode is set per profile and can be overridden per project.

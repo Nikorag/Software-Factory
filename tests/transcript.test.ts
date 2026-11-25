@@ -78,4 +78,34 @@ describe("following a run's log", () => {
     expect(readConversation(dataDir, join(dataDir, "logs", "link.log"), 0)).toBeNull();
     expect(readConversation(dataDir, join(dataDir, "logs", "..", "secret.txt"), 0)).toBeNull();
   });
+  it("never stalls on a line longer than the read window: skips it with a note and carries on after it", () => {
+    const { dataDir, file } = setup();
+    const lines = STREAM.trim().split("\n");
+    const huge = J({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t9", content: "z".repeat(5000) }] } });
+    writeFileSync(file, `${lines[0]}\n${huge}\n${lines[1]}\n`);
+    const max = 1000; // smaller than the huge line
+    const a = readConversation(dataDir, file, 0, max)!;
+    expect(a.turns.map((t) => t.kind)).toEqual(["session"]);
+    expect(a.more).toBe(true);
+    let offset = a.offset, notes = 0, rest: string[] = [];
+    for (let i = 0; i < 20 && offset < a.size; i++) { // every call makes progress, and at most `max` bytes are read
+      const r = readConversation(dataDir, file, offset, max)!;
+      expect(r.offset).toBeGreaterThan(offset);
+      offset = r.offset;
+      notes += r.turns.filter((t) => t.kind === "raw" && /too long to show/.test(t.text)).length;
+      rest = [...rest, ...r.turns.filter((t) => t.kind !== "raw").map((t) => t.kind)];
+      expect(r.turns.some((t) => t.kind === "raw" && /^z+/.test(t.text))).toBe(false); // no fragments of the skipped line
+    }
+    expect(offset).toBe(a.size);
+    expect(notes).toBe(1);
+    expect(rest).toEqual(["text", "tool"]); // the line after the huge one is read normally
+  });
+  it("waits for a long line that is still being written instead of skipping it", () => {
+    const { dataDir, file } = setup();
+    writeFileSync(file, `${J({ type: "factory_prompt", text: "hi" })}\n{"type":"assistant"`);
+    const a = readConversation(dataDir, file, 0)!;
+    expect(a).toMatchObject({ more: false });
+    expect(readConversation(dataDir, file, a.offset)!).toMatchObject({ turns: [], offset: a.offset, more: false });
+  });
 });
+

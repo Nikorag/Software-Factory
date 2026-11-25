@@ -9,6 +9,7 @@ import { Pager } from "@/components/Pager";
 import { api, send } from "@/lib/api";
 import type { Job, Project } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
+import { ConnectionBanner, useOffline } from "@/components/ConnectionBanner";
 
 const ALL = "__all";
 interface Page { jobs: Job[]; total: number; page: number; pages: number; pageSize: number }
@@ -20,15 +21,21 @@ export function Jobs() {
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { const t = setTimeout(() => setQ(text.trim()), 250); return () => clearTimeout(t); }, [text]);
   useEffect(() => { setPage(1); }, [status, proj, archived, q, pageSize]);
-  const { data, reload } = usePoll(async () => {
+  const offline = useOffline();
+  const [busy, setBusy] = useState(false);
+  const { data, error, updatedAt, reload } = usePoll(async (signal) => {
     const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize), archived });
     if (status !== ALL) qs.set("status", status);
     if (proj !== ALL) qs.set("project", proj);
     if (q) qs.set("q", q);
-    const [jobs, ps] = await Promise.all([api<Page>(`/api/jobs?${qs}`), api<{ projects: Project[] }>("/api/projects")]);
+    const [jobs, ps] = await Promise.all([api<Page>(`/api/jobs?${qs}`, signal), api<{ projects: Project[] }>("/api/projects", signal)]);
     return { ...jobs, projects: ps.projects };
   }, 3000, [status, proj, archived, q, page, pageSize]);
-  const act = async (r: ReturnType<typeof send>) => { const res = await r; setMsg(res.ok ? null : res.error); void reload(); };
+  const act = async (r: () => ReturnType<typeof send>) => {
+    if (busy) return;
+    setBusy(true);
+    try { const res = await r(); setMsg(res.ok ? null : res.error); await reload(); } finally { setBusy(false); }
+  };
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
       <div className="flex flex-wrap gap-2">
@@ -41,9 +48,10 @@ export function Jobs() {
         <Select value={archived} onValueChange={setArchived}><SelectTrigger className="w-44" aria-label="archive filter"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="hide">not archived</SelectItem><SelectItem value="only">archived only</SelectItem><SelectItem value="all">everything</SelectItem></SelectContent></Select>
       </div>
+      <ConnectionBanner error={error} updatedAt={updatedAt} what="job list" />
       {msg ? <Alert variant="destructive"><AlertDescription>{msg}</AlertDescription></Alert> : null}
       <Card><CardContent>
-        <JobsTable jobs={data?.jobs ?? []} actions={{ archive: (j, a) => void act(send("POST", `/api/jobs/${j.id}/${a ? "archive" : "unarchive"}`)), remove: (j) => void act(send("DELETE", `/api/jobs/${j.id}`)) }} />
+        <JobsTable jobs={data?.jobs ?? []} disabled={busy || offline || error !== null} actions={{ archive: (j, a) => void act(() => send("POST", `/api/jobs/${j.id}/${a ? "archive" : "unarchive"}`)), remove: (j) => void act(() => send("DELETE", `/api/jobs/${j.id}`)) }} />
         {data ? <Pager page={data.page} pages={data.pages} pageSize={data.pageSize} total={data.total} onPage={setPage} onPageSize={setPageSize} /> : null}
       </CardContent></Card>
     </div>

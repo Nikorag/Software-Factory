@@ -43,6 +43,18 @@ const jobRow = (j: typeof jobs.$inferSelect) => ({
   remediationAttempts: j.remediationAttempts, stageAttempts: j.stageAttempts, autonomous: j.autonomous, dryRun: j.dryRun, prUrl: j.prUrl,
   lastError: j.lastError, notBefore: ms(j.notBefore), createdAt: ms(j.createdAt), updatedAt: ms(j.updatedAt), archivedAt: ms(j.archivedAt),
 });
+/**
+ * Whether an agent run is over. `exitCode` alone is not enough: a run killed by a signal (timeout, cancel, emergency stop) or a failed
+ * local-model call records a duration but no exit code, and a run cut short by a service crash records neither. So a run is finished
+ * when it recorded an outcome (exit code or duration), or when its stage execution is no longer "started" (crash recovery closes those),
+ * or, for a run with no stage execution, when its job is not running.
+ */
+export function runFinished(inv: { exitCode: number | null; durationMs: number | null; stageExecutionId: number | null }, execOutcome: string | undefined, jobStatus: string | undefined): boolean {
+  if (inv.exitCode !== null || inv.durationMs !== null) return true;
+  if (inv.stageExecutionId !== null && execOutcome !== undefined) return execOutcome !== "started";
+  return jobStatus !== "running";
+}
+
 const clip = (s: string | null, n = 4000) => (s && s.length > n ? `${s.slice(0, n)}…` : s);
 
 /** Last `tail` bytes of a file, only if it lives under <dataDir>/logs (no path traversal, no symlink escapes). */
@@ -118,16 +130,18 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     const job = db.select().from(jobs).where(eq(jobs.id, req.params.id)).get();
     if (!job) return reply.code(404).send({ error: "no such job" });
     const id = job.id;
+    const execs = db.select().from(stageExecutions).where(eq(stageExecutions.jobId, id)).orderBy(asc(stageExecutions.id)).all();
+    const outcomeOf = new Map(execs.map((e) => [e.id, e.outcome]));
     return {
       job: jobRow(job),
       remediationCap: d.engine?.remediationCap(job) ?? d.config?.projects.projects.find((p) => p.id === job.projectId)?.overrides?.maxRemediationAttempts ?? d.config?.factory.maxRemediationAttempts ?? 3,
       stageOrder: STAGES,
-      executions: db.select().from(stageExecutions).where(eq(stageExecutions.jobId, id)).orderBy(asc(stageExecutions.id)).all()
+      executions: execs
         .map((e) => ({ id: e.id, stage: e.stage, attempt: e.attempt, outcome: e.outcome, error: clip(e.error), output: clip(e.outputJson, 1500), startedAt: ms(e.startedAt), finishedAt: ms(e.finishedAt) })),
       decisions: db.select().from(decisions).where(eq(decisions.jobId, id)).orderBy(asc(decisions.id)).all()
         .map((x) => ({ id: x.id, kind: x.kind, decision: clip(x.decision, 500), rationale: clip(x.rationale, 1500), actor: x.actor, at: ms(x.createdAt) })),
       invocations: db.select().from(agentInvocations).where(eq(agentInvocations.jobId, id)).orderBy(asc(agentInvocations.id)).all()
-        .map((a) => ({ id: a.id, stageExecutionId: a.stageExecutionId, agent: a.agent, model: a.model, exitCode: a.exitCode, durationMs: a.durationMs, usage: a.usageJson ? JSON.parse(a.usageJson) : null, hasLog: Boolean(a.logPath), at: ms(a.startedAt) })),
+        .map((a) => ({ id: a.id, stageExecutionId: a.stageExecutionId, agent: a.agent, model: a.model, exitCode: a.exitCode, durationMs: a.durationMs, finished: runFinished(a, a.stageExecutionId === null ? undefined : outcomeOf.get(a.stageExecutionId), job.status), usage: a.usageJson ? JSON.parse(a.usageJson) : null, hasLog: Boolean(a.logPath), at: ms(a.startedAt) })),
       artifacts: db.select().from(artifacts).where(eq(artifacts.jobId, id)).orderBy(asc(artifacts.id)).all().filter((a) => !a.kind.startsWith("step:"))
         .map((a) => ({ kind: a.kind, path: a.path, bytes: a.bytes, at: ms(a.createdAt) })),
       worktree: db.select().from(worktrees).where(eq(worktrees.jobId, id)).get() ?? null,
@@ -150,7 +164,9 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     if (!inv?.logPath || !d.dataDir) return reply.code(404).send({ error: "no conversation recorded for this run" });
     const out = readConversation(d.dataDir, inv.logPath, Number(req.query.after) || 0);
     if (!out) return reply.code(404).send({ error: "log not available" });
-    return { ...out, done: inv.exitCode !== null, agent: inv.agent, model: inv.model };
+    const outcome = inv.stageExecutionId === null ? undefined : db.select({ o: stageExecutions.outcome }).from(stageExecutions).where(eq(stageExecutions.id, inv.stageExecutionId)).get()?.o;
+    const status = db.select({ s: jobs.status }).from(jobs).where(eq(jobs.id, inv.jobId)).get()?.s;
+    return { ...out, done: runFinished(inv, outcome, status) && !out.more, agent: inv.agent, model: inv.model }; // a finished run with unread log still has pages to send
   });
 
   app.get("/api/projects", async () => {
