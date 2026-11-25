@@ -10,12 +10,14 @@ import { git as realGit } from "../repo/git.js";
 import { createStageKit, type StageKitDeps } from "../app/stage-kit.js";
 import { readSpecBundle, validateSpecArtifacts } from "../speckit/artifacts.js";
 import { commitAll } from "../speckit/tools.js";
-import { addedLines, changedFiles, codeDiff, historyAddedLines } from "./diff.js";
+import { addedLines, changedFiles, codeDiff, historyAddedLines, NON_CODE } from "./diff.js";
 import { claudeReviewPrompt, codeReviewPrompt, convergePrompt, extractCriteria, failureSummaryPrompt, finalReviewPrompt, implRemediationPrompt, implementPrompt, securityReviewPrompt, specExcerpt } from "./prompts.js";
-import { ClaudeReview, CodeReview, Converge, FailureSummary, FinalReview, ImplementResult, SecurityReview } from "./schemas.js";
+import { ClaudeReview, CodeReview, Converge, FailureSummary, FinalReview, ImplRemediation, ImplementResult, SecurityReview } from "./schemas.js";
 import { scanForSecrets } from "./secrets.js";
-import { Remediation } from "../speckit/schemas.js";
 import { findProtectedChanges } from "../agents/guard.js";
+import { deferrals, fixCycles, historyText, HUMAN_ONLY_REASON, isDeferrable, openTasks, previousFailures, recordDeferral, sameCodeRun, triage, type Finding } from "./history.js";
+import type { AgentCall, AgentOutcome } from "../app/stage-kit.js";
+import type { z } from "zod";
 
 export interface ImplDeps extends StageKitDeps {
   dataDir: string;
@@ -30,6 +32,8 @@ const CHECK_ORDER: Exclude<CommandKind, "install">[] = ["build", "typecheck", "l
 const BLOCKING = new Set(["blocker", "major", "critical", "high"]);
 export const isBlocking = (sev: string) => BLOCKING.has(sev);
 const DEFAULT_PASSES = 3;
+/** How Claude Code reports a `--resume` it cannot honour. */
+const RESUME_FAILED = /no conversation found|session[^\n]{0,40}(not found|expired|does not exist)|(could not|unable to|failed to) resume/i;
 
 /** Paths/keywords that make a change worth a dedicated security review. */
 const SECURITY_PATHS = /(^|\/)(auth|crypto|security|session|login|password|token|secret|permission|acl|sandbox|exec|shell|sql|db|database|migrations?)\b|package(-lock)?\.json$|pnpm-lock\.yaml$|yarn\.lock$|Dockerfile|\.github\//i;
@@ -89,6 +93,51 @@ export function createImplementationHandlers(d: ImplDeps) {
     return f.filter((x) => isBlocking(x.severity));
   }
 
+  const head = (wt: string) => git(wt, ["rev-parse", "HEAD"]);
+
+  /** The latest AUTOMATED_TESTING results (an `ok` run stores them at the top, a `remediate` run under `details`). */
+  function latestResults(jobId: string): { kind: string; ok: boolean; command: string }[] {
+    const row = d.db.select().from(stageExecutions).where(and(eq(stageExecutions.jobId, jobId), eq(stageExecutions.stage, "AUTOMATED_TESTING"), eq(stageExecutions.outcome, "succeeded"))).orderBy(desc(stageExecutions.id)).limit(1).get();
+    const o = (row?.outputJson ? JSON.parse(row.outputJson) : {}) as { results?: { kind: string; ok: boolean; command: string }[]; details?: { results?: { kind: string; ok: boolean; command: string }[] } };
+    return o.results ?? o.details?.results ?? [];
+  }
+
+  /** What reviewers are told about earlier fix cycles: findings, what happened to each, deferrals, and what changed since. */
+  async function reviewHistory(jobId: string, wt: string): Promise<string> {
+    const cycles = fixCycles(d.db, jobId);
+    const last = cycles.at(-1)?.head;
+    let stat = "";
+    if (last) { try { stat = await git(wt, ["diff", "--stat", last, "HEAD", "--", ".", ...NON_CODE]); } catch { /* an unknown head: no incremental view */ } }
+    return historyText(cycles, deferrals(d.db, jobId), stat);
+  }
+
+  /** The newest implementer session that actually has an id (a failed run may have none), so a retry continues the conversation. */
+  function latestImplementerSession(jobId: string): string | undefined {
+    const rows = d.db.query.agentInvocations.findMany({ where: (t, { and: a, eq: e, like }) => a(e(t.jobId, jobId), like(t.agent, "%/implementer")), orderBy: (t, { desc: de }) => de(t.id), limit: 50 }).sync();
+    for (const r of rows) {
+      try { const id = r.usageJson ? (JSON.parse(r.usageJson) as { sessionId?: string }).sessionId : undefined; if (id) return id; } catch { /* malformed usage: skip */ }
+    }
+    return undefined;
+  }
+
+  /**
+   * Runs the implementer, resuming its session when there is one. A session that cannot be resumed (expired, not found) would
+   * fail every retry the same way, so fall back once to a fresh session that is told where things stand.
+   */
+  async function implementer<T extends z.ZodType>(ctx: Parameters<StageHandler>[0], call: AgentCall<T>, wt: string, base: string): Promise<AgentOutcome<T>> {
+    const r = await agent(ctx, call);
+    if (r.ok || !call.resumeSessionId || r.stop.kind !== "retry" || !RESUME_FAILED.test(r.stop.reason)) return r;
+    record(ctx.job.id, "session.resume-failed", `could not resume ${call.resumeSessionId}; starting a fresh session`, r.stop.reason);
+    let commits = "";
+    try { commits = await git(wt, ["log", "--format=%h %s", `${base}..HEAD`]); } catch { /* none yet */ }
+    const summary = [
+      "Your previous session on this job could not be resumed, so you are starting fresh in the same worktree and branch. Read the code and tasks.md to pick up where it left off.",
+      `Commits on this branch so far:\n${commits.trim().slice(0, 3000) || "(none)"}`,
+      await reviewHistory(ctx.job.id, wt),
+    ].filter(Boolean).join("\n\n");
+    return agent(ctx, { ...call, resumeSessionId: undefined, prompt: `${summary}\n\n${call.prompt}` });
+  }
+
   async function wrapperFor(jobId: string, wt: string, commands: Partial<Record<CommandKind, string>>): Promise<{ path: string; checks: string[] }> {
     const checks = CHECK_ORDER.filter((k) => commands[k]);
     const path = writeExecWrapper(jobDir(jobId), {
@@ -130,16 +179,21 @@ export function createImplementationHandlers(d: ImplDeps) {
   const implementation: StageHandler = async (ctx) => {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
+    // A secret already in the branch's history (an earlier, failed attempt) cannot be fixed by another agent run: stop first.
+    const early = await secretStop(p.cwd, p.info.base);
+    if (early) return early;
     const project = d.project(ctx.job.projectId);
     const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands);
-    let session: string | undefined;
-    let appended = "";
+    let session = latestImplementerSession(ctx.job.id); // a retry continues the earlier conversation
+    let gaps: { appended: number; summary: string } | undefined;
+    const failures = previousFailures(d.db, ctx.job.id, "IMPLEMENTATION");
     const maxPasses = d.maxPasses?.(project.id) ?? DEFAULT_PASSES;
     for (let pass = 1; pass <= maxPasses; pass++) {
-      const r = await agent(ctx, {
+      const before = await head(p.cwd);
+      const r = await implementer(ctx, {
         task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: ImplementResult, bashAllow: [wrapper], resumeSessionId: session,
-        prompt: implementPrompt({ featureDir: p.featureDir, wrapper, checks, pass, appended }),
-      });
+        prompt: implementPrompt({ featureDir: p.featureDir, wrapper, checks, pass, gaps, ticket: p.ticket, previousFailures: pass === 1 ? failures : undefined }),
+      }, p.cwd, p.info.base);
       if (!r.ok) return r.stop;
       session = r.result.sessionId ?? session;
       await commitAll(p.cwd, `impl(${p.issue.identifier}): pass ${pass}`, git);
@@ -148,12 +202,29 @@ export function createImplementationHandlers(d: ImplDeps) {
       if ((await changedFiles(p.cwd, p.info.base, { code: true }, git)).length === 0) {
         return { kind: "retry", reason: "the implementer finished without changing any code" };
       }
-      const c = await agent(ctx, { task: "specification", role: "spec-writer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 15 * MIN, schema: Converge, prompt: convergePrompt(p.featureDir) });
+      const changedThisPass = (await git(p.cwd, ["diff", "--name-only", before, "HEAD", "--", ".", ...NON_CODE])).trim().length > 0;
+      for (const x of r.data!.deferred) recordDeferral(d.db, ctx.job.id, { id: x.id, severity: "minor", issue: x.id }, x.reason);
+      const c = await agent(ctx, { task: "specification", role: "spec-writer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 15 * MIN, schema: Converge, prompt: convergePrompt(p.featureDir, { skipped: r.data!.tasksSkipped, deferred: r.data!.deferred }) });
       if (!c.ok) return c.stop;
       await commitAll(p.cwd, `impl(${p.issue.identifier}): converge pass ${pass}`, git);
-      record(ctx.job.id, "implementation.pass", `pass ${pass}: ${c.data!.converged ? "converged" : `${c.data!.appendedTasks} task(s) appended`}`, c.data!.summary);
-      if (c.data!.converged) return { kind: "ok", output: { passes: pass, summary: r.data!.summary, skipped: r.data!.tasksSkipped, files: (await changedFiles(p.cwd, p.info.base, { code: true }, git)).length } };
-      appended = `Appended tasks: ${c.data!.summary}`;
+      const cv = c.data!;
+      for (const x of cv.deferred) recordDeferral(d.db, ctx.job.id, { id: x.id, severity: "minor", issue: x.id }, x.reason);
+      record(ctx.job.id, "implementation.pass", `pass ${pass}: ${cv.converged ? "converged" : `${cv.appendedTasks} task(s) appended`}${cv.deferred.length ? `, ${cv.deferred.length} deferred to a human` : ""}${changedThisPass ? "" : ", no code change this pass"}`, cv.summary);
+      const done = async (extra: Record<string, unknown> = {}): Promise<StageResult> => ({ kind: "ok", output: { passes: pass, summary: r.data!.summary, skipped: r.data!.tasksSkipped, deferred: cv.deferred, files: (await changedFiles(p.cwd, p.info.base, { code: true }, git)).length, ...extra } });
+      if (cv.converged) return done();
+      if (cv.appendedTasks === 0) {
+        // Nothing new for the implementer to do. Gaps the converge step says only a human can close are deferred to the PR.
+        if (cv.deferred.length) return done({ note: "remaining gaps deferred to a human" });
+        // A pass that changed no code, after which nothing was appended, would only be repeated (live: 14 passes on a migration
+        // the implementer cannot generate). Defer what is left to the PR and carry on: reviews and final validation still gate it.
+        if (pass > 1 && !changedThisPass) {
+          const why = [cv.summary, ...r.data!.tasksSkipped.map((t) => `${t.id}: ${t.reason}`)].filter(Boolean).join("; ");
+          recordDeferral(d.db, ctx.job.id, { id: "converge:gaps", severity: "minor", issue: "Gaps the completeness check reported that the implementer could not close" }, why || "no reason given");
+          record(ctx.job.id, "implementation.no-progress", `pass ${pass} changed no code and the completeness check appended no tasks; remaining gaps deferred to the PR`, why);
+          return done({ note: "no progress: remaining gaps deferred to a human" });
+        }
+      }
+      gaps = { appended: cv.appendedTasks, summary: cv.summary };
     }
     return { kind: "needs_attention", reason: `The implementation did not converge with the spec after ${maxPasses} passes; tasks remain. See the worktree and tasks.md. (Raise "Implementation passes" in Settings → Workflow, then retry the job: it resumes in the same worktree.)` };
   };
@@ -163,10 +234,14 @@ export function createImplementationHandlers(d: ImplDeps) {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
     const project = d.project(ctx.job.projectId);
+    const at = await head(p.cwd);
+    // A fix cycle that changed no code (findings rejected or deferred) cannot change the result of checks that already passed.
+    const prev = await sameCodeRun({ db: d.db, jobId: ctx.job.id, stage: "AUTOMATED_TESTING", cwd: p.cwd, git });
+    if (prev && !prev.remediated && Array.isArray(prev.results)) return { kind: "ok", output: { results: prev.results, head: at, reused: true } };
     let results: CommandResult[];
     try { results = await runChecks(ctx, p.cwd, project.commands); } catch (e) { const s = sandboxStop(e); if (s) return s; throw e; }
     const bad = failed(results);
-    if (bad.length === 0) return { kind: "ok", output: { results: brief(results) } };
+    if (bad.length === 0) return { kind: "ok", output: { results: brief(results), head: at } };
     const findings = [];
     for (const r of bad) {
       let issue = r.tail.slice(-2500);
@@ -176,8 +251,15 @@ export function createImplementationHandlers(d: ImplDeps) {
       }
       findings.push({ id: `check:${r.kind}`, severity: "blocker", file: r.command, line: null, issue: `${r.timedOut ? "TIMED OUT. " : ""}${issue}`, fix: "Make this check pass. Never delete, skip or weaken tests to do so." });
     }
-    return { kind: "remediate", reason: `${bad.map((r) => r.kind).join(", ")} failed`, output: { findings, results: brief(results) } };
+    return { kind: "remediate", reason: `${bad.map((r) => r.kind).join(", ")} failed`, output: { findings, results: brief(results), head: at } };
   };
+
+  /** Drops settled findings and defers disputes that would only loop (see history.ts), returning what still blocks. */
+  async function settle<F extends Finding>(jobId: string, wt: string, findings: F[]) {
+    const t = await triage({ db: d.db, jobId, cwd: wt, git, findings });
+    for (const f of t.deferred) record(jobId, "finding.deferred", `${f.id}: deferred to a human instead of another fix cycle`, f.reason);
+    return { findings: t.keep, deferred: t.deferred, settled: t.settled.map((f) => f.id) };
+  }
 
   /** The independent code review (Haiku by default), plus a security review when the change touches sensitive code. */
   const localModelReview: StageHandler = async (ctx) => {
@@ -186,63 +268,100 @@ export function createImplementationHandlers(d: ImplDeps) {
     if (!p.ok) return p.stop;
     const diff = await codeDiff(p.cwd, p.info.base, 60_000, git);
     if (diff.files.length === 0) return { kind: "fail", reason: "there is no code change to review" };
-    const results = (d.db.select().from(stageExecutions).where(and(eq(stageExecutions.jobId, ctx.job.id), eq(stageExecutions.stage, "AUTOMATED_TESTING"), eq(stageExecutions.outcome, "succeeded"))).orderBy(desc(stageExecutions.id)).limit(1).get());
-    const checks = ((results?.outputJson ? JSON.parse(results.outputJson) : {}) as { results?: { kind: string; ok: boolean; command: string }[] }).results ?? [];
-    const prompt = codeReviewPrompt({ ticket: p.ticket, spec: specExcerpt(readSpecBundle(p.cwd, p.featureDir)), stat: diff.stat, diff: diff.text, results: checks });
-    const r = await independent(ctx, (task) => agent(ctx, { task, role: "qa-reviewer", prompt, cwd: p.cwd, schema: CodeReview, timeoutMs: 15 * MIN }));
-    if (!r.ok) return r.stop;
-    const findings: { id: string; severity: string }[] = [...r.data.findings];
-    record(ctx.job.id, "code-review.independent", `${r.data.verdict}: ${r.data.findings.length} finding(s)`, r.reviewer);
-    if (isSecuritySensitive(diff.files, diff.text)) {
-      const s = await agent(ctx, { task: "final_review", role: "security-reviewer", prompt: securityReviewPrompt(diff.text, diff.files), cwd: p.cwd, schema: SecurityReview, timeoutMs: 15 * MIN });
-      if (!s.ok) return s.stop;
-      const crit = s.data!.findings.filter((f) => f.severity === "critical");
-      record(ctx.job.id, "security-review", `${s.data!.findings.length} finding(s), ${crit.length} critical`);
-      if (crit.length) return { kind: "needs_attention", reason: `Critical security finding(s), a human must review before this can proceed:\n${crit.map((f) => `- ${f.file}${f.line ? `:${f.line}` : ""}: ${f.issue}`).join("\n")}` };
-      findings.push(...s.data!.findings.map((f) => ({ id: `sec:${f.id}`, severity: f.severity === "high" ? "major" : f.severity === "medium" ? "minor" : "minor", file: f.file, line: f.line, issue: `[security/${f.severity}] ${f.issue}`, fix: f.fix })));
+    const at = await head(p.cwd);
+    let findings: Finding[];
+    let reviewer: string;
+    const prev = await sameCodeRun({ db: d.db, jobId: ctx.job.id, stage: "LOCAL_MODEL_REVIEW", cwd: p.cwd, git });
+    if (prev && Array.isArray(prev.findings)) {
+      // The code has not changed since this review last ran: its findings stand, and what remediation did with them is in the history.
+      findings = prev.findings as Finding[];
+      reviewer = String(prev.reviewer ?? "previous review");
+      record(ctx.job.id, "code-review.reused", "no code change since the last independent review; reusing its findings");
+    } else {
+      const prompt = codeReviewPrompt({ ticket: p.ticket, spec: specExcerpt(readSpecBundle(p.cwd, p.featureDir)), stat: diff.stat, diff: diff.text, results: latestResults(ctx.job.id), history: await reviewHistory(ctx.job.id, p.cwd) });
+      const r = await independent(ctx, (task) => agent(ctx, { task, role: "qa-reviewer", prompt, cwd: p.cwd, schema: CodeReview, timeoutMs: 15 * MIN }));
+      if (!r.ok) return r.stop;
+      findings = [...r.data.findings];
+      reviewer = r.reviewer;
+      record(ctx.job.id, "code-review.independent", `${r.data.verdict}: ${r.data.findings.length} finding(s)`, r.reviewer);
+      if (isSecuritySensitive(diff.files, diff.text)) {
+        const s = await agent(ctx, { task: "final_review", role: "security-reviewer", prompt: securityReviewPrompt(diff.text, diff.files), cwd: p.cwd, schema: SecurityReview, timeoutMs: 15 * MIN });
+        if (!s.ok) return s.stop;
+        const crit = s.data!.findings.filter((f) => f.severity === "critical");
+        record(ctx.job.id, "security-review", `${s.data!.findings.length} finding(s), ${crit.length} critical`);
+        if (crit.length) return { kind: "needs_attention", reason: `Critical security finding(s), a human must review before this can proceed:\n${crit.map((f) => `- ${f.file}${f.line ? `:${f.line}` : ""}: ${f.issue}`).join("\n")}` };
+        findings.push(...s.data!.findings.map((f) => ({ id: `sec:${f.id}`, severity: f.severity === "high" ? "major" : f.severity === "medium" ? "minor" : "minor", file: f.file, line: f.line, issue: `[security/${f.severity}] ${f.issue}`, fix: f.fix })));
+      }
     }
-    const must = findings.filter((f) => isBlocking(f.severity));
-    if (must.length) return { kind: "remediate", reason: `${must.length} blocking finding(s) in the independent code review`, output: { findings, reviewer: r.reviewer } };
-    return { kind: "ok", output: { findings, reviewer: r.reviewer } };
+    const t = await settle(ctx.job.id, p.cwd, findings);
+    const out = { findings, reviewer, head: at, deferred: t.deferred, settled: t.settled };
+    const must = t.findings.filter((f) => isBlocking(f.severity));
+    if (must.length) return { kind: "remediate", reason: `${must.length} blocking finding(s) in the independent code review`, output: { ...out, findings: t.findings } };
+    return { kind: "ok", output: out };
   };
 
   const claudeReview: StageHandler = async (ctx) => {
     if (ctx.dryRun) return { kind: "ok", output: { dryRun: true, note: "no implementation exists in a dry run" } };
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
-    const diff = await codeDiff(p.cwd, p.info.base, 4000, git);
-    const prev = d.db.select().from(stageExecutions).where(and(eq(stageExecutions.jobId, ctx.job.id), eq(stageExecutions.stage, "LOCAL_MODEL_REVIEW"), eq(stageExecutions.outcome, "succeeded"))).orderBy(desc(stageExecutions.id)).limit(1).get();
-    const earlier = ((prev?.outputJson ? JSON.parse(prev.outputJson) : {}) as { findings?: { id: string; severity: string; file: string; issue: string }[] }).findings ?? [];
-    const r = await agent(ctx, {
-      task: "final_review", role: "qa-reviewer", cwd: p.cwd, timeoutMs: 20 * MIN, schema: ClaudeReview,
-      prompt: claudeReviewPrompt({ ticket: p.ticket, spec: specExcerpt(readSpecBundle(p.cwd, p.featureDir)), stat: diff.stat, earlier, results: [], base: p.info.base }),
-    });
-    if (!r.ok) return r.stop;
-    for (const e of r.data!.earlier) record(ctx.job.id, "code-review.verdict", `${e.id}: ${e.valid ? "valid" : "invalid"}`, e.evidence);
-    const must = r.data!.findings.filter((f) => isBlocking(f.severity));
-    if (must.length) return { kind: "remediate", reason: `${must.length} blocking finding(s) in Claude's review`, output: { findings: r.data!.findings } };
-    return { kind: "ok", output: { findings: r.data!.findings } };
+    const at = await head(p.cwd);
+    let findings: Finding[];
+    const reused = await sameCodeRun({ db: d.db, jobId: ctx.job.id, stage: "CLAUDE_REVIEW", cwd: p.cwd, git });
+    if (reused && Array.isArray(reused.findings)) {
+      findings = reused.findings as Finding[];
+      record(ctx.job.id, "code-review.reused", "no code change since the last Claude review; reusing its findings");
+    } else {
+      const diff = await codeDiff(p.cwd, p.info.base, 4000, git);
+      const prev = d.db.select().from(stageExecutions).where(and(eq(stageExecutions.jobId, ctx.job.id), eq(stageExecutions.stage, "LOCAL_MODEL_REVIEW"), eq(stageExecutions.outcome, "succeeded"))).orderBy(desc(stageExecutions.id)).limit(1).get();
+      const earlier = ((prev?.outputJson ? JSON.parse(prev.outputJson) : {}) as { findings?: { id: string; severity: string; file: string; issue: string }[] }).findings ?? [];
+      const r = await agent(ctx, {
+        task: "final_review", role: "qa-reviewer", cwd: p.cwd, timeoutMs: 20 * MIN, schema: ClaudeReview,
+        prompt: claudeReviewPrompt({ ticket: p.ticket, spec: specExcerpt(readSpecBundle(p.cwd, p.featureDir)), stat: diff.stat, earlier, results: latestResults(ctx.job.id), base: p.info.base, history: await reviewHistory(ctx.job.id, p.cwd) }),
+      });
+      if (!r.ok) return r.stop;
+      for (const e of r.data!.earlier) record(ctx.job.id, "code-review.verdict", `${e.id}: ${e.valid ? "valid" : "invalid"}`, e.evidence);
+      findings = r.data!.findings;
+    }
+    const t = await settle(ctx.job.id, p.cwd, findings);
+    const must = t.findings.filter((f) => isBlocking(f.severity));
+    if (must.length) return { kind: "remediate", reason: `${must.length} blocking finding(s) in Claude's review`, output: { findings: t.findings, head: at, deferred: t.deferred, settled: t.settled } };
+    return { kind: "ok", output: { findings, head: at, deferred: t.deferred, settled: t.settled } };
   };
 
   const remediation: StageHandler = async (ctx) => {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
-    const findings = latestFindings(ctx.job.id);
+    const findings = latestFindings(ctx.job.id) as Finding[];
     if (findings.length === 0) return { kind: "ok", output: { note: "no blocking findings to remediate" } };
+    const early = await secretStop(p.cwd, p.info.base); // no agent run can fix a secret already in history
+    if (early) return early;
     const project = d.project(ctx.job.projectId);
     const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands);
-    const inv = d.db.query.agentInvocations.findMany({ where: (t, { and: a, eq: e, like }) => a(e(t.jobId, ctx.job.id), like(t.agent, "%/implementer")), orderBy: (t, { desc: de }) => de(t.id), limit: 1 }).sync();
-    const session = inv[0]?.usageJson ? (JSON.parse(inv[0].usageJson) as { sessionId?: string }).sessionId : undefined;
-    const r = await agent(ctx, {
-      task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 40 * MIN, schema: Remediation, bashAllow: [wrapper], resumeSessionId: session,
-      prompt: implRemediationPrompt({ featureDir: p.featureDir, wrapper, checks, findings }),
-    });
+    const before = await head(p.cwd);
+    const r = await implementer(ctx, {
+      task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 40 * MIN, schema: ImplRemediation, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id),
+      prompt: implRemediationPrompt({ featureDir: p.featureDir, wrapper, checks, findings, ticket: p.ticket, history: await reviewHistory(ctx.job.id, p.cwd), previousFailures: previousFailures(d.db, ctx.job.id, "REMEDIATION") }),
+    }, p.cwd, p.info.base);
     if (!r.ok) return r.stop;
-    for (const rej of r.data!.rejected) record(ctx.job.id, "remediation.rejected", rej.id, rej.reason);
+    const byId = (id: string) => findings.find((f) => f.id === id) ?? { id, severity: "minor", issue: id };
+    // A "rejection" because only a person can do it is a deferral: it goes on the PR instead of being argued again next cycle.
+    const asDeferral = r.data!.rejected.filter((x) => HUMAN_ONLY_REASON.test(x.reason) && isDeferrable(x.id));
+    const rejected = r.data!.rejected.filter((x) => !asDeferral.includes(x));
+    const deferred = [...r.data!.deferred.filter((x) => isDeferrable(x.id)), ...asDeferral];
+    const refused = r.data!.deferred.filter((x) => !isDeferrable(x.id)).map((x) => x.id);
+    for (const rej of rejected) record(ctx.job.id, "remediation.rejected", rej.id, rej.reason);
+    for (const x of deferred) recordDeferral(d.db, ctx.job.id, byId(x.id), x.reason);
+    if (refused.length) record(ctx.job.id, "remediation.deferral-refused", refused.join(", "), "failing checks, weakened tests, protected paths, a dirty tree and conflict markers cannot be deferred to a human");
     await commitAll(p.cwd, `fix(${p.issue.identifier}): address review findings`, git);
     const leak = await secretStop(p.cwd, p.info.base);
     if (leak) return leak;
-    return { kind: "ok", output: { accepted: r.data!.accepted, rejected: r.data!.rejected, summary: r.data!.summary } };
+    const after = await head(p.cwd);
+    // Nothing changed and nothing was settled: another test-and-review cycle would see exactly the same thing. Retry this step,
+    // which tells the implementer why (previousFailures), instead of spending a full fix cycle.
+    if (after === before && rejected.length === 0 && deferred.length === 0) {
+      return { kind: "retry", reason: `the implementer changed nothing and neither fixed, rejected nor deferred the findings (${findings.map((f) => f.id).join(", ")})${r.data!.accepted.length ? `; it reported ${r.data!.accepted.join(", ")} as fixed, but made no commit` : ""}` };
+    }
+    return { kind: "ok", output: { accepted: r.data!.accepted, rejected, deferred, refused, summary: r.data!.summary, head: after, changed: after !== before } };
   };
 
   const finalValidation: StageHandler = async (ctx) => {
@@ -250,8 +369,9 @@ export function createImplementationHandlers(d: ImplDeps) {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
     const project = d.project(ctx.job.projectId);
-    const findings: { id: string; severity: string; file: string; line: number | null; issue: string; fix: string }[] = [];
-    const gate = (id: string, issue: string, file = "-") => findings.push({ id: `gate:${id}`, severity: "blocker", file, line: null, issue, fix: "Fix this and keep all checks passing." });
+    const findings: { id: string; severity: string; file: string; line: number | null; issue: string; fix: string; tasks?: string[] }[] = [];
+    const gate = (id: string, issue: string, file = "-", extra: { fix?: string; tasks?: string[] } = {}) => findings.push({ id: `gate:${id}`, severity: "blocker", file, line: null, issue, fix: extra.fix ?? "Fix this and keep all checks passing.", ...(extra.tasks ? { tasks: extra.tasks } : {}) });
+    const at = await head(p.cwd);
 
     let results: CommandResult[];
     try { results = await runChecks(ctx, p.cwd, project.commands); } catch (e) { const s = sandboxStop(e); if (s) return s; throw e; }
@@ -269,32 +389,52 @@ export function createImplementationHandlers(d: ImplDeps) {
     if (weak.length) gate("test-weakening", `tests were skipped/disabled (${weak.length} line(s), e.g. \`${weak[0]!.trim().slice(0, 80)}\`)`);
     const deleted = (await git(p.cwd, ["diff", "--name-status", `${p.info.base}...HEAD`, "--", ".", ":(exclude)specs"])).split("\n").filter((l) => /^D\s+.*(test|spec)/i.test(l));
     if (deleted.length) gate("test-deleted", `test file(s) deleted: ${deleted.map((l) => l.split(/\s+/)[1]).join(", ")}`);
-    const tasks = readSpecBundle(p.cwd, p.featureDir).files["tasks.md"] ?? "";
-    const open = tasks.match(/^\s*- \[ \] T\d{3}\b/gm) ?? [];
-    if (open.length) gate("tasks-open", `${open.length} task(s) in tasks.md are not ticked`);
+    // Tasks tagged [HUMAN], or deferred to a human during the run, are not open work for the agents: they go on the PR.
+    const deferredIds = new Set(deferrals(d.db, ctx.job.id).map((x) => x.id));
+    const open = openTasks(readSpecBundle(p.cwd, p.featureDir).files["tasks.md"] ?? "").filter((t) => !t.human && !deferredIds.has(t.id));
+    if (open.length) {
+      gate("tasks-open", `${open.length} task(s) in tasks.md are not ticked: ${open.map((t) => t.id).join(", ")}. If a task can only be done by a person (manual or visual testing, real devices), tag it [HUMAN] and defer it instead of rejecting this.`, `${p.featureDir}/tasks.md`,
+        { tasks: open.map((t) => t.id), fix: "Do the open tasks and tick them; defer any that only a person can do." });
+    }
+    let t = await settle(ctx.job.id, p.cwd, findings);
+    findings.splice(0, findings.length, ...t.findings);
+    const deferred = [...t.deferred];
 
     if (findings.length === 0) {
       const criteria = extractCriteria(readSpecBundle(p.cwd, p.featureDir).files["spec.md"] ?? "");
       const rejected = d.db.select().from(decisions).where(and(eq(decisions.jobId, ctx.job.id), eq(decisions.kind, "remediation.rejected"))).all().map((x) => `${x.decision}: ${x.rationale}`);
-      const r = await agent(ctx, {
-        task: "final_review", role: "final-reviewer", cwd: p.cwd, timeoutMs: 25 * MIN, schema: FinalReview,
-        prompt: finalReviewPrompt({ ticket: p.ticket, criteria, stat: diff.stat, results, base: p.info.base, decisions: rejected }),
-      });
-      if (!r.ok) return r.stop;
-      const unmet = r.data!.criteria.filter((c) => !c.met);
+      type Review = z.infer<typeof FinalReview>;
+      let review: Review;
+      const prev = await sameCodeRun({ db: d.db, jobId: ctx.job.id, stage: "FINAL_VALIDATION", cwd: p.cwd, git });
+      if (prev?.review) {
+        review = prev.review as Review; // the final reviewer already judged this exact code; what remediation said about it is in the history
+        record(ctx.job.id, "final-review.reused", "no code change since the last final review; reusing its verdict");
+      } else {
+        const r = await agent(ctx, {
+          task: "final_review", role: "final-reviewer", cwd: p.cwd, timeoutMs: 25 * MIN, schema: FinalReview,
+          prompt: finalReviewPrompt({ ticket: p.ticket, criteria, stat: diff.stat, results, base: p.info.base, decisions: rejected, history: await reviewHistory(ctx.job.id, p.cwd) }),
+        });
+        if (!r.ok) return r.stop;
+        review = r.data!;
+      }
+      const unmet = review.criteria.filter((c) => !c.met);
       for (const c of unmet) findings.push({ id: `criterion:${c.id}`, severity: "blocker", file: "-", line: null, issue: `criterion ${c.id} not met: ${c.evidence}`, fix: "Implement it and add a test that fails without it." });
-      findings.push(...r.data!.findings.filter((f) => isBlocking(f.severity)));
-      if (r.data!.verdict === "changes_required" && findings.length === 0) findings.push({ id: "final:changes", severity: "blocker", file: "-", line: null, issue: "the final reviewer requested changes without specifics", fix: "Re-examine the criteria." });
+      findings.push(...review.findings.filter((f) => isBlocking(f.severity)));
+      if (review.verdict === "changes_required" && findings.length === 0) findings.push({ id: "final:changes", severity: "blocker", file: "-", line: null, issue: "the final reviewer requested changes without specifics", fix: "Re-examine the criteria." });
+      t = await settle(ctx.job.id, p.cwd, findings);
+      findings.splice(0, findings.length, ...t.findings);
+      deferred.push(...t.deferred);
       if (findings.length === 0) {
-        const report = buildReport({ key: p.issue.identifier, title: p.issue.title, url: p.issue.url, branch: p.info.branch, base: p.info.base, stat: diff.stat, results, criteria: r.data!.criteria, rejected, remediations: d.db.select().from(decisions).where(and(eq(decisions.jobId, ctx.job.id), eq(decisions.kind, "remediation"))).all().length, commits: await git(p.cwd, ["log", "--format=%h %s", `${p.info.base}..HEAD`]) });
+        const report = buildReport({ key: p.issue.identifier, title: p.issue.title, url: p.issue.url, branch: p.info.branch, base: p.info.base, stat: diff.stat, results, criteria: review.criteria, rejected, remediations: d.db.select().from(decisions).where(and(eq(decisions.jobId, ctx.job.id), eq(decisions.kind, "remediation"))).all().length, commits: await git(p.cwd, ["log", "--format=%h %s", `${p.info.base}..HEAD`]) });
         const file = join(d.dataDir, "reports", `${ctx.job.id}.md`);
         mkdirSync(dirname(file), { recursive: true });
         writeFileSync(file, report);
         d.db.insert(artifacts).values({ jobId: ctx.job.id, kind: "completion-report", path: file, sha256: createHash("sha256").update(report).digest("hex"), bytes: Buffer.byteLength(report) }).onConflictDoNothing().run();
-        return { kind: "ok", output: { report: file, criteria: r.data!.criteria.length, results: brief(results) } };
+        return { kind: "ok", output: { report: file, criteria: review.criteria.length, results: brief(results), head: at, review, deferred } };
       }
+      return { kind: "remediate", reason: `${findings.length} blocking issue(s) at final validation`, output: { findings, results: brief(results), head: at, review, deferred } };
     }
-    return { kind: "remediate", reason: `${findings.length} blocking issue(s) at final validation`, output: { findings, results: brief(results) } };
+    return { kind: "remediate", reason: `${findings.length} blocking issue(s) at final validation`, output: { findings, results: brief(results), head: at, deferred } };
   };
 
   return {

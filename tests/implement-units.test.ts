@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { addedLines, changedFiles, codeDiff } from "../src/implement/diff.js";
 import { buildReport, isSecuritySensitive } from "../src/implement/handlers.js";
-import { extractCriteria } from "../src/implement/prompts.js";
+import { extractCriteria, implementPrompt } from "../src/implement/prompts.js";
+import { historyText, HUMAN_ONLY_REASON, isDeferrable, openTasks, sameFinding } from "../src/implement/history.js";
+import { humanItems } from "../src/delivery/handlers.js";
 import { scanForSecrets } from "../src/implement/secrets.js";
 import { writeExecWrapper } from "../src/exec/factory-exec.js";
 import { sandboxAvailable } from "../src/exec/sandbox.js";
@@ -102,5 +104,54 @@ describe.skipIf(!sandboxAvailable())("factory-exec wrapper: the only way an agen
     expect(wrapper.startsWith(dir)).toBe(true);
     expect(execFileSync("stat", ["-f", "%Lp", wrapper], { encoding: "utf8" }).trim()).toBe("700");
     expect(execFileSync("stat", ["-f", "%Lp", join(dir, "exec-spec.json")], { encoding: "utf8" }).trim()).toBe("600");
+  });
+});
+
+describe("human deferral and fix-cycle memory (pure helpers)", () => {
+  it("openTasks finds unticked tasks and which ones the spec reserved for a human", () => {
+    const md = "- [x] T001 done\n- [ ] T002 [P] [US1] write code\n  - [ ] T003 [HUMAN] walk through quickstart in a browser\n- [ ] T004 [HUMAN: needs a phone] check on device\n- [ ] not a task\n";
+    expect(openTasks(md)).toEqual([
+      { id: "T002", text: "[P] [US1] write code", human: false },
+      { id: "T003", text: "[HUMAN] walk through quickstart in a browser", human: true },
+      { id: "T004", text: "[HUMAN: needs a phone] check on device", human: true },
+    ]);
+  });
+  it("stable ids match by id; reviewer ids (reused each cycle) match by file and wording", () => {
+    expect(sameFinding({ id: "gate:tasks-open", severity: "blocker" }, { id: "gate:tasks-open", severity: "blocker" })).toBe(true);
+    expect(sameFinding({ id: "criterion:FR-001", severity: "blocker" }, { id: "criterion:FR-002", severity: "blocker" })).toBe(false);
+    const a = { id: "R1", severity: "major", file: "src/a.ts", issue: "isOverdue does not validate the due date string" };
+    expect(sameFinding(a, { ...a, id: "R7", issue: "isOverdue does not validate the due date string format" })).toBe(true);
+    expect(sameFinding(a, { ...a, id: "R1", issue: "the error message is not translated" })).toBe(false); // same id, different finding
+    expect(sameFinding(a, { ...a, file: "src/b.ts" })).toBe(false);
+  });
+  it("only soft findings can be deferred; failing checks and safety gates cannot", () => {
+    for (const id of ["gate:tasks-open", "criterion:FR-001", "R1", "sec:S2", "ci:CI/deploy"]) expect(isDeferrable(id), id).toBe(true);
+    for (const id of ["check:test", "gate:check-lint", "gate:test-weakening", "gate:test-deleted", "gate:protected-path", "gate:clean-tree", "gate:conflict-markers", "gate:no-change"]) expect(isDeferrable(id), id).toBe(false);
+  });
+  it("recognises a rejection that really means 'a human has to do this'", () => {
+    expect(HUMAN_ONLY_REASON.test("T023 is a manual quickstart walkthrough")).toBe(true);
+    expect(HUMAN_ONLY_REASON.test("needs a real device to verify")).toBe(true);
+    expect(HUMAN_ONLY_REASON.test("callers validate input per FR-003")).toBe(false);
+  });
+  it("historyText is empty before any cycle and summarises outcomes and scope afterwards", () => {
+    expect(historyText([], [])).toBe("");
+    const t = historyText([{ n: 1, stage: "LOCAL_MODEL_REVIEW", head: "abc", findings: [{ id: "R1", severity: "major", file: "src/a.ts", issue: "x", outcome: "rejected", reason: "because" }] }], [{ id: "T023", what: "task T023 in tasks.md", reason: "manual" }], " src/a.ts | 2 +-");
+    expect(t).toMatch(/R1 src\/a\.ts: x -> REJECTED by the implementer: because/);
+    expect(t).toMatch(/Deferred to a human[\s\S]*T023/);
+    expect(t).toMatch(/only for code that changed since the last review/);
+  });
+  it("humanItems lists deferrals (with the task text) and [HUMAN] tasks, once each", () => {
+    const items = humanItems({ deferred: [{ id: "T003", what: "task T003 in tasks.md", reason: "browser" }, { id: "R9", what: "src/a.ts: check on a phone", reason: "device" }], tasksMd: "- [ ] T003 [HUMAN] walk through quickstart\n- [ ] T004 [HUMAN] look at the colours\n" });
+    expect(items).toHaveLength(3);
+    expect(items[0]).toMatch(/^- \[ \] \*\*T003\*\* walk through quickstart\n {2}_Why a human:_ browser$/);
+    expect(items[1]).toContain("R9**: src/a.ts: check on a phone");
+    expect(items[2]).toBe("- [ ] **T004** look at the colours");
+  });
+  it("the pass>1 prompt states what converge actually found, and never claims tasks were appended when none were", () => {
+    const base = { featureDir: "specs/x", wrapper: "/w", checks: ["test"], pass: 2 };
+    const none = implementPrompt({ ...base, gaps: { appended: 0, summary: "migration missing" } });
+    expect(none).toContain("migration missing"); expect(none).toMatch(/appended no new tasks/); expect(none).not.toMatch(/appended \d+ new task/);
+    expect(implementPrompt({ ...base, gaps: { appended: 2, summary: "edge cases" } })).toMatch(/appended 2 new task\(s\) to tasks\.md: do those/);
+    expect(implementPrompt({ ...base, pass: 1 })).not.toMatch(/This is pass/);
   });
 });

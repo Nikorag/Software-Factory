@@ -6,7 +6,8 @@ import { jobs, linearOutbox, stageExecutions, worktrees } from "../src/db/schema
 import { sandboxAvailable } from "../src/exec/sandbox.js";
 import { flushOutbox } from "../src/linear/outbox.js";
 import { GitHubError } from "../src/github/client.js";
-import { defaults, write } from "./helpers/impl-agent.js";
+import { defaults, tickTasks, untick, write } from "./helpers/impl-agent.js";
+import { recordDeferral } from "../src/implement/history.js";
 import { check } from "./helpers/fake-github.js";
 import { FakeGitHub } from "./helpers/fake-github.js";
 import { sh } from "./helpers/git-fixture.js";
@@ -85,6 +86,22 @@ describe.skipIf(!sandboxAvailable())("PR-only delivery: push, open the PR, watch
     expect(h.github.created).toHaveLength(1);
     expect(h.github.comments.some((c) => /Updated by the Software Factory/.test(c))).toBe(true);
   });
+  it("lists human-only work in the PR body, and posts anything deferred later as one comment, once", async () => {
+    const h = await harness({ timing: FAST });
+    h.claude.b.implement = (cwd, dir) => { write(cwd, "src/due.js", "export function isOverdue(due, today) { return due < today; }\n"); write(cwd, "test/due.test.js", 'import test from "node:test";\ntest("x", () => {});\n'); tickTasks(cwd, dir); untick(cwd, dir, "T012", "[HUMAN]"); };
+    await until(h, () => stageOf(h) === "MERGING");
+    expect(h.github.created[0]!.body).toMatch(/## Needs human verification[\s\S]*\*\*T012\*\* Run the manual scenario/);
+    expect(h.ctx.handle.db.select().from(linearOutbox).all().map((o) => o.payloadJson).join()).toMatch(/1 item\(s\) need human verification/);
+    recordDeferral(h.ctx.handle.db, h.jobId, { id: "R3", severity: "major", file: "src/due.js", issue: "check the date picker on a phone" }, "needs a real device");
+    for (let i = 0; i < 2; i++) { // a re-push after a fix cycle, then a plain retry of the same stage
+      h.ctx.handle.db.update(jobs).set({ stage: "PULL_REQUEST_CREATION", status: "queued", notBefore: null }).where(eq(jobs.id, h.jobId)).run();
+      await until(h, () => stageOf(h) === "MERGING");
+    }
+    const posted = h.github.comments.filter((c) => c.includes("Needs human verification"));
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("check the date picker on a phone");
+    expect(posted[0]).not.toContain("T012"); // already in the body
+  });
 });
 
 describe.skipIf(!sandboxAvailable())("CI", () => {
@@ -140,6 +157,34 @@ describe.skipIf(!sandboxAvailable())("CI", () => {
     const prompt = impl(h).at(-1)!.prompt;
     expect(prompt).toContain("ci:CI/app");
     expect(prompt).not.toContain("Vercel");
+  });
+  it("after a fix cycle re-pushes, the no-CI grace window and the CI time limit start again from the push (not the first CI run)", async () => {
+    let skew = 0;
+    const now = () => new Date(Date.now() + skew);
+    const gh = new FakeGitHub();
+    gh.checkPolls = [[check("app", "fail")], [], [], [check("app", "pass")]]; // the new head's checks are not registered at first
+    gh.logs.app = "FAIL";
+    const h = await harness({ github: gh, now, timing: { noCiGraceMs: 30_000, ciPollMs: 5, ciMaxMs: 60_000, ...FAST } });
+    h.claude.b.remediate = (cwd) => { write(cwd, "src/due.js", "export function isOverdue(due, today) { return due < today; }\n// fixed for CI\n"); skew += 10 * 60_000; }; // the fix cycle takes 10 minutes
+    await until(h, () => stageOf(h) === "MERGING" || stageOf(h) === "NEEDS_ATTENTION");
+    expect(stageOf(h)).toBe("MERGING");
+    expect(decisionKinds(h)).not.toContain("ci.none"); // before: 10 min > 3 min grace, so "no checks yet" was taken as "no CI exists"
+    const ci = h.ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.stage, "CI_VALIDATION")).all();
+    expect(ci.filter((r) => r.outcome === "waiting").length).toBeGreaterThanOrEqual(2);
+    expect(ci.at(-1)!.outputJson).toContain('"bucket":"pass"');
+  });
+  it("a CI failure the implementer defers to a human (it needs a secret) is posted on the PR instead of being looped on", async () => {
+    const gh = new FakeGitHub();
+    gh.checkPolls = [[check("deploy", "fail")]];
+    gh.logs.deploy = "Error: DEPLOY_TOKEN is not set";
+    const h = await harness({ github: gh, timing: FAST });
+    h.claude.b.remediation = () => ({ accepted: [], rejected: [], deferred: [{ id: "ci:CI/deploy", reason: "needs the DEPLOY_TOKEN repository secret, which only a maintainer can add" }], summary: "" });
+    await until(h, () => ["MERGING", "NEEDS_ATTENTION", "FAILED"].includes(stageOf(h)));
+    expect(stageOf(h)).toBe("MERGING");
+    expect(job(h).remediationAttempts).toBe(1);
+    expect(decisionKinds(h)).toContain("ci.deferred-failing");
+    expect(h.github.comments.filter((c) => c.includes("Needs human verification"))).toHaveLength(1);
+    expect(h.github.comments.join("\n")).toContain("DEPLOY_TOKEN repository secret");
   });
   it("a repository with no CI at all is not an error: the factory waits a grace period, records it, and carries on", async () => {
     // FakeGitHub default: no checks. Virtual clock: each reading is 1s later, so the 2.5s grace spans exactly three polls on any machine.
