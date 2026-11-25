@@ -13,6 +13,8 @@ import { ensureClone } from "./repo/clone.js";
 import { createLinearClient, type LinearClient } from "./linear/client.js";
 import { discoverIssues } from "./linear/discovery.js";
 import { flushOutbox } from "./linear/outbox.js";
+import { createContext } from "./app/context.js";
+import { onboardProject } from "./speckit/onboard.js";
 
 const openFactoryDb = () => {
   const config = loadConfig();
@@ -159,6 +161,34 @@ program
     if (config.factory.dryRun) { console.log("dry-run: not sending"); handle.close(); return; }
     console.log(await flushOutbox({ db: handle.db, client: linearClient(config), linear: config.linear, logger: createLogger({ level: "warn" }) }));
     handle.close();
+  });
+
+program
+  .command("project:onboard <id>")
+  .description("Add Spec Kit and an evidence-based constitution to a project on a local review branch (never pushes, never overwrites)")
+  .action(async (id: string) => {
+    const config = loadConfig();
+    const project = config.projects.projects.find((p) => p.id === id);
+    if (!project) { console.error(`no such project: ${id}`); process.exitCode = 1; return; }
+    const ctx = createContext(config);
+    const r = await onboardProject(project, { runner: ctx.runner, dataDir: config.factory.dataDir });
+    console.log(r.status === "already-initialised" ? `${id}: Spec Kit is already set up` : `${id}: created branch ${r.branch} (${r.commits.join(", ")})\n  review: git -C ${r.worktree} log -p ${project.defaultBranch}..HEAD`);
+    ctx.handle.close();
+  });
+
+program
+  .command("work")
+  .description("Run claimable jobs through the factory once (uses real agents and your Claude subscription)")
+  .option("--dry-run", "plan only: skip every mutating stage")
+  .action(async (opts: { dryRun?: boolean }) => {
+    const config = loadConfig();
+    if (opts.dryRun) config.factory.dryRun = true;
+    const ctx = createContext(config);
+    let ran = 0;
+    for (let n = await ctx.engine.tick(); n > 0; n = await ctx.engine.tick()) ran += n;
+    console.log(`ran ${ran} job(s)`);
+    for (const j of listJobs(ctx.handle.db)) console.log(`${j.id.slice(0, 8)}  ${j.externalKey.padEnd(10)} ${j.status.padEnd(9)} ${j.stage}${j.lastError ? `\n    ${j.lastError.split("\n")[0]}` : ""}`);
+    ctx.handle.close();
   });
 
 program

@@ -125,3 +125,19 @@ export const linearOutbox = sqliteTable(
   },
   (t) => [uniqueIndex("linear_outbox_idem").on(t.idempotencyKey), index("linear_outbox_status_idx").on(t.status)],
 );
+
+// References to files a job produced (specs, plans, task lists, analyses). Content lives in git; this records what
+// existed when, with a hash, so evidence can be cited later and replays can skip completed steps.
+export const artifacts = sqliteTable(
+  "artifacts",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    jobId: text("job_id").notNull().references(() => jobs.id),
+    kind: text("kind").notNull(), // spec | plan | tasks | checklist | research | data-model | contract | ticket | step:<name> | ...
+    path: text("path").notNull(), // relative to the job worktree
+    sha256: text("sha256").notNull(),
+    bytes: integer("bytes").notNull(),
+    createdAt: ts("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("artifacts_job_path_sha").on(t.jobId, t.path, t.sha256), index("artifacts_job_idx").on(t.jobId)],
+);

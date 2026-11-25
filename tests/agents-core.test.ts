@@ -34,7 +34,9 @@ describe("permission profiles", () => {
   });
   it("spec-writer may only create artefacts under specs/ and .specify/", () => {
     const p = toolPolicy("spec-writer", { protectedPaths: prot });
-    expect(p.allow).toEqual(expect.arrayContaining(["Edit(specs/**)", "Edit(.specify/**)"]));
+    expect(p.allow).toEqual(expect.arrayContaining(["Edit(specs/**)", "Edit(.specify/memory/**)", "Bash(.specify/scripts/bash/check-prerequisites.sh:*)"]));
+    expect(p.allow).not.toContain("Edit(.specify/**)"); // would allow editing the scripts and templates it executes
+    expect(p.deny).toEqual(expect.arrayContaining(["Edit(.claude/**)", "Edit(.specify/scripts/**)", "Edit(.specify/templates/**)"]));
     expect(p.allow).not.toContain("Write");
     expect(p.allow).not.toContain("Edit");
   });

@@ -18,7 +18,9 @@ export const FactoryConfig = z.object({
   pollIntervalSeconds: z.number().int().min(10).default(60),
   // Paths agents may never write to in any project. Enforced twice: as permission denies given to Claude Code,
   // and by verifying the worktree diff after every agent run. (The factory itself can never be a project: see loadConfig.)
-  protectedPaths: z.array(z.string()).default([".git/**", ".env", ".env.*", "**/*.pem", "**/*.key", "**/id_rsa*", "**/id_ed25519*", "**/secrets/**", ".github/workflows/**"]),
+  protectedPaths: z.array(z.string()).default([".git/**", ".env", ".env.*", "**/*.pem", "**/*.key", "**/id_rsa*", "**/id_ed25519*", "**/secrets/**", ".github/workflows/**",
+    // the agents' own instruction set and the scripts they run: never editable by an agent
+    ".claude/**", ".specify/scripts/**", ".specify/templates/**", ".specify/workflows/**", ".specify/integrations/**"]),
 });
 export type FactoryConfig = z.infer<typeof FactoryConfig>;
 
@@ -40,6 +42,8 @@ export const ModelsConfig = z
       maxConcurrentRequests: z.literal(1).default(1), // unified-memory constraint
     })
     .default({ baseUrl: "http://127.0.0.1:1234/v1", requestTimeoutSeconds: 300, maxConcurrentRequests: 1 }),
+  // If the local model is unavailable for an independent review: use a fresh Claude reviewer, or block the job.
+  independentReviewFallback: z.enum(["claude", "block"]).default("claude"),
   routes: z.object({
     classification: ModelRoute,
     specification: ModelRoute,

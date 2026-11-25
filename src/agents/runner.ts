@@ -9,7 +9,7 @@ import type { ModelRouter, Route, TaskKind } from "./router.js";
 import type { AgentResult, AgentRole } from "./types.js";
 
 export interface RunStep {
-  jobId: string;
+  jobId?: string; // omitted for job-less runs (project onboarding): nothing is recorded in the DB, the log file still is
   executionId?: number;
   task: TaskKind;
   role: AgentRole;
@@ -35,10 +35,12 @@ export class AgentRunner {
     const git = this.d.git ?? realGit;
     const profile = ROLE_PROFILE[step.role];
     const route = router.route(step.task); // fail on bad config before recording anything
-    const logFile = join(this.d.logDir, step.jobId, `${Date.now()}-${step.role}.log`);
-    const row = db.insert(agentInvocations).values({
-      jobId: step.jobId, stageExecutionId: step.executionId ?? null, agent: `${route.provider}/${step.role}`, model: route.model, cwd: step.cwd, logPath: logFile,
-    }).returning({ id: agentInvocations.id }).get();
+    const logFile = join(this.d.logDir, step.jobId ?? "_unattached", `${Date.now()}-${step.role}.log`);
+    const row = step.jobId
+      ? db.insert(agentInvocations).values({
+          jobId: step.jobId, stageExecutionId: step.executionId ?? null, agent: `${route.provider}/${step.role}`, model: route.model, cwd: step.cwd, logPath: logFile,
+        }).returning({ id: agentInvocations.id }).get()
+      : undefined;
 
     const before = profile === "read-only" && route.provider === "anthropic" ? await git(step.cwd, ["status", "--porcelain", "--untracked-files=all"]).catch(() => null) : null;
     const result = await router.run(step.task, {
@@ -55,12 +57,12 @@ export class AgentRunner {
       const after = await git(step.cwd, ["status", "--porcelain", "--untracked-files=all"]).catch(() => null);
       if (after !== null && after !== before) violations.push("read-only agent modified the worktree");
     }
-    if (violations.length) {
+    if (violations.length && step.jobId) {
       db.insert(decisions).values({ jobId: step.jobId, kind: "agent.violation", decision: `${step.role}: ${violations.join("; ")}`, rationale: logFile, actor: "factory" }).run();
     }
-    db.update(agentInvocations).set({
+    if (row) db.update(agentInvocations).set({
       exitCode: result.exitCode, durationMs: result.durationMs,
-      usageJson: JSON.stringify({ costUsd: result.costUsd, sessionId: result.sessionId, numTurns: result.numTurns, failure: result.failure, denials: result.denials.length, violations: violations.length, usage: result.usage }),
+      usageJson: JSON.stringify({ estimatedListCostUsd: result.costUsd, sessionId: result.sessionId, numTurns: result.numTurns, failure: result.failure, denials: result.denials.length, violations: violations.length, usage: result.usage }),
     }).where(eq(agentInvocations.id, row.id)).run();
 
     if (violations.length) return { ...result, ok: false, failure: "error", error: `boundary violation: ${violations.join("; ")}`, violations };

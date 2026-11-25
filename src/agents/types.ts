@@ -30,6 +30,7 @@ export interface AgentResult {
   text: string;
   structured?: unknown;
   sessionId?: string;
+  /** Claude Code's list-price estimate of the run (`costBasis: "list"`). NOT a charge: subscription auth is not billed per token. */
   costUsd?: number;
   usage?: Record<string, unknown>;
   numTurns?: number;

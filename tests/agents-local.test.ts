@@ -161,7 +161,7 @@ describe("AgentRunner boundaries and recording", () => {
     const row = db.select().from(agentInvocations).get()!;
     expect(row).toMatchObject({ jobId: "j", agent: "anthropic/implementer", cwd: repo, exitCode: 0, durationMs: 12 });
     expect(row.logPath).toContain("/j/");
-    expect(JSON.parse(row.usageJson!)).toMatchObject({ costUsd: 0.2, sessionId: "s", denials: 1 });
+    expect(JSON.parse(row.usageJson!)).toMatchObject({ estimatedListCostUsd: 0.2, sessionId: "s", denials: 1 });
   });
   it("fails the run and records a decision when an implementer touches a protected path", async () => {
     const { repo } = makeRepo();

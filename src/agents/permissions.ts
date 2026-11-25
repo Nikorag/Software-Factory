@@ -18,6 +18,7 @@ const ALWAYS_DENY_BASH = [
   "gh", "curl", "wget", "ssh", "scp", "rsync", "nc", "sudo", "su", "chmod", "chown", "launchctl", "security", "osascript",
   "rm -rf", "rm -fr", "npm publish", "pnpm publish", "yarn publish", "docker", "kubectl",
 ];
+const SPECKIT_SCRIPTS = [".specify/scripts/bash/check-prerequisites.sh", ".specify/scripts/bash/resolve-template.sh", ".specify/scripts/bash/setup-plan.sh", ".specify/scripts/bash/setup-tasks.sh"];
 const bash = (prefix: string) => `Bash(${prefix}:*)`;
 
 export function toolPolicy(profile: PermissionProfile, opts: { protectedPaths?: string[]; bashAllow?: string[] } = {}): ToolPolicy {
@@ -27,10 +28,11 @@ export function toolPolicy(profile: PermissionProfile, opts: { protectedPaths?: 
     case "read-only":
       return { tools: ["Read", "Grep", "Glob", "Bash"], allow: readOnly, deny: ["Edit", "Write", "NotebookEdit", ...ALWAYS_DENY_BASH.map(bash)] };
     case "spec-writer":
-      // May create specification artefacts only: everything else is read-only.
+      // May create specification artefacts only: everything else is read-only. It runs SpecKit's helper scripts
+      // but cannot edit them, the skills, or the templates (those are the instruction set it executes).
       return {
         tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash"],
-        allow: [...readOnly, "Edit(specs/**)", "Edit(.specify/**)"],
+        allow: [...readOnly, "Edit(specs/**)", "Edit(.specify/memory/**)", "Edit(.specify/feature.json)", ...SPECKIT_SCRIPTS.map(bash), bash("mkdir -p specs/")],
         deny: [...protectedPaths.map((p) => `Edit(${p})`), ...ALWAYS_DENY_BASH.map(bash)],
       };
     case "implementer":

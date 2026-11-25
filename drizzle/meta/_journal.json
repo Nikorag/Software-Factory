@@ -15,6 +15,13 @@
       "when": 1795610918537,
       "tag": "0001_dear_eddie_brock",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795615021905,
+      "tag": "0002_hard_captain_flint",
+      "breakpoints": true
     }
   ]
 }
