@@ -1,8 +1,8 @@
-import { chmodSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { tmp } from "./helpers/git-fixture.js";
+import { makeRepo, sh, tmp } from "./helpers/git-fixture.js";
 
 const INSTALL = join(process.cwd(), "install.sh");
 type Tool = string; // a tool name; its value is the stub's shell body
@@ -65,5 +65,44 @@ describe.skipIf(process.platform !== "darwin")("install.sh preflight", () => {
     expect(signedOut.code).toBe(0);
     expect(signedOut.out).toContain("! GitHub CLI is installed but not signed in (needed for GitHub projects)");
     expect(signedOut.out).toContain("all requirements are in place");
+  });
+});
+
+/** A real (local) install: real git against a local origin with a release tag; pnpm and the checked tools stubbed. */
+describe.skipIf(process.platform !== "darwin")("install.sh download and re-run", () => {
+  function setup() {
+    const { origin, repo } = makeRepo({ "a.txt": "1\n", ".gitignore": "node_modules/\n" });
+    sh(repo, "tag", "v0.1.0"); sh(repo, "push", "-q", "origin", "v0.1.0");
+    writeFileSync(join(repo, "b.txt"), "2\n"); sh(repo, "add", "-A"); sh(repo, "commit", "-q", "-m", "b"); sh(repo, "push", "-q", "origin", "main");
+    const bin = tmp(), home = tmp();
+    const { git: _g, ...tools } = GOOD; void _g; // the real git
+    for (const [n, body] of Object.entries({ ...tools, pnpm: "mkdir -p node_modules; exit 0" })) stub(bin, n, body === true ? "exit 0" : body);
+    const install = (ref: string) => spawnSync("/bin/bash", [INSTALL], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, FACTORY_HOME: join(home, "fh"), FACTORY_BIN: join(home, "bin"), FACTORY_REPO: origin, FACTORY_REF: ref }, encoding: "utf8" });
+    return { install, app: join(home, "fh", "app"), home, bin };
+  }
+
+  it("a tag install can still see origin/main (so `update` and re-runs work), records the Node, and the launcher uses bin/factory", () => {
+    const s = setup();
+    const r = s.install("v0.1.0");
+    expect(r.status, r.stderr).toBe(0);
+    expect(sh(s.app, "describe", "--tags", "--exact-match")).toBe("v0.1.0");
+    expect(sh(s.app, "config", "--get-all", "remote.origin.fetch")).toBe("+refs/heads/*:refs/remotes/origin/*");
+    expect(sh(s.app, "rev-parse", "--verify", "origin/main")).toMatch(/^[0-9a-f]{40}$/);
+    expect(readFileSync(join(s.app, "node_modules", ".factory-node"), "utf8").trim()).toBe(join(s.bin, "node"));
+    expect(readFileSync(join(s.home, "bin", "software-factory"), "utf8")).toContain(`exec /bin/sh "${s.app}/bin/factory"`);
+    const again = s.install("main"); // re-run, switching to main: the branch exists now
+    expect(again.status, again.stderr).toBe(0);
+    expect(sh(s.app, "ls-files")).toContain("b.txt");
+  });
+
+  it("a re-run refuses an install with local changes instead of carrying them along", () => {
+    const s = setup();
+    expect(s.install("v0.1.0").status).toBe(0);
+    writeFileSync(join(s.app, "a.txt"), "edited\n");
+    const r = s.install("main");
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("has local changes");
+    expect(sh(s.app, "describe", "--tags", "--exact-match")).toBe("v0.1.0"); // not moved
+    expect(readFileSync(join(s.app, "a.txt"), "utf8")).toBe("edited\n");
   });
 });

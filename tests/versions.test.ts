@@ -5,7 +5,7 @@ import { buildServer } from "../src/server/app.js";
 import { UpdateChecker } from "../src/service/versions.js";
 import type { UpdatePlan } from "../src/service/update.js";
 
-const plan = (o: Partial<UpdatePlan> = {}): UpdatePlan => ({ current: "v0.1.0", currentSha: "a", target: "v0.1.1", targetSha: "b", targetIsTag: true, behind: 1, upToDate: false, dirty: false, latestTag: "v0.1.1", ...o });
+const plan = (o: Partial<UpdatePlan> = {}): UpdatePlan => ({ current: "v0.1.0", currentSha: "a", target: "v0.1.1", targetSha: "b", targetIsTag: true, behind: 1, upToDate: false, dirty: false, latestTag: "v0.1.1", pending: null, ...o });
 
 describe("update notice", () => {
   it("reports a newer release, and asks git at most once per ttl", async () => {

@@ -51,12 +51,23 @@ async function show(p) {
   if (await up(p)) win.loadURL(urlOf(p)); else win.loadURL(stoppedPage(p));
 }
 
+// The install's own bin/factory: a stable path that resolves Node and tsx when it runs, so it still works after `software-factory update`.
+const startCommand = () => process.env.FACTORY_START_JSON ? JSON.parse(process.env.FACTORY_START_JSON) : ["/bin/sh", path.join(__dirname, "..", "bin", "factory"), "start", "--no-window"];
+
+/** Starts every profile. A failure (missing Node, broken install, a profile that would not start) is shown, never swallowed. */
 function startAll() {
-  const cmd = process.env.FACTORY_START_JSON ? JSON.parse(process.env.FACTORY_START_JSON) : null;
-  if (!cmd) { dialog.showErrorBox("Software Factory", "Run `software-factory start` in a terminal to start the factory."); return; }
+  const cmd = startCommand();
   const env = { ...process.env, FACTORY_ROOT: ROOT }; delete env.ELECTRON_RUN_AS_NODE;
-  spawn(cmd[0], cmd.slice(1), { detached: true, stdio: "ignore", env }).unref();
-  setTimeout(() => void show(current), 6000);
+  let output = "";
+  const fail = (why) => dialog.showErrorBox("Could not start the factory", `${why}\n\n${output.trim().split("\n").slice(-12).join("\n")}\n\nRun \`software-factory start\` in a terminal for details.`.replace(/\n{3,}/g, "\n\n"));
+  const child = spawn(cmd[0], cmd.slice(1), { detached: true, stdio: ["ignore", "pipe", "pipe"], env, cwd: path.join(__dirname, "..") });
+  for (const s of [child.stdout, child.stderr]) s.on("data", (d) => { output = (output + d).slice(-8000); });
+  child.on("error", (e) => fail(`${cmd[0]}: ${e.message}`));
+  child.on("exit", (code, signal) => {
+    if (code !== 0) fail(signal ? `it was stopped (${signal})` : `it exited with code ${code}`);
+    void show(current); void refreshTray();
+  });
+  child.unref();
 }
 
 async function stopAll() {

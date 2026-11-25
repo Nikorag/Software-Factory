@@ -4,6 +4,12 @@ Updates: `software-factory update` (add `--check` to only look). Releases are gi
 
 ## Unreleased
 
+- **Safer updates.** `software-factory update` now refuses while jobs are running (`--wait` waits for them, `--force` goes ahead), stops every running profile and the LaunchAgent, backs up each profile's SQLite database (`VACUUM INTO`, newest 5 kept in `<data dir>/database/backups/`), and restarts what was running afterwards. If installing the new version fails it rolls back to the previous commit and reinstalls it; an interrupted update is finished by the next `update` instead of being reported as "up to date". The LaunchAgent is re-rendered for the new code.
+- **No version-specific paths outside the install.** The launcher, the LaunchAgent and the app's "Start all profiles" go through `app/bin/factory`, which resolves Node and tsx each time, so a tsx bump or a Node switch no longer breaks them. "Start all profiles" now shows why starting failed instead of failing silently, and `start` exits non-zero when a profile does not start. Existing installs: re-run the installer once to get the new launcher (the old one keeps working).
+- **Node switches**: the install records the Node its native SQLite module was built for and uses it; if that Node is gone, the module is rebuilt automatically for the one in use (and `update` checks it too).
+- A compiled `dist/` is no longer preferred at runtime: the factory always runs its TypeScript source through tsx (the code finds `package.json`, migrations, config and the dashboard relative to the source tree, so `pnpm build` output broke startup).
+- **Installer**: full clone (not a tag-only shallow clone), so `update` and re-runs can see `origin/main`; existing tag installs are repaired by `update` and by re-running the installer, which also refuses an install with local changes instead of carrying them along.
+
 - **Bitbucket Cloud support** as an alternative to GitHub, chosen per project, with named token credentials (access tokens or Atlassian API tokens) in the keychain. See docs/bitbucket.md.
 
 - **Jira support** (Jira Cloud, OAuth 2.0 3LO) as an alternative to Linear, chosen per profile. Statuses and labels are mapped to existing ones in Settings because Jira statuses cannot be created. See docs/jira.md.

@@ -1,9 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { findBinary } from "../speckit/tools.js";
 
 export const LABEL = "com.software-factory.agent";
@@ -70,20 +69,24 @@ export function servicePath(extra: string[] = []): string {
   return [...dirs].join(":");
 }
 
-/** How to run `factory serve`: compiled JS if built, else the TypeScript source through tsx. Absolute paths throughout. */
+/**
+ * How to run `factory serve`: the install's own bin/factory, through /bin/sh. Nothing version-specific (a Node version, a Homebrew Cellar
+ * path, a tsx path inside the pnpm store) is baked into the LaunchAgent or the desktop app: bin/factory resolves those every time, so an
+ * update or a Node switch never leaves them pointing at something that is gone. (The TypeScript source always runs through tsx: a
+ * compiled dist/ is not used, because the code finds package.json, migrations, config and the dashboard relative to the source tree.)
+ */
 export function serveCommand(repoRoot: string): string[] {
-  const built = join(repoRoot, "dist", "src", "cli.js");
-  if (existsSync(built)) return [process.execPath, built, "serve"];
-  const tsx = pathToFileURL(createRequire(import.meta.url).resolve("tsx/esm")).href;
-  return [process.execPath, "--import", tsx, join(repoRoot, "src", "cli.ts"), "serve"];
+  return ["/bin/sh", join(repoRoot, "bin", "factory"), "serve"];
 }
 
 export interface InstallOptions { repoRoot?: string; configDir?: string; dataDir: string; home?: string; load?: boolean; run?: (file: string, args: string[]) => string }
 
 const defaultRun = (f: string, a: string[]) => execFileSync(f, a, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 
+const repoRootOf = (r?: string) => r ?? resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
 export function buildPlist(o: Pick<InstallOptions, "repoRoot" | "configDir" | "dataDir" | "home">): string {
-  const repoRoot = o.repoRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const repoRoot = repoRootOf(o.repoRoot);
   return renderPlist({
     programArguments: serveCommand(repoRoot), workingDirectory: repoRoot,
     // FACTORY_CONFIG_DIR only when asked for: by default the service reads the user's own config (~/.software-factory/config), like the CLI does
@@ -108,6 +111,39 @@ export function installAgent(o: InstallOptions): { path: string; loaded: boolean
     loaded = true;
   }
   return { path, loaded };
+}
+
+/** Stops the LaunchAgent's service without removing it (`update` does this, then `refreshAgent` starts it again). */
+export function stopAgent(o: { run?: InstallOptions["run"] } = {}): void {
+  try { (o.run ?? defaultRun)("/bin/launchctl", ["bootout", `gui/${process.getuid?.() ?? 501}/${LABEL}`]); } catch { /* not loaded */ }
+}
+
+const unesc = (s: string) => s.replace(/&quot;/g, "\"").replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
+
+/**
+ * Re-renders an installed LaunchAgent for the current code (same data dir and config dir as when it was installed), and loads it again when
+ * `load` is set. Does nothing (installed: false) if none is installed, or if it belongs to another checkout of the factory. `update` calls it so the plist never keeps paths from an older install.
+ */
+export function refreshAgent(o: { home?: string; repoRoot?: string; load?: boolean; run?: InstallOptions["run"] } = {}): { installed: boolean; changed: boolean; loaded: boolean } {
+  const path = plistPath(o.home);
+  const field = ownPlist(o);
+  if (!field) return { installed: false, changed: false, loaded: false };
+  const out = field("StandardOutPath");
+  if (!out) throw new Error(`${path} is not one this version understands: reinstall it with \`software-factory launchd:install\``);
+  const opts = { repoRoot: o.repoRoot, home: o.home, dataDir: dirname(dirname(out)), configDir: field("FACTORY_CONFIG_DIR") };
+  const changed = buildPlist(opts) !== readFileSync(path, "utf8");
+  if (changed || o.load) installAgent({ ...opts, load: o.load, run: o.run });
+  return { installed: true, changed, loaded: !!o.load };
+}
+
+/** Is the installed LaunchAgent this install's? (A development checkout must never stop or repoint the real one.) */
+export const isOwnAgent = (o: { home?: string; repoRoot?: string } = {}): boolean => ownPlist(o) !== null;
+
+function ownPlist(o: { home?: string; repoRoot?: string }): ((k: string) => string | undefined) | null {
+  let xml: string;
+  try { xml = readFileSync(plistPath(o.home), "utf8"); } catch { return null; }
+  const field = (k: string) => { const m = new RegExp(`<key>${k}</key>\\s*<string>([^<]*)</string>`).exec(xml); return m ? unesc(m[1]!) : undefined; };
+  return field("WorkingDirectory") === repoRootOf(o.repoRoot) ? field : null;
 }
 
 export function uninstallAgent(o: { home?: string; run?: InstallOptions["run"] } = {}): { removed: boolean } {
