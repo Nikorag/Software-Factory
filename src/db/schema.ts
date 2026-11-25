@@ -82,6 +82,9 @@ export const worktrees = sqliteTable("worktrees", {
   projectId: text("project_id").notNull().references(() => projects.id),
   path: text("path").notNull().unique(),
   branch: text("branch").notNull(),
+  // The commit the branch was created from. Every diff, boundary check and review is measured against THIS, never against a
+  // moving ref such as the local default branch (which can be stale: that once flagged the whole of main as "agent changes").
+  baseSha: text("base_sha"),
   state: text("state", { enum: ["active", "preserved", "removed"] }).notNull().default("active"),
   createdAt: ts("created_at").notNull().default(now),
 });

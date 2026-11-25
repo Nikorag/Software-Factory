@@ -1,0 +1,1 @@
+ALTER TABLE `worktrees` ADD `base_sha` text;

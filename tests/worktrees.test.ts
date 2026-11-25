@@ -10,6 +10,8 @@ import { prepareWorkspace } from "../src/repo/handlers.js";
 import { getProjectConfig, isRunnable, syncProjects, validateProjects } from "../src/repo/registry.js";
 import { ProjectConfig } from "../src/config/schema.js";
 import { makeRepo, sh } from "./helpers/git-fixture.js";
+import { findProtectedChanges } from "../src/agents/guard.js";
+import { FactoryConfig } from "../src/config/schema.js";
 
 let h: DbHandle;
 let fx: ReturnType<typeof makeRepo>;
@@ -105,6 +107,59 @@ describe("WorktreeManager.create", () => {
     sh(other, "add", "-A"); sh(other, "commit", "-q", "-m", "upstream"); sh(other, "push", "-q");
     const info = await wt.create(mkJob("j1", "ENG-1"));
     expect(existsSync(join(info.path, "new.txt"))).toBe(true);
+  });
+});
+
+/** Someone else lands commits on origin/main (e.g. a merged onboarding PR adding protected .claude/ and .specify/ files). */
+function upstreamAdds(fx: ReturnType<typeof makeRepo>, files: Record<string, string>) {
+  const other = join(fx.base, `other-${Math.random().toString(36).slice(2, 8)}`);
+  sh(fx.base, "clone", "-q", fx.origin, other);
+  for (const [f, c] of Object.entries(files)) { mkdirSync(join(other, f, ".."), { recursive: true }); writeFileSync(join(other, f), c); }
+  sh(other, "add", "-A"); sh(other, "commit", "-q", "-m", "upstream"); sh(other, "push", "-q");
+}
+
+describe("base commit (found live: a stale local main made the whole of main look like the agent's work)", () => {
+  const PROTECTED = FactoryConfig.parse({}).protectedPaths;
+  it("the base is the commit the branch was created from (origin/main), not the stale local main", async () => {
+    upstreamAdds(fx, { ".claude/skills/speckit-plan/SKILL.md": "s", ".specify/scripts/bash/x.sh": "x", "app.txt": "a" });
+    const stale = sh(fx.repo, "rev-parse", "main"); // the user's checkout never pulled
+    const info = await wt.create(mkJob("j1", "ENG-1"));
+    const origin = sh(fx.repo, "rev-parse", "origin/main");
+    expect(origin).not.toBe(stale);
+    expect(info.base).toBe(origin);
+    expect(info.base).toMatch(/^[0-9a-f]{40}$/);
+    expect(h.db.select().from(worktrees).get()!.baseSha).toBe(origin);
+  });
+  it("re-opening the worktree (every stage after the first) returns the SAME base, even while local main is stale", async () => {
+    upstreamAdds(fx, { ".claude/skills/a.md": "s", ".specify/scripts/b.sh": "x" });
+    const job = mkJob("j1", "ENG-1");
+    const first = await wt.create(job);
+    const again = await wt.create(job);
+    expect(again.resumed).toBe(true);
+    expect(again.base).toBe(first.base);
+    // The boundary check sees nothing: the Spec Kit files are on main, not the agent's.
+    expect(await findProtectedChanges(first.path, again.base, PROTECTED)).toEqual([]);
+    expect(sh(first.path, "diff", "--name-only", `${again.base}...HEAD`)).toBe("");
+  });
+  it("still catches a protected file the agent really adds, and ignores upstream churn that happens after creation", async () => {
+    const job = mkJob("j1", "ENG-1");
+    const info = await wt.create(job);
+    upstreamAdds(fx, { ".specify/scripts/new.sh": "x" });          // lands later, on origin/main only
+    sh(fx.repo, "fetch", "-q", "origin", "main");
+    writeFileSync(join(info.path, ".env"), "SECRET=1");           // the agent's own protected change
+    const resumed = await wt.create(job);
+    expect(resumed.base).toBe(info.base);                           // unmoved by the fetch
+    expect(await findProtectedChanges(resumed.path, resumed.base, PROTECTED)).toEqual([".env"]);
+  });
+  it("a worktree created before the base was recorded gets the real branch point (merge-base), not local main", async () => {
+    upstreamAdds(fx, { ".claude/skills/a.md": "s", ".specify/scripts/b.sh": "x" });
+    const job = mkJob("j1", "ENG-1");
+    const info = await wt.create(job);
+    h.db.update(worktrees).set({ baseSha: null }).run();            // simulate a row from before this fix (like JAM-418)
+    const resumed = await wt.create(job);
+    expect(resumed.base).toBe(info.base);
+    expect(resumed.base).not.toBe(sh(fx.repo, "rev-parse", "main"));
+    expect(h.db.select().from(worktrees).get()!.baseSha).toBe(info.base); // backfilled once
   });
 });
 

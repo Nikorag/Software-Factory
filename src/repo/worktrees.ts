@@ -96,7 +96,7 @@ export class WorktreeManager {
       const listed = await this.listed(repo);
       if (listed.get(real(path)) === branch) {
         if (!(await this.isClean(path))) logger.warn({ jobId: job.id, path }, "resuming worktree with uncommitted changes");
-        return { jobId: job.id, path, branch, base: def, resumed: true };
+        return { jobId: job.id, path, branch, base: await this.baseOf(mine, repo, def), resumed: true };
       }
     }
     if (mine && mine.state === "preserved") throw new WorktreeError(`worktree for job ${job.id} was preserved for investigation`, "owned");
@@ -112,7 +112,8 @@ export class WorktreeManager {
 
     // Record intent before touching git so a crash leaves a row that create() can reconcile.
     mkdirSync(dirname(path), { recursive: true });
-    db.insert(worktrees).values({ jobId: job.id, projectId: job.projectId, path, branch, state: "active" }).run();
+    const baseSha = (await this.git(repo, ["rev-parse", "--verify", base])).trim();
+    db.insert(worktrees).values({ jobId: job.id, projectId: job.projectId, path, branch, baseSha, state: "active" }).run();
     try {
       const branchExists = await this.git(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).then(() => true, () => false);
       if (existsSync(path)) throw new WorktreeError(`path ${path} already exists and is not a registered worktree`, "owned");
@@ -126,7 +127,24 @@ export class WorktreeManager {
       throw e;
     }
     db.insert(decisions).values({ jobId: job.id, kind: "worktree.create", decision: `${path} @ ${branch} from ${base}`, actor: "factory" }).run();
-    return { jobId: job.id, path, branch, base, resumed: false };
+    return { jobId: job.id, path, branch, base: baseSha, resumed: false };
+  }
+
+  /**
+   * The commit a worktree's branch was created from. Recorded at creation; for worktrees created before it was recorded,
+   * the real branch point (merge-base with the remote default branch) is computed once and stored. Never the local
+   * default branch, which can lag far behind and would make every upstream commit look like the agent's work.
+   */
+  private async baseOf(row: typeof worktrees.$inferSelect, repo: string, def: string): Promise<string> {
+    if (row.baseSha) return row.baseSha;
+    for (const ref of [`origin/${def}`, def]) {
+      const sha = await this.git(repo, ["merge-base", ref, row.branch]).catch(() => "");
+      if (sha.trim()) {
+        this.o.db.update(worktrees).set({ baseSha: sha.trim() }).where(eq(worktrees.jobId, row.jobId)).run();
+        return sha.trim();
+      }
+    }
+    throw new WorktreeError(`cannot determine the base commit of ${row.branch}`, "no-base");
   }
 
   /** Mark a worktree to keep for investigation (e.g. failed job). It is never auto-removed. */
