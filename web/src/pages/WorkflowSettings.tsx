@@ -55,7 +55,7 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="grid gap-1.5"><Label htmlFor="wf-conc">Concurrent jobs</Label>
             <NumberField id="wf-conc" min={1} max={8} value={g.maxConcurrentJobs} onChange={(n) => { setSaved(false); setG({ ...g, maxConcurrentJobs: n }); }} />
-            <p className="text-xs text-muted-foreground">Tickets worked on at once, across all projects (1–8). Each Claude run uses real memory and subscription usage. A single project still runs one job at a time unless you raise it in that project's overrides, because its jobs share one repository clone.</p></div>
+            <p className="text-xs text-muted-foreground">Tickets worked on at once, across all projects (1–8). Each Claude run uses real memory and subscription usage. A single project still runs one job at a time unless you raise it in that project's overrides. Each job has its own worktree, but tickets in one repository often touch the same files and would raise conflicting pull requests.</p></div>
           <div className="grid gap-1.5"><Label htmlFor="wf-passes">Implementation passes</Label>
             <NumberField id="wf-passes" min={1} max={10} value={g.maxImplementationPasses ?? 3} onChange={(n) => { setSaved(false); setG({ ...g, maxImplementationPasses: n }); }} />
             <p className="text-xs text-muted-foreground">How many times the factory may implement, then check the result against the spec and add tasks for any gaps, before it stops for you (1–10, default 3). Raise it for large tickets. This is separate from the fix cycle limit, which counts review and CI fixes.</p></div>

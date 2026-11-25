@@ -80,7 +80,7 @@ export class Engine {
   remediationCap(job: Pick<JobRow, "projectId">): number {
     return this.o.config.projects?.projects.find((p) => p.id === job.projectId)?.overrides?.maxRemediationAttempts ?? this.o.config.factory.maxRemediationAttempts;
   }
-  /** How many jobs of one project may run at once. Default 1: they share one repository clone, so more is opt-in per project. */
+  /** How many jobs of one project may run at once. Default 1. Every job has its own worktree (isolated files, and worktree creation is serialised per repository), so this is not a technical limit: it is a conservative default, because tickets in one repository often touch the same files and would raise conflicting PRs, and each job installs and tests on its own. Raise it per project when the work is independent. */
   private projectCap(projectId: string): number {
     return this.o.config.projects?.projects.find((p) => p.id === projectId)?.overrides?.maxConcurrentJobs ?? 1;
   }

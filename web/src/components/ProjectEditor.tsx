@@ -172,7 +172,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5"><Label htmlFor="pe-conc">Concurrent jobs</Label>
             <div className="flex items-center gap-2"><Input id="pe-conc" type="number" min={1} max={8} className="w-24" value={f.conc} placeholder="1" onChange={(e) => set("conc", e.target.value)} />
-              <span className="text-xs text-muted-foreground">{f.conc ? <button type="button" className="underline" onClick={() => set("conc", "")}>use default (1)</button> : "default: 1 (its jobs share one clone)"}</span></div></div>
+              <span className="text-xs text-muted-foreground">{f.conc ? <button type="button" className="underline" onClick={() => set("conc", "")}>use default (1)</button> : "default: 1 (each job has its own worktree, but tickets in one repository often touch the same files)"}</span></div></div>
           <div className="grid gap-1.5"><Label htmlFor="pe-passes">Implementation passes</Label>
             <div className="flex items-center gap-2"><Input id="pe-passes" type="number" min={1} max={10} className="w-24" value={f.passes} placeholder={String(globals?.maxImplementationPasses ?? 3)} onChange={(e) => set("passes", e.target.value)} />
               <span className="text-xs text-muted-foreground">{f.passes ? <button type="button" className="underline" onClick={() => set("passes", "")}>use global ({globals?.maxImplementationPasses ?? 3})</button> : `global: ${globals?.maxImplementationPasses ?? 3}`}</span></div></div>

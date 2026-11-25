@@ -47,7 +47,7 @@ describe("job concurrency", () => {
     await engine.idle();
     expect(g.peak()).toBe(2);
   });
-  it("by default runs only one job per project at a time, even when the global limit is higher (they share a clone)", async () => {
+  it("by default runs only one job per project at a time, even when the global limit is higher (conflict-prone: same repository)", async () => {
     const g = gate();
     const { engine, add, h } = setup(4, [proj("a")], () => g.handler);
     add("a", "j1"); add("a", "j2");
