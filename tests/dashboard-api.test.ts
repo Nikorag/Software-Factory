@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -68,14 +68,20 @@ describe("dashboard API security", () => {
     expect(res.headers["x-frame-options"]).toBe("DENY"); expect(res.headers["cache-control"]).toBe("no-store"); expect(res.headers["x-content-type-options"]).toBe("nosniff");
     const html = res.body;
     expect(html).not.toMatch(/<script(?![^>]*\bsrc=)/); expect(html).not.toMatch(/\son\w+=/); expect(html).not.toMatch(/https?:\/\/(?!127\.0\.0\.1)/);
-    expect((await get(s.app, "/app.js")).statusCode).toBe(200);
-    expect((await get(s.app, "/style.css")).headers["content-type"]).toContain("text/css");
+    const js = /src="(\/assets\/[\w.-]+\.js)"/.exec(html)?.[1], css = /href="(\/assets\/[\w.-]+\.css)"/.exec(html)?.[1];
+    expect(js && css).toBeTruthy(); // the built React app: needs `pnpm web:build`
+    expect((await get(s.app, js!)).headers["content-type"]).toContain("text/javascript");
+    expect((await get(s.app, css!)).headers["content-type"]).toContain("text/css");
     expect((await get(s.app, "/etc/passwd")).statusCode).toBe(404);
+    expect((await get(s.app, "/assets/..%2F..%2Fpackage.json")).statusCode).toBe(404);
+    expect((await get(s.app, "/assets/.hidden")).statusCode).toBe(404);
   });
-  it("the dashboard script never uses an API that parses markup from untrusted text", () => {
-    const js = readFileSync(join(process.cwd(), "public", "app.js"), "utf8");
-    expect(js).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function/);
-    expect(js).toMatch(/safeUrl/); // links come from untrusted data and are restricted to https://github.com/
+  it("the dashboard source never uses an API that parses markup from untrusted text", () => {
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : /\.(tsx?|jsx?)$/.test(e.name) && !/\.test\./.test(e.name) ? [join(dir, e.name)] : []));
+    const files = walk(join(process.cwd(), "web", "src"));
+    expect(files.length).toBeGreaterThan(10);
+    for (const f of files) expect(readFileSync(f, "utf8"), f).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|dangerouslySetInnerHTML|document\.write|\beval\(|new Function/);
+    expect(readFileSync(join(process.cwd(), "web", "src", "lib", "format.ts"), "utf8")).toMatch(/safeUrl/); // links come from untrusted data and are restricted to https://github.com/
   });
   it("creates the control token once, readable only by the user", () => {
     const dir = tmp();

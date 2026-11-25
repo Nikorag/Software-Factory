@@ -9,3 +9,4 @@ factory-data/
 *.sqlite-wal
 *.sqlite-shm
 .tmp-tests/
+web/dist/

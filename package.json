@@ -3,12 +3,15 @@
   "version": "1.0.0",
   "description": "Local-first autonomous software factory",
   "scripts": {
-    "build": "tsc -p tsconfig.json --noEmit false --rootDir . --outDir dist",
-    "typecheck": "tsc --noEmit",
+    "build": "pnpm web:build && tsc -p tsconfig.json --noEmit false --rootDir . --outDir dist",
+    "typecheck": "tsc --noEmit && pnpm --filter software-factory-web typecheck",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "pnpm web:build && vitest run && pnpm web:test",
     "db:generate": "drizzle-kit generate",
-    "factory": "tsx src/cli.ts"
+    "factory": "tsx src/cli.ts",
+    "web:dev": "pnpm --filter software-factory-web dev",
+    "web:build": "pnpm --filter software-factory-web build",
+    "web:test": "pnpm --filter software-factory-web test"
   },
   "keywords": [],
   "author": "",

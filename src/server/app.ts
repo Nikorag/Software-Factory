@@ -10,9 +10,10 @@ import { factoryState } from "../db/schema.js";
 import { registerApiRoutes, type ApiDeps } from "./routes.js";
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
-const PUBLIC_DIR = fileURLToPath(new URL("../../public/", import.meta.url));
-const ASSETS: Record<string, string> = { "/": "index.html", "/app.js": "app.js", "/style.css": "style.css" };
-const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8" };
+// The dashboard is the built React app (pnpm web:build -> web/dist). Only index.html and files directly under assets/ are ever served.
+const DASHBOARD_DIR = fileURLToPath(new URL("../../web/dist/", import.meta.url));
+const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".woff2": "font/woff2" };
+const SAFE_NAME = /^[\w.-]+$/;
 
 export interface ServerDeps extends Partial<Omit<ApiDeps, "db" | "logger">> {
   db: FactoryDb;
@@ -68,19 +69,20 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     return { status: "ok", paused: state?.paused ?? false, emergencyStop: state?.emergencyStop ?? false };
   });
 
-  for (const [url, file] of Object.entries(ASSETS)) {
-    app.get(url, async (_req, reply) => {
-      const path = join(PUBLIC_DIR, file);
-      if (!existsSync(path)) return reply.code(404).send({ error: "dashboard assets missing" });
-      const ext = file.slice(file.lastIndexOf("."));
-      reply.header("Content-Type", TYPES[ext]!);
-      if (ext === ".html") {
-        // No inline script/style, no third-party origins: ticket text and agent logs are untrusted content.
-        reply.header("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
-      }
-      return readFileSync(path);
-    });
-  }
+  const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+  const sendAsset = (reply: FastifyReply, path: string) => {
+    if (!existsSync(path)) return reply.code(404).send({ error: "dashboard assets missing: run `pnpm web:build`" });
+    const ext = path.slice(path.lastIndexOf("."));
+    reply.header("Content-Type", TYPES[ext] ?? "application/octet-stream");
+    // No inline script/style, no third-party origins: ticket text and agent logs are untrusted content.
+    if (ext === ".html") reply.header("Content-Security-Policy", CSP);
+    return readFileSync(path);
+  };
+  app.get("/", async (_req, reply) => sendAsset(reply, join(DASHBOARD_DIR, "index.html")));
+  app.get<{ Params: { file: string } }>("/assets/:file", async (req, reply) => {
+    if (!SAFE_NAME.test(req.params.file) || req.params.file.startsWith(".")) return reply.code(404).send({ error: "not found" });
+    return sendAsset(reply, join(DASHBOARD_DIR, "assets", req.params.file));
+  });
 
   registerApiRoutes(app, { ...deps, db: deps.db, logger: deps.logger } as ApiDeps, requireToken);
   return app;

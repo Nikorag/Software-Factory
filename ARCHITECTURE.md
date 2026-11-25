@@ -17,7 +17,7 @@ One Node.js process (`factory serve`) owns orchestration. Claude Code, `git`, `g
                                   │
  Dashboard/API (127.0.0.1, token-gated controls) ◀── reads the same SQLite ── metrics/health probes
 ```
-Layers: `src/core` (engine, jobs, control), `src/linear`, `src/repo`, `src/github`, `src/agents`, `src/speckit`, `src/implement`, `src/delivery`, `src/exec` (sandbox), `src/service` (scheduler, lock, secrets, metrics, launchd), `src/server` + `public/` (dashboard), `src/app` (composition root).
+Layers: `src/core` (engine, jobs, control), `src/linear`, `src/repo`, `src/github`, `src/agents`, `src/speckit`, `src/implement`, `src/delivery`, `src/exec` (sandbox), `src/service` (scheduler, lock, secrets, metrics, launchd), `src/server` (API) + `web/` (React + shadcn/ui dashboard, built to `web/dist`), `src/app` (composition root).
 
 ## Durability model
 - `jobs.stage` is advanced only by a transaction that also appends to `stage_executions`.

@@ -24,6 +24,8 @@ pnpm factory project:check <id> # prove a project's test commands work (sandboxe
 pnpm factory work               # run claimable jobs once (real agents, uses your subscription)
 pnpm factory serve           # scheduler + dashboard on 127.0.0.1:4780 (add --no-scheduler for dashboard only)
 pnpm factory dashboard --open  # open the dashboard (carries the control token)
+pnpm web:build              # build the dashboard (web/dist); required once before `serve`, and after UI changes
+pnpm web:dev                # dashboard dev server on :5173, proxying the API of a running `serve`
 pnpm typecheck && pnpm lint && pnpm test
 ```
 
@@ -33,4 +35,4 @@ Secrets are environment variables only (`LINEAR_API_KEY`); config files containi
 ## Layout
 
 `src/config` schema + loader · `src/db` Drizzle schema, migrations in `drizzle/` · `src/logging` pino with redaction ·
-`src/doctor` environment checks · `src/server` Fastify (loopback only) · `docs/` guides and ADRs.
+`src/doctor` environment checks · `src/server` Fastify (loopback only) · `web/` React + shadcn/ui dashboard · `docs/` guides and ADRs.
