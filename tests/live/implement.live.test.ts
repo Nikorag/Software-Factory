@@ -21,7 +21,7 @@ import { makeRepo, sh } from "../helpers/git-fixture.js";
 describe.skipIf(!process.env.FACTORY_LIVE)("autonomous implementation (live)", () => {
   it("implements a ticket end to end: spec, code, tests run in the sandbox, reviews, final validation", async () => {
     const fx = makeRepo({
-      "package.json": JSON.stringify({ name: "todo-api", type: "module", scripts: { test: "node --test test/" } }),
+      "package.json": JSON.stringify({ name: "todo-api", type: "module", scripts: { test: "node --test" } }),
       "src/todos.js": "export function createTodoStore() {\n  const items = [];\n  return {\n    add(title) { items.push({ id: items.length + 1, title }); return items.at(-1); },\n    list() { return [...items]; },\n  };\n}\n",
       "test/todos.test.js": 'import test from "node:test";\nimport assert from "node:assert";\nimport { createTodoStore } from "../src/todos.js";\ntest("add then list", () => {\n  const s = createTodoStore();\n  s.add("a");\n  assert.equal(s.list().length, 1);\n});\n',
       "README.md": "# Todo API\nA tiny in-memory todo store. Run tests with `npm test`.\n",
@@ -32,7 +32,7 @@ describe.skipIf(!process.env.FACTORY_LIVE)("autonomous implementation (live)", (
     sh(fx.repo, "push", "-q");
 
     const base = fixtureConfig();
-    const project = ProjectConfig.parse({ id: "todo", name: "Todo", repository: fx.repo, linear: { teamKey: "JAM" }, commands: { test: "node --test test/" } });
+    const project = ProjectConfig.parse({ id: "todo", name: "Todo", repository: fx.repo, linear: { teamKey: "JAM" }, commands: { test: "node --test" } });
     const r = { provider: "anthropic" as const, model: "default" };
     const config: LoadedConfig = {
       ...base, factory: { ...base.factory, dataDir: join(fx.base, "data") }, projects: { projects: [project] },

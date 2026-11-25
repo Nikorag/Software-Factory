@@ -25,13 +25,13 @@ export interface H { github: FakeGitHub; linear: FakeLinear; ctx: Context; claud
 
 export async function harness(o: { commands?: Record<string, string>; baseTest?: string; github?: FakeGitHub; timing?: Partial<DeliveryTiming>; clockStepMs?: number } = {}): Promise<H> {
   const { repo } = makeRepo({
-    "package.json": JSON.stringify({ name: "todo", type: "module", scripts: { test: "node --test test/" } }),
+    "package.json": JSON.stringify({ name: "todo", type: "module", scripts: { test: "node --test" } }),
     "src/todos.js": "export const list = () => [];\n",
     "test/todos.test.js": o.baseTest ?? 'import test from "node:test";\nimport assert from "node:assert";\nimport { list } from "../src/todos.js";\ntest("empty", () => assert.deepEqual(list(), []));\n',
     ".gitignore": "node_modules\n",
   });
   const base = fixtureConfig();
-  const commands = o.commands ?? { test: "node --test test/", lint: "node --check src/todos.js" };
+  const commands = o.commands ?? { test: "node --test", lint: "node --check src/todos.js" };
   const project = ProjectConfig.parse({ id: "p", name: "P", repository: repo, linear: { teamKey: "JAM" }, github: { repo: "Nikorag/todo" }, commands });
   const r = (provider: string, model: string) => ({ provider, model });
   const config: LoadedConfig = {
