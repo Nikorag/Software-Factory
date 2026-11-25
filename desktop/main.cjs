@@ -67,7 +67,9 @@ async function buildMenu() {
   const status = await Promise.all(profs.map((p) => up(p)));
   const template = [
     { label: app.name, submenu: [
-      { role: "about" }, { type: "separator" },
+      { role: "about" },
+      { label: "Check for Updates…", click: () => { if (win) win.loadURL(`${urlOf(current)}#/settings?tab=system`); } },
+      { type: "separator" },
       { label: "Stop the Factory and Quit…", click: () => void stopAll() },
       { role: "quit", label: "Quit (the factory keeps running)" },
     ] },

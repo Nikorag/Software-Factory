@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Conversation } from "@/components/Conversation";
+import { Timeline } from "@/components/Timeline";
 import { FlowChart, FlowLegend } from "@/components/FlowChart";
 import { StatusBadge, toneOf } from "@/components/StatusBadge";
 import { api, apiText, post } from "@/lib/api";
@@ -78,11 +79,7 @@ export function JobDetail() {
         <FlowLegend />
       </CardContent></Card>
 
-      <Card><CardHeader><CardTitle className="text-sm uppercase tracking-wider text-muted-foreground">What happened, in order</CardTitle></CardHeader><CardContent>
-        <div className="flex flex-wrap items-center gap-x-1 gap-y-1.5 text-xs">
-          {flow.trail.map((t, i) => <span key={i} className="inline-flex items-center gap-1">{i ? <span className="text-muted-foreground">→</span> : null}<Badge variant="outline" className={cn("whitespace-nowrap", t.kind === "ok" && "border-ok/45", t.kind === "bad" && "border-destructive text-destructive", t.kind === "run" && "border-run text-run", t.kind === "loop" && "border-loop bg-loop/10 text-loop")}>{t.text}</Badge></span>)}
-        </div>
-      </CardContent></Card>
+      <Timeline detail={d} cap={cap} selected={sel} onSelect={setSel} onWatch={(id) => { setWatch(id); document.getElementById("agent-runs-tab")?.click(); }} />
 
       {node ? (
         <Card><CardContent className="grid gap-4 md:grid-cols-2">

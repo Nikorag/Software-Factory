@@ -33,7 +33,7 @@ export interface ApiDeps {
   profiles?: import("./profile-routes.js").ProfileDeps;
   bitbucket?: Omit<import("./bitbucket-routes.js").BitbucketRouteDeps, "config">;
   jira?: Omit<import("./jira-routes.js").JiraRouteDeps, "db" | "config">;
-  updates?: { status(): Promise<import("../service/versions.js").UpdateStatus> };
+  updates?: { status(): Promise<import("../service/versions.js").UpdateStatus>; refresh(): Promise<import("../service/versions.js").UpdateStatus> };
   settings?: Omit<import("./settings-routes.js").SettingsDeps, "db" | "config">;
 }
 
@@ -149,6 +149,8 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   });
 
   app.get("/api/update", async () => (await d.updates?.status()) ?? { current: null, latest: null, available: false, checkedAt: null });
+  /** "Check for updates" in Settings: ask git now instead of using the cached answer. Read-only on the install (it only fetches tags). */
+  app.post("/api/update/check", { preHandler: requireToken }, async () => (await d.updates?.refresh()) ?? { current: null, latest: null, available: false, checkedAt: null });
 
   app.get("/api/health", async () => ({ system: await systemInfo(d.dataDir ?? "."), health: (await d.health?.check()) ?? [], scheduler: d.scheduler?.status() ?? null }));
 

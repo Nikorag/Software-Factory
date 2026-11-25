@@ -535,4 +535,61 @@ describe("settings and setup", () => {
     expect(sent).toMatchObject({ host: "github", github: { repo: "me/my-app" } });
     expect(sent.bitbucket).toBeUndefined();
   });
+  it("Settings → System has a Check for updates button that asks now and tells you what to do", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings,
+      "/api/update": { version: "0.2.0", current: "v0.2.0", latest: "v0.2.0", available: false, checkedAt: Date.now() - 3600_000 },
+      "/api/update/check": { version: "0.2.0", current: "v0.2.0", latest: "v0.3.0", available: true, checkedAt: Date.now() } };
+    app("/settings?tab=system");                                                                           // the app menu links straight here
+    expect(await screen.findByText("v0.2.0")).toBeInTheDocument();
+    expect(screen.getByText(/You're on the latest release/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Check for updates/ }));
+    await waitFor(() => expect(calls.find((c) => c.method === "POST" && c.url === "/api/update/check")).toBeTruthy());
+    expect(await screen.findByText(/v0\.3\.0 is available/)).toBeInTheDocument();
+    expect(screen.getByText("software-factory update")).toBeInTheDocument();
+    expect(screen.getByText(/Pick a quiet moment/)).toBeInTheDocument();
+    expect(screen.queryByText(/You're on the latest release/)).toBeNull();
+  });
+  it("says so when the update check cannot reach GitHub", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings, "/api/update": { version: "0.2.0", current: null, latest: null, available: false, checkedAt: Date.now(), error: "unable to access remote" } };
+    app("/settings?tab=system");
+    expect(await screen.findByText(/Could not check for updates: unable to access remote/)).toBeInTheDocument();
+  });
+  it("shows a job's story as a timeline: why each step ran again, fix cycles, and a way into the agent's conversation", async () => {
+    const T = 1_700_000_000_000;
+    const exs = [
+      { id: 1, stage: "AUTOMATED_TESTING", attempt: 1, outcome: "succeeded", error: null, output: null, startedAt: T, finishedAt: T + 60_000 },
+      { id: 2, stage: "LOCAL_MODEL_REVIEW", attempt: 1, outcome: "succeeded", error: null, output: JSON.stringify({ remediate: "2 blocking finding(s) in the code review" }), startedAt: T + 60_000, finishedAt: T + 90_000 },
+      { id: 3, stage: "REMEDIATION", attempt: 1, outcome: "succeeded", error: null, output: JSON.stringify({ accepted: [1, 2], rejected: [] }), startedAt: T + 90_000, finishedAt: T + 200_000 },
+      { id: 4, stage: "AUTOMATED_TESTING", attempt: 2, outcome: "failed", error: "3 tests failed", output: null, startedAt: T + 200_000, finishedAt: T + 230_000 },
+    ];
+    const run = { id: 9, stageExecutionId: 3, agent: "anthropic/implementer", model: "m", exitCode: 0, durationMs: 110_000, usage: null, hasLog: true, at: T };
+    routes = { "/api/overview": overview(), "/api/jobs/j1": { ...detail(job({ stage: "REMEDIATION", status: "running", remediationAttempts: 1 }), exs, { invocations: [run] }), remediationCap: 3 } };
+    app("/jobs/j1");
+    expect(await screen.findByText("What happened")).toBeInTheDocument();
+    expect(screen.getByText(/Sent back for fixes: 2 blocking finding\(s\) in the code review/)).toBeInTheDocument();   // why it looped
+    expect(screen.getByText(/Fix findings · cycle 1 of 3/)).toBeInTheDocument();
+    expect(screen.getByText("run 2")).toBeInTheDocument();                                                          // the re-run after the fix
+    expect(screen.getAllByText("3 tests failed").length).toBeGreaterThanOrEqual(1);                                    // and how it ended (also in the stage history table)
+    expect(screen.getByText(/1 fix cycle/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Conversation: implementer · 1m 50s/ })).toBeInTheDocument();
+    const order = screen.getAllByRole("listitem").map((li) => li.textContent ?? "").filter((t) => /Run checks|Independent review|Fix findings/.test(t));
+    expect(order[0]).toMatch(/Run checks/); expect(order[0]).toMatch(/3 tests failed/);                             // newest first
+    await userEvent.click(screen.getByRole("button", { name: "Newest first" }));
+    const oldest = screen.getAllByRole("listitem").map((li) => li.textContent ?? "").filter((t) => /Run checks|Independent review|Fix findings/.test(t));
+    expect(oldest[0]).toMatch(/Run checks/); expect(oldest[0]).not.toMatch(/3 tests failed/);                       // oldest first
+  });
+  it("can show only the problems and fix cycles, and clicking a step focuses it on the chart", async () => {
+    const T = 1_700_000_000_000;
+    const exs = [
+      { id: 1, stage: "AUTOMATED_TESTING", attempt: 1, outcome: "succeeded", error: null, output: null, startedAt: T, finishedAt: T + 1000 },
+      { id: 2, stage: "CLAUDE_REVIEW", attempt: 1, outcome: "failed", error: "boom", output: null, startedAt: T + 1000, finishedAt: T + 2000 },
+    ];
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ stage: "CLAUDE_REVIEW" }), exs) };
+    app("/jobs/j1");
+    await screen.findByText("What happened");
+    await userEvent.click(screen.getByRole("button", { name: "Problems and fixes only" }));
+    expect(screen.queryByRole("button", { name: "Run checks" })).toBeNull();                                          // the successful step is hidden
+    await userEvent.click(screen.getByRole("button", { name: "Claude review" }));
+    expect(await screen.findByText("Selected step")).toBeInTheDocument();                                            // the step panel opened for it
+  });
 });

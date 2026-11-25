@@ -30,6 +30,7 @@ export const NODES: PNode[] = [
 ];
 export const NODE = Object.fromEntries(NODES.map((x) => [x.id, x])) as Record<string, PNode>;
 const BY_STAGE = Object.fromEntries(NODES.map((x) => [x.stage, x.id])) as Record<string, string>;
+export const nodeOfStage = (stage: string): PNode | undefined => NODE[BY_STAGE[stage] ?? ""];
 
 export interface PEdge { id: string; from: string; to: string; kind: "flow" | "loop"; d: string; label?: { t: string; x: number; y: number; a: "start" | "middle" | "end" } }
 const line = (a: string, b: string) => `M${NODE[a]!.x + W},${NODE[a]!.y + H / 2} H${NODE[b]!.x}`;
@@ -54,7 +55,6 @@ export type NodeState = "idle" | "done" | "run" | "wait" | "fail";
 export interface Flow {
   state: Record<string, NodeState>; attempts: Record<string, number>; duration: Record<string, number>;
   loopsUsed: Set<string>; skipped: Set<string>; active: string | null; elapsedMs: number; agentMs: number;
-  trail: { text: string; kind: "ok" | "bad" | "run" | "loop" }[];
 }
 
 /**
@@ -66,7 +66,6 @@ export function deriveFlow(job: Job, executions: Execution[], invocations: Invoc
   const at = held ? job.heldFromStage : job.stage;
   const state: Record<string, NodeState> = {}, attempts: Record<string, number> = {}, duration: Record<string, number> = {};
   const loopsUsed = new Set<string>(), skipped = new Set<string>();
-  const trail: Flow["trail"] = [];
   let prev: string | null = null;
   for (const e of executions) {
     const id = BY_STAGE[e.stage];
@@ -75,10 +74,6 @@ export function deriveFlow(job: Job, executions: Execution[], invocations: Invoc
     if (e.finishedAt && e.startedAt) duration[id] = (duration[id] ?? 0) + (e.finishedAt - e.startedAt);
     if (e.outcome === "succeeded") state[id] = "done";
     if (NODE[id]!.fix && prev) { loopsUsed.add(`${prev}>${id}`); if (id === "fix") loopsUsed.add("fix>test"); else loopsUsed.add("sfix>sval"); if (id === "sfix" && prev === "srev") skipped.add("srev>sval"); }
-    if (e.outcome === "succeeded" || e.outcome === "failed") {
-      const nxt = NODE[id]!;
-      trail.push({ text: `${nxt.fix ? "↺ " : ""}${nxt.label} ${e.outcome === "succeeded" ? "✓" : "✗"}${attempts[id]! > 1 && !nxt.fix ? " (again)" : ""}`, kind: nxt.fix ? "loop" : e.outcome === "succeeded" ? "ok" : "bad" });
-    }
     prev = id;
   }
   const activeId = at ? BY_STAGE[at] ?? null : null;
@@ -86,12 +81,11 @@ export function deriveFlow(job: Job, executions: Execution[], invocations: Invoc
     if (held) state[activeId] = job.stage === "PAUSED" ? "wait" : "fail";
     else if (job.status === "running") state[activeId] = "run";
     else state[activeId] = "wait";
-    if (!held) trail.push({ text: `${NODE[activeId]!.label} ●`, kind: "run" });
   }
   if (job.stage === "COMPLETED") state["done"] = "done";
   const first = executions.find((e) => e.startedAt)?.startedAt ?? job.createdAt ?? now;
   const end = job.status === "done" || job.status === "failed" || job.status === "cancelled" ? (job.updatedAt ?? now) : now;
-  return { state, attempts, duration, loopsUsed, skipped, active: activeId, elapsedMs: Math.max(0, end - first), agentMs: invocations.reduce((s, i) => s + (i.durationMs ?? 0), 0), trail };
+  return { state, attempts, duration, loopsUsed, skipped, active: activeId, elapsedMs: Math.max(0, end - first), agentMs: invocations.reduce((s, i) => s + (i.durationMs ?? 0), 0) };
 }
 
 /** Compact per-stage progress for list rows: one square per main-line step, derived from the job's current stage alone. */
