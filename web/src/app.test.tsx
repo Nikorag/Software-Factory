@@ -8,6 +8,7 @@ import { JobDetail } from "@/pages/JobDetail";
 import { Settings } from "@/pages/Settings";
 import { Setup } from "@/pages/Setup";
 import { Overview } from "@/pages/Overview";
+import { Projects } from "@/pages/Projects";
 import type { Execution, Job, JobDetail as D, Overview as O } from "@/lib/types";
 
 const XSS = `<img src=x onerror="window.__pwned=1"><script>window.__pwned=1</script>`;
@@ -33,7 +34,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const app = (path: string) => render(
-  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
+  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="projects" element={<Projects />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
 );
 
 describe("flow derivation (from the stage history the factory already stores)", () => {
@@ -225,5 +226,22 @@ describe("settings and setup", () => {
     await userEvent.click(screen.getByRole("button", { name: /Continue anyway/ }));
     expect(await screen.findByText("Connect Linear")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled(); // no key yet
+  });
+  it("lists projects as rows with the facts that matter, and links each to its editor", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [
+      { ...proj, validation: { ok: true, protection: "protected", findings: [] }, activeJobs: 1 },
+      { ...proj, id: "bare", name: "Bare", githubRepo: "me/bare", commands: {}, enabled: true } ] } };
+    app("/projects");
+    expect(await screen.findByText("My App")).toBeInTheDocument();
+    expect(screen.getByText("Validated")).toBeInTheDocument();
+    expect(screen.getByText("(npm test)")).toBeInTheDocument();
+    expect(screen.getByText(/No test command: the factory will not implement changes yet/)).toBeInTheDocument();
+    const links = screen.getAllByRole("link", { name: /Edit/ });
+    expect(links[0]).toHaveAttribute("href", "/settings?project=my-app");
+  });
+  it("opens the editor for the project named in the link", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj, { ...proj, id: "bare", name: "Bare", githubRepo: "me/bare", commands: {} }] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] } };
+    app("/settings?project=bare");
+    expect(await screen.findByDisplayValue("Bare")).toBeInTheDocument();
   });
 });

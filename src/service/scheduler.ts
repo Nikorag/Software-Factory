@@ -26,7 +26,7 @@ export interface SchedulerStatus {
 
 /**
  * The service loop. Three independent loops so a long-running job never starves polling or write-back:
- *  - worker: runs claimable jobs one after another (the engine enforces maxConcurrentJobs);
+ *  - worker: keeps free slots filled with claimable jobs (the engine enforces the global and per-project concurrency limits);
  *  - discovery: polls Linear for eligible issues, then flushes the Linear outbox;
  *  - validation: re-checks enrolled projects periodically.
  * Pause and emergency stop are honoured by every loop. A failing dependency backs off; it never kills the service.
@@ -68,16 +68,18 @@ export class Scheduler {
     const n = this.d.engine.abortActive("shutdown");
     if (n) this.d.logger.warn({ jobs: n }, "shutdown: running stages aborted, jobs re-queued");
     await Promise.allSettled(this.loops);
+    await this.d.engine.idle(); // jobs run in the background now: wait for the aborted ones to settle
     this.s.running = false;
   }
 
   private async worker(): Promise<void> {
     while (!this.stopping) {
       if (this.halted()) { await this.sleep(this.iv.pausedPollMs); continue; }
-      let ran = 0;
-      try { ran = await this.d.engine.tick(); }
-      catch (e) { this.d.logger.error({ err: String(e) }, "worker tick failed"); await this.sleep(5_000); }
-      if (ran === 0) await this.sleep(this.iv.workerIdleMs);
+      // Jobs run in the background (up to the configured concurrency); this loop just keeps free slots filled.
+      let started = 0;
+      try { started = this.d.engine.start(); }
+      catch (e) { this.d.logger.error({ err: String(e) }, "worker pass failed"); await this.sleep(5_000); }
+      await this.sleep(started > 0 ? Math.min(250, this.iv.workerIdleMs) : this.iv.workerIdleMs);
     }
   }
 

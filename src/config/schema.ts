@@ -63,6 +63,18 @@ export const ModelsConfig = z
   });
 export type ModelsConfig = z.infer<typeof ModelsConfig>;
 
+const RouteName = ["classification", "specification", "implementation", "independent_review", "final_review"] as const;
+/** Anything set here beats the global setting for this project only; anything left out follows the global one. */
+export const ProjectOverrides = z.object({
+  maxConcurrentJobs: z.number().int().min(1).max(8).optional(), // jobs of THIS project running at once (default 1: they share one repository clone)
+  maxRemediationAttempts: z.number().int().min(0).max(10).optional(),
+  models: z.object(Object.fromEntries(RouteName.map((r) => [r, ModelRoute.optional()])) as Record<(typeof RouteName)[number], z.ZodOptional<typeof ModelRoute>>)
+    .refine((m) => (m.specification?.provider ?? "anthropic") === "anthropic" && (m.implementation?.provider ?? "anthropic") === "anthropic", {
+      message: "specification and implementation need file and shell tools, so they must use provider `anthropic` (Claude Code)",
+    }).optional(),
+});
+export type ProjectOverrides = z.infer<typeof ProjectOverrides>;
+
 export const ProjectConfig = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
   name: z.string(),
@@ -82,6 +94,7 @@ export const ProjectConfig = z.object({
       repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional(),
     })
     .prefault({}),
+  overrides: ProjectOverrides.optional(),
   commands: z
     .object({ install: z.string().optional(), build: z.string().optional(), test: z.string().optional(), lint: z.string().optional(), typecheck: z.string().optional() })
     .default({}),

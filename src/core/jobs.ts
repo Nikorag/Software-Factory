@@ -34,16 +34,27 @@ export function enqueue(
   return { job: getJob(db, id)!, created: true };
 }
 
-/** Atomically claim the oldest runnable job. Returns undefined if none, or if another process won the race. */
-export function claimNext(db: FactoryDb, owner: string, now: Date, leaseMs: number): JobRow | undefined {
-  const candidate = db.select().from(jobs)
+/**
+ * Atomically claim the oldest runnable job that `accept` allows (e.g. its project has a free slot). Returns undefined if none, or if
+ * every candidate was taken by another process first.
+ */
+export function claimNext(db: FactoryDb, owner: string, now: Date, leaseMs: number, accept?: (job: JobRow) => boolean): JobRow | undefined {
+  const candidates = db.select().from(jobs)
     .where(and(eq(jobs.status, "queued"), or(isNull(jobs.notBefore), lte(jobs.notBefore, now))))
-    .orderBy(asc(jobs.createdAt)).limit(1).get();
-  if (!candidate) return undefined;
-  const res = db.update(jobs)
-    .set({ status: "running", leaseOwner: owner, leaseExpiresAt: new Date(now.getTime() + leaseMs), updatedAt: now })
-    .where(and(eq(jobs.id, candidate.id), eq(jobs.status, "queued"))).run();
-  return res.changes === 1 ? getJob(db, candidate.id) : undefined;
+    .orderBy(asc(jobs.createdAt)).limit(100).all();
+  for (const candidate of candidates) {
+    if (accept && !accept(candidate)) continue;
+    const res = db.update(jobs)
+      .set({ status: "running", leaseOwner: owner, leaseExpiresAt: new Date(now.getTime() + leaseMs), updatedAt: now })
+      .where(and(eq(jobs.id, candidate.id), eq(jobs.status, "queued"))).run();
+    if (res.changes === 1) return getJob(db, candidate.id);
+  }
+  return undefined;
+}
+
+/** How many jobs of a project are executing right now. */
+export function runningCount(db: FactoryDb, projectId: string): number {
+  return db.select().from(jobs).where(and(eq(jobs.projectId, projectId), eq(jobs.status, "running"))).all().length;
 }
 
 /** Renew a lease. Returns false if this owner no longer holds it. */

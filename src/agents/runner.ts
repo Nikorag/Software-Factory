@@ -9,6 +9,7 @@ import type { ModelRouter, Route, TaskKind } from "./router.js";
 import type { AgentResult, AgentRole } from "./types.js";
 
 export interface RunStep {
+  projectId?: string; // selects that project's model overrides
   jobId?: string; // omitted for job-less runs (project onboarding): nothing is recorded in the DB, the log file still is
   executionId?: number;
   task: TaskKind;
@@ -34,7 +35,7 @@ export class AgentRunner {
     const { db, router } = this.d;
     const git = this.d.git ?? realGit;
     const profile = ROLE_PROFILE[step.role];
-    const route = router.route(step.task); // fail on bad config before recording anything
+    const route = router.route(step.task, step.projectId); // fail on bad config before recording anything
     const logFile = join(this.d.logDir, step.jobId ?? "_unattached", `${Date.now()}-${step.role}.log`);
     const row = step.jobId
       ? db.insert(agentInvocations).values({
@@ -47,7 +48,7 @@ export class AgentRunner {
       role: step.role, profile, prompt: step.prompt, cwd: step.cwd, timeoutMs: step.timeoutMs, signal: step.signal,
       systemPrompt: rolePrompt(step.role), protectedPaths: this.d.protectedPaths, bashAllow: step.bashAllow,
       jsonSchema: step.jsonSchema, resumeSessionId: step.resumeSessionId, persistSession: profile === "implementer", logFile,
-    });
+    }, step.projectId);
 
     const violations: string[] = [];
     if (profile !== "read-only" && step.baseRef) {

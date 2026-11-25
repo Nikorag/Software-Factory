@@ -36,7 +36,7 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
     // Advisory pre-check by the local model. Unavailable or unconfigured is fine: Claude's analysis below is authoritative.
     let classification: z.infer<typeof Classification> | undefined;
     try {
-      d.router.route("classification");
+      d.router.route("classification", ctx.job.projectId);
       const c = await agent(ctx, { task: "classification", role: "classifier", prompt: classificationPrompt(p.ticket), cwd: p.cwd, schema: Classification, timeoutMs: 5 * MIN });
       if (c.ok) classification = c.data;
       else record(ctx.job.id, "classification.skipped", "local classification unavailable", c.stop.kind === "retry" ? c.stop.reason : undefined);

@@ -120,7 +120,7 @@ describe("holds and manual retry", () => {
   it("routes needs_attention and fail results to the right states", async () => {
     const a = add(false, "a"), b = add(false, "b");
     const e = engine({ ...simulatedHandlers(), REQUIREMENTS_ANALYSIS: async ({ job }) => job.id === a.id ? { kind: "needs_attention", reason: "ambiguous" } : { kind: "fail", reason: "nope" } }, config({ maxConcurrentJobs: 2 }));
-    await e.tick();
+    while ((await e.tick()) > 0); // one project runs one job at a time by default, so these two take two passes
     expect(getJob(h.db, a.id)!.stage).toBe("NEEDS_ATTENTION");
     expect(getJob(h.db, b.id)!.stage).toBe("FAILED");
   });

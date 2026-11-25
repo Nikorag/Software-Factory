@@ -5,7 +5,7 @@ import type { StageName, LoadedConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { decisions, jobs, stageExecutions } from "../db/schema.js";
 import { getControl } from "./control.js";
-import { claimNext, getJob, recoverExpired, renewLease, type JobRow } from "./jobs.js";
+import { claimNext, getJob, recoverExpired, renewLease, runningCount, type JobRow } from "./jobs.js";
 import { isMutating, nextStage, remediationTarget, statusForStage } from "./workflow.js";
 
 export interface StageContext {
@@ -36,7 +36,7 @@ export interface EngineOptions {
   observer?: EngineObserver;
   db: FactoryDb;
   logger: Logger;
-  config: Pick<LoadedConfig, "factory" | "workflows">;
+  config: Pick<LoadedConfig, "factory" | "workflows"> & Partial<Pick<LoadedConfig, "projects">>;
   handlers: HandlerRegistry;
   owner?: string;
   now?: () => Date;
@@ -76,22 +76,48 @@ export class Engine {
     return Boolean(a);
   }
 
-  /** One scheduler pass: recover crashed jobs, release jobs paused by a now-cleared stop, then run claimable jobs. */
-  async tick(): Promise<number> {
+  /** The fix-cycle cap that applies to a job: its project's own setting, else the global one. */
+  remediationCap(job: Pick<JobRow, "projectId">): number {
+    return this.o.config.projects?.projects.find((p) => p.id === job.projectId)?.overrides?.maxRemediationAttempts ?? this.o.config.factory.maxRemediationAttempts;
+  }
+  /** How many jobs of one project may run at once. Default 1: they share one repository clone, so more is opt-in per project. */
+  private projectCap(projectId: string): number {
+    return this.o.config.projects?.projects.find((p) => p.id === projectId)?.overrides?.maxConcurrentJobs ?? 1;
+  }
+
+  private readonly inflight = new Set<Promise<void>>();
+
+  /**
+   * Starts as many claimable jobs as the limits allow (the global maxConcurrentJobs, and each project's own cap) and returns how many it
+   * started, without waiting for them. Recovers crashed jobs and honours pause / emergency stop first. Called repeatedly by the scheduler.
+   */
+  start(): number {
     const { db } = this.o;
     recoverExpired(db, this.o.now());
     const ctl = getControl(db);
     if (ctl.paused || ctl.emergencyStop) return 0;
     this.resumePaused();
-    let ran = 0;
-    // Sequential by design: bounded by maxConcurrentJobs, and local inference must not overlap.
-    for (let i = 0; i < this.o.config.factory.maxConcurrentJobs; i++) {
-      const job = claimNext(db, this.owner, this.o.now(), this.o.leaseMs);
+    let started = 0;
+    while (this.inflight.size < this.o.config.factory.maxConcurrentJobs) {
+      const job = claimNext(db, this.owner, this.o.now(), this.o.leaseMs, (j) => runningCount(db, j.projectId) < this.projectCap(j.projectId));
       if (!job) break;
-      await this.runJob(job.id);
-      ran++;
+      const p: Promise<void> = this.runJob(job.id)
+        .catch((e) => this.o.logger.error({ jobId: job.id, err: String(e) }, "job run failed"))
+        .finally(() => { this.inflight.delete(p); });
+      this.inflight.add(p);
+      started++;
     }
-    return ran;
+    return started;
+  }
+
+  /** Resolves once every job this engine started has stopped (finished, held, or aborted). */
+  async idle(): Promise<void> { while (this.inflight.size) await Promise.allSettled([...this.inflight]); }
+
+  /** Start what can run and wait for it all to finish: what `factory work` and the tests use. Returns how many jobs ran. */
+  async tick(): Promise<number> {
+    const started = this.start();
+    await this.idle();
+    return started;
   }
 
   private resumePaused(): void {
@@ -211,8 +237,9 @@ export class Engine {
         if (!target) { finish("failed", { error: `${stage} cannot remediate` }); this.hold(job, "FAILED", `${stage} reported findings but has no remediation path`); return false; }
         const attempts = job.remediationAttempts + 1;
         finish("succeeded", { output: { remediate: result.reason, details: result.output } });
-        if (attempts > this.o.config.factory.maxRemediationAttempts) {
-          this.hold(job, "NEEDS_ATTENTION", `remediation attempts exhausted (${this.o.config.factory.maxRemediationAttempts}): ${result.reason}`);
+        const cap = this.remediationCap(job);
+        if (attempts > cap) {
+          this.hold(job, "NEEDS_ATTENTION", `remediation attempts exhausted (${cap}): ${result.reason}`);
           return false;
         }
         db.transaction(() => {

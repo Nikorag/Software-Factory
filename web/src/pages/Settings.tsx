@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Plus } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,8 @@ const NEW = "__new";
 
 /** Projects: a list on the left, a full-height editor on the right. */
 function ProjectsPane({ projects, teams, reload }: { projects: Project[]; teams: TeamAudit[]; reload: () => void }) {
-  const [sel, setSel] = useState<string | null>(null);
+  const [params] = useSearchParams();
+  const [sel, setSel] = useState<string | null>(params.get("project"));
   const [dirty, setDirty] = useState(false);
   const [pending, setPending] = useState<string | null>(null); // a selection waiting on "discard unsaved changes?"
   useEffect(() => { if (sel === null && projects[0]) setSel(projects[0].id); }, [projects, sel]);
@@ -26,13 +27,13 @@ function ProjectsPane({ projects, teams, reload }: { projects: Project[]; teams:
 
   return (
     <div className="grid gap-4 md:grid-cols-[260px_minmax(0,1fr)] [&>*]:min-w-0">
-      <Card className="self-start"><CardContent className="grid gap-2 p-3">
+      <Card className="min-w-0 self-start overflow-hidden"><CardContent className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 p-3">
         <Button size="sm" onClick={() => go(NEW)}><Plus />Add project</Button>
-        <nav aria-label="Projects" className="grid gap-1">
+        <nav aria-label="Projects" className="grid grid-cols-[minmax(0,1fr)] gap-1">
           {projects.map((p) => (
             <button key={p.id} type="button" aria-current={sel === p.id ? "true" : undefined} onClick={() => go(p.id)}
-              className={cn("flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent", sel === p.id && "bg-accent font-medium")}>
-              <span className="min-w-0 flex-1"><span className="block truncate">{p.name}</span><span className="block truncate font-mono text-[11px] text-muted-foreground">{p.githubRepo || p.repository}</span></span>
+              className={cn("flex w-full min-w-0 items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent", sel === p.id && "bg-accent font-medium")}>
+              <span className="min-w-0 flex-1"><span className="block truncate">{p.name}</span><span className="block truncate font-mono text-[11px] text-muted-foreground" title={p.githubRepo || p.repository}>{p.githubRepo || p.repository}</span></span>
               {!p.commands.test ? <AlertTriangle className="size-4 shrink-0 text-loop" aria-label="no test command" /> : null}
               {!p.enabled ? <span className="text-[11px] text-muted-foreground">off</span> : null}
             </button>
@@ -40,7 +41,7 @@ function ProjectsPane({ projects, teams, reload }: { projects: Project[]; teams:
           {projects.length === 0 ? <p className="px-1 text-sm text-muted-foreground">No projects yet. <Link className="underline" to="/setup">Run the setup wizard</Link> or add one.</p> : null}
         </nav>
       </CardContent></Card>
-      <Card><CardContent className="p-5">
+      <Card className="min-w-0 overflow-hidden"><CardContent className="min-w-0 p-5">
         {sel === null && projects.length === 0 ? <p className="text-sm text-muted-foreground">Add a project to get started.</p> : (
           <ProjectEditor key={sel ?? "none"} project={current} teams={teams} onDirty={onDirty}
             onSaved={(id) => { reload(); if (sel === NEW) setSel(id); }} onRemoved={() => { reload(); setSel(null); }} />

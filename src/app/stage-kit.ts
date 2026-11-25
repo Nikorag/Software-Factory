@@ -76,9 +76,9 @@ export function createStageKit(d: StageKitDeps) {
     d.db.insert(decisions).values({ jobId, kind, decision, rationale: rationale ?? null, actor: "factory" }).run();
 
   /** Runs one agent step: boundary-checked, recorded, schema-validated. Failures come back as a ready-made StageResult. */
-  async function agent<T extends z.ZodType>(ctx: { job: { id: string }; executionId: number; signal: AbortSignal }, o: AgentCall<T>): Promise<AgentOutcome<T>> {
+  async function agent<T extends z.ZodType>(ctx: { job: { id: string; projectId?: string }; executionId: number; signal: AbortSignal }, o: AgentCall<T>): Promise<AgentOutcome<T>> {
     const result = await d.runner.run({
-      jobId: ctx.job.id, executionId: ctx.executionId, task: o.task, role: o.role, prompt: o.prompt, cwd: o.cwd,
+      jobId: ctx.job.id, projectId: ctx.job.projectId, executionId: ctx.executionId, task: o.task, role: o.role, prompt: o.prompt, cwd: o.cwd,
       timeoutMs: o.timeoutMs, signal: ctx.signal, baseRef: o.baseRef, bashAllow: o.bashAllow, resumeSessionId: o.resumeSessionId,
       jsonSchema: o.schema ? toJsonSchema(o.schema) : undefined,
     });
@@ -94,12 +94,12 @@ export function createStageKit(d: StageKitDeps) {
    * fallback (a fresh Claude reviewer on `final_review`, or block, per config); a Claude route's failure is just a failure.
    */
   async function independent<T extends z.ZodType>(
-    ctx: { job: { id: string } }, run: (task: TaskKind) => Promise<AgentOutcome<T>>,
+    ctx: { job: { id: string; projectId?: string } }, run: (task: TaskKind) => Promise<AgentOutcome<T>>,
   ): Promise<{ ok: true; data: z.infer<T>; reviewer: string } | { ok: false; stop: StageResult }> {
     let provider: "local" | "anthropic" = "anthropic";
     let r: AgentOutcome<T>;
     try {
-      provider = d.router.route("independent_review").provider;
+      provider = d.router.route("independent_review", ctx.job.projectId).provider;
       r = await run("independent_review");
     } catch (e) {
       if (!(e instanceof ConfigError)) throw e;
