@@ -102,8 +102,9 @@ export async function applyUpdate(plan: UpdatePlan, opts: ApplyOptions = {}): Pr
   }
 }
 
-/** One line saying why a step failed: the last line of its stderr if it has one (that is where pnpm and git say what went wrong). */
+/** One line saying why a step failed: from its stderr if it has one (the error line, else the last), else its message. */
 const firstLine = (e: unknown) => {
   const lines = (t: unknown) => String(t ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
-  return lines((e as { stderr?: unknown })?.stderr).pop() ?? lines((e as Error)?.message ?? e)[0] ?? "unknown error";
+  const err = lines((e as { stderr?: unknown })?.stderr);
+  return err.find((l) => /\bERR|error/i.test(l)) ?? err.pop() ?? lines((e as Error)?.message ?? e)[0] ?? "unknown error";
 };
