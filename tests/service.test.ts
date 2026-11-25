@@ -213,7 +213,7 @@ describe("LaunchAgent", () => {
     expect(xml).toContain(`<string>${LABEL}</string>`);
     expect(xml).toMatch(/<key>SuccessfulExit<\/key>\s*<false\/>/); // a clean exit (launchctl bootout) is not restarted
     expect(xml).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/); expect(xml).toContain("<string>Background</string>"); expect(xml).toMatch(/<key>Nice<\/key>\s*<integer>5<\/integer>/);
-    expect(xml).toContain(process.execPath); expect(xml).toContain("<string>serve</string>");
+    expect(xml).toContain(join(process.cwd(), "bin", "factory")); expect(xml).toContain("<string>serve</string>");
     expect(xml).toContain("FACTORY_CONFIG_DIR");
     expect(xml).not.toMatch(/LINEAR_API_KEY|GH_TOKEN|ANTHROPIC|SECRET|PASSWORD|sk-ant|lin_api/i);
     expect(xml).toMatch(/<key>PATH<\/key>\s*<string>[^<]*\/usr\/bin/);
