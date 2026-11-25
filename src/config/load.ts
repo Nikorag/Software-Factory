@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
@@ -45,7 +46,20 @@ function readYaml<T extends z.ZodType>(dir: string, name: string, schema: T, req
   return result.data;
 }
 
-export function loadConfig(configDir = process.env.FACTORY_CONFIG_DIR ?? "config"): LoadedConfig {
+/** The factory's own code (the install dir). Never allowed as a project: a job must not be able to modify the factory. */
+export const PACKAGE_ROOT = resolve(fileURLToPath(new URL("../../", import.meta.url)));
+/** Defaults shipped with the code: generic, no projects. Read-only; user settings live in the home config dir. */
+export const BUNDLED_CONFIG_DIR = join(PACKAGE_ROOT, "config");
+export const factoryHome = () => expandHome(process.env.FACTORY_HOME ?? "~/.software-factory");
+export const homeConfigDir = () => join(factoryHome(), "config");
+
+/** FACTORY_CONFIG_DIR, else the user's config in the home dir once it exists (the wizard/settings create it), else the shipped defaults. */
+export function defaultConfigDir(): string {
+  if (process.env.FACTORY_CONFIG_DIR) return process.env.FACTORY_CONFIG_DIR;
+  return existsSync(join(homeConfigDir(), "models.yaml")) ? homeConfigDir() : BUNDLED_CONFIG_DIR;
+}
+
+export function loadConfig(configDir = defaultConfigDir()): LoadedConfig {
   const dir = resolve(configDir);
   const factory = readYaml(dir, "factory.yaml", FactoryConfig, false);
   const models = readYaml(dir, "models.yaml", ModelsConfig, true);
@@ -68,7 +82,7 @@ export function loadConfig(configDir = process.env.FACTORY_CONFIG_DIR ?? "config
     if (ids.has(p.id)) throw new ConfigError(`projects.yaml: duplicate project id "${p.id}"`);
     ids.add(p.id);
     const repo = resolve(expandHome(p.repository));
-    if (repo === resolve(dir, "..")) throw new ConfigError(`projects.yaml: "${p.id}" is the factory's own repository; the factory must never modify itself through a job`);
+    if (repo === PACKAGE_ROOT || repo === resolve(dir, "..")) throw new ConfigError(`projects.yaml: "${p.id}" is the factory's own repository; the factory must never modify itself through a job`);
     if (repos.has(repo)) throw new ConfigError(`projects.yaml: "${p.id}" and "${repos.get(repo)}" use the same repository (${repo}); repositories must never be shared`);
     repos.set(repo, p.id);
     if (p.linear) {
@@ -78,5 +92,5 @@ export function loadConfig(configDir = process.env.FACTORY_CONFIG_DIR ?? "config
       bindings.set(key, p.id);
     }
   }
-  return { linear, factory: { ...factory, dataDir: expandHome(factory.dataDir) }, models, projects, workflows };
+  return { linear, factory: { ...factory, dataDir: expandHome(factory.dataDir) }, models, projects, workflows, configDir: dir };
 }

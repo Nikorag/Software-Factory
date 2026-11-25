@@ -1,0 +1,97 @@
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { z } from "zod";
+import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir } from "../config/load.js";
+import { applyProjects, ProjectSettings, removeProject, seedHomeConfig, upsertProject } from "../config/store.js";
+import type { LoadedConfig } from "../config/schema.js";
+import type { FactoryDb } from "../db/client.js";
+import { auditTeam, type TeamAudit } from "../linear/check.js";
+import { applySetup } from "../linear/setup.js";
+import type { LinearClient } from "../linear/client.js";
+import { createLinearClient } from "../linear/client.js";
+import { syncProjects } from "../repo/registry.js";
+import { ACTIONS, type ActionKind, type ProjectActions } from "../service/actions.js";
+import type { TaskManager } from "../service/tasks.js";
+
+export interface SettingsDeps {
+  db: FactoryDb;
+  config: LoadedConfig;
+  tasks: TaskManager;
+  actions: ProjectActions;
+  linear: () => LinearClient;
+  /** Validates against Linear first, then stores the key (keychain). Returns who it authenticated as. */
+  saveLinearKey: (key: string) => Promise<{ name: string }>;
+  linearKeyPresent: () => boolean;
+}
+
+/** Edits go to the user's own config dir (seeded from the shipped defaults on first write), never to the shipped defaults. */
+const writableDir = (c: LoadedConfig): string => (!c.configDir || c.configDir === BUNDLED_CONFIG_DIR ? seedHomeConfig() : c.configDir);
+const fail = (reply: FastifyReply, e: unknown) => reply.code(e instanceof ConfigError || e instanceof z.ZodError ? 400 : 409).send({ error: e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : (e as Error).message });
+
+export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, requireToken: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>): void {
+  const apply = (fresh: LoadedConfig) => { applyProjects(d.config, fresh); syncProjects(d.db, d.config.projects.projects); };
+
+  // ---- setup wizard ----
+  app.get("/api/setup", async () => ({
+    configDir: d.config.configDir ?? null, homeConfigDir: homeConfigDir(), usingDefaults: !d.config.configDir || d.config.configDir === BUNDLED_CONFIG_DIR,
+    projectCount: d.config.projects.projects.length, linear: { keyPresent: d.linearKeyPresent(), env: d.config.linear.apiKeyEnv, keychainService: d.config.linear.keychainService ?? null },
+  }));
+
+  app.post<{ Body: { key?: unknown } }>("/api/setup/linear-key", { preHandler: requireToken }, async (req, reply) => {
+    const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
+    if (!/^lin_api_[A-Za-z0-9]{20,}$/.test(key)) return reply.code(400).send({ error: "that does not look like a Linear personal API key (it starts with lin_api_)" });
+    try {
+      await createLinearClient({ apiKey: key }).viewer(); // prove it works before storing anything
+      return { ok: true, ...(await d.saveLinearKey(key)) };
+    } catch (e) { return reply.code(400).send({ error: `Linear rejected that key or it could not be stored: ${(e as Error).message}` }); }
+  });
+
+  /** Teams, their projects, and which of the statuses/labels the factory needs are missing. Read-only. */
+  app.get("/api/setup/linear", async (_req, reply) => {
+    try {
+      const client = d.linear();
+      const teams = await client.teams();
+      const out: { key: string; name: string; projects: string[]; audit: TeamAudit }[] = [];
+      for (const t of teams) out.push({ key: t.key, name: t.name, projects: (await client.projects(t.id)).map((p) => p.name), audit: await auditTeam(client, d.config.linear, t) });
+      return { teams: out };
+    } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
+  });
+
+  /** Creates only what is missing (never edits or deletes). */
+  app.post<{ Params: { team: string } }>("/api/setup/linear/:team/create", { preHandler: requireToken }, async (req, reply) => {
+    try {
+      const client = d.linear();
+      const team = (await client.teams()).find((t) => t.key === req.params.team);
+      if (!team) return reply.code(404).send({ error: `no Linear team ${req.params.team}` });
+      const r = await applySetup(client, d.config.linear, team, {});
+      return { ok: r.failed.length === 0, created: r.created, failed: r.failed };
+    } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
+  });
+
+  // ---- projects ----
+  app.put<{ Params: { id: string }; Body: unknown }>("/api/settings/projects/:id", { preHandler: requireToken }, async (req, reply) => {
+    try {
+      const body = ProjectSettings.parse({ ...(req.body as object), id: req.params.id });
+      apply(upsertProject(body, writableDir(d.config)));
+      return { ok: true };
+    } catch (e) { return fail(reply, e); }
+  });
+  app.delete<{ Params: { id: string } }>("/api/settings/projects/:id", { preHandler: requireToken }, async (req, reply) => {
+    try { apply(removeProject(req.params.id, writableDir(d.config))); return { ok: true }; } catch (e) { return fail(reply, e); }
+  });
+
+  // ---- background actions on a project ----
+  app.post<{ Params: { id: string; kind: string } }>("/api/projects/:id/actions/:kind", { preHandler: requireToken }, async (req, reply) => {
+    const kind = req.params.kind as ActionKind;
+    const project = d.config.projects.projects.find((p) => p.id === req.params.id);
+    if (!project) return reply.code(404).send({ error: `no such project: ${req.params.id}` });
+    if (!(kind in ACTIONS)) return reply.code(404).send({ error: `no such action: ${req.params.kind}` });
+    try {
+      const t = d.tasks.start(`${ACTIONS[kind]}: ${project.id}`, `project:${project.id}`, (log) => d.actions[kind](project, log));
+      return { ok: true, taskId: t.id };
+    } catch (e) { return reply.code(409).send({ error: (e as Error).message }); }
+  });
+  app.get<{ Params: { id: string } }>("/api/tasks/:id", async (req, reply) => {
+    const t = d.tasks.get(req.params.id);
+    return t ? { id: t.id, label: t.label, status: t.status, lines: t.lines, startedAt: t.startedAt, finishedAt: t.finishedAt } : reply.code(404).send({ error: "no such task" });
+  });
+}

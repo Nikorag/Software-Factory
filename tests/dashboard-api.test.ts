@@ -1,9 +1,9 @@
 import { mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { fixtureConfig } from "./helpers/config.js";
 import { join } from "node:path";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { loadConfig } from "../src/config/load.js";
 import { Engine, type StageHandler } from "../src/core/engine.js";
 import { enqueue, getJob } from "../src/core/jobs.js";
 import { simulatedHandlers } from "../src/core/simulation.js";
@@ -23,7 +23,7 @@ function setup(withEngine = false) {
   const dataDir = tmp();
   mkdirSync(join(dataDir, "logs"), { recursive: true });
   db.insert(projects).values({ id: "p", configJson: "{}" }).run();
-  const config = loadConfig("config");
+  const config = fixtureConfig();
   const engine = withEngine ? new Engine({ db, logger: pino({ level: "silent" }), config, handlers: simulatedHandlers(), backoffBaseMs: 0, heartbeatMs: 60_000 }) : undefined;
   const app = buildServer({ db, logger: pino({ level: "silent" }), config, engine, dataDir, port: 4780, controlToken: TOKEN, health: new HealthChecker({ sandboxAvailable: () => true }) });
   const job = (key = "JAM-1", ext = key) => enqueue(db, { projectId: "p", externalId: ext, externalKey: key }).job;
@@ -143,11 +143,11 @@ describe("dashboard API data (real persisted state, nothing mocked)", () => {
   it("projects list shows validation state, commands, and whether a test command exists", async () => {
     const s = setup();
     s.db.update(projects).set({ validationJson: JSON.stringify({ ok: true, findings: [{ severity: "warn", code: "x", message: "no CI" }, { severity: "info", code: "y", message: "noise" }], branchProtection: { status: "unavailable" } }), lastValidatedAt: new Date() }).run();
-    const cfg = loadConfig("config");
+    const cfg = fixtureConfig();
     const app = buildServer({ db: s.db, logger: pino({ level: "silent" }), config: cfg, dataDir: s.dataDir, port: 4780, controlToken: TOKEN });
-    const zk = (await get(app, "/api/projects")).json().projects.find((p: { id: string }) => p.id === "zonto-kart");
+    const zk = (await get(app, "/api/projects")).json().projects.find((p: { id: string }) => p.id === "example-game");
     expect(zk.commands.test).toContain("tests/run.sh");
-    expect(zk.githubRepo).toBe("Nikorag/Zonto-Kart");
+    expect(zk.githubRepo).toBe("example-user/Example-Game");
     const withReport = s.db.select().from(projects).all()[0]!;
     expect(withReport.id).toBe("p");
   });

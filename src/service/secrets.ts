@@ -27,3 +27,14 @@ export function resolveSecret(src: SecretSource, deps: { env?: NodeJS.ProcessEnv
   return undefined;
 }
 export const forgetSecrets = () => cache.clear();
+
+/** Stores a secret in the macOS keychain (updating an existing entry). The value only ever lives there and in memory: never config, DB or logs. */
+export function saveSecret(src: Pick<SecretSource, "keychainService" | "keychainAccount">, value: string, deps: { run?: Runner } = {}): void {
+  if (!src.keychainService) throw new Error("no keychain service configured");
+  if (process.platform !== "darwin" && !deps.run) throw new Error("saving to the keychain is only supported on macOS: set the environment variable instead");
+  if (!deps.run && process.env.FACTORY_NO_KEYCHAIN) throw new Error("keychain disabled (FACTORY_NO_KEYCHAIN)");
+  const account = src.keychainAccount ?? userInfo().username;
+  const run: Runner = deps.run ?? ((f, a) => execFileSync(f, a, { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] }));
+  run("/usr/bin/security", ["add-generic-password", "-U", "-a", account, "-s", src.keychainService, "-w", value]);
+  cache.delete(`${src.keychainService}\0${account}`);
+}

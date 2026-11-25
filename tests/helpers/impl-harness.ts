@@ -1,8 +1,8 @@
 import { join } from "node:path";
+import { fixtureConfig } from "./config.js";
 import pino from "pino";
 import { eq } from "drizzle-orm";
 import { createContext, type Context } from "../../src/app/context.js";
-import { loadConfig } from "../../src/config/load.js";
 import { ModelsConfig, ProjectConfig, type LoadedConfig } from "../../src/config/schema.js";
 import { Engine } from "../../src/core/engine.js";
 import { enqueue, getJob } from "../../src/core/jobs.js";
@@ -30,7 +30,7 @@ export async function harness(o: { commands?: Record<string, string>; baseTest?:
     "test/todos.test.js": o.baseTest ?? 'import test from "node:test";\nimport assert from "node:assert";\nimport { list } from "../src/todos.js";\ntest("empty", () => assert.deepEqual(list(), []));\n',
     ".gitignore": "node_modules\n",
   });
-  const base = loadConfig("config");
+  const base = fixtureConfig();
   const commands = o.commands ?? { test: "node --test test/", lint: "node --check src/todos.js" };
   const project = ProjectConfig.parse({ id: "p", name: "P", repository: repo, linear: { teamKey: "JAM" }, github: { repo: "Nikorag/todo" }, commands });
   const r = (provider: string, model: string) => ({ provider, model });

@@ -15,6 +15,10 @@ import { acquireLock } from "./lock.js";
 import { HealthChecker } from "./metrics.js";
 import { Scheduler } from "./scheduler.js";
 import { LocalModelClient } from "../agents/local.js";
+import { createLinearClient } from "../linear/client.js";
+import { createProjectActions } from "./actions.js";
+import { resolveSecret, saveSecret } from "./secrets.js";
+import { TaskManager } from "./tasks.js";
 
 const run = promisify(execFile);
 
@@ -51,7 +55,12 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     },
   });
 
-  const app = buildServer({ db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token });
+  const keySrc = { envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService };
+  const settings = {
+    tasks: new TaskManager(), actions: createProjectActions(ctx), linear: () => ctx.linear(), linearKeyPresent: () => Boolean(resolveSecret(keySrc)),
+    saveLinearKey: async (key: string) => { const me = await createLinearClient({ apiKey: key }).viewer(); saveSecret(keySrc, key); return { name: me.name }; },
+  };
+  const app = buildServer({ db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings });
   try {
     await app.listen({ host: config.factory.server.host, port });
   } catch (e) { lock.release(); throw e; }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { fixtureConfig } from "./helpers/config.js";
 import { checkLocalModels, checkLocalRoutes, reviewerIndependence } from "../src/doctor/checks.js";
-import { loadConfig } from "../src/config/load.js";
 
 const respond = (status: number, body: unknown) => (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
 
@@ -22,13 +22,13 @@ describe("checkLocalModels", () => {
 
 describe("checkLocalRoutes / local checks", () => {
   const withLocal = (cls: string, rev: string) => {
-    const c = loadConfig("config");
+    const c = fixtureConfig();
     c.models.routes.classification = { provider: "local", model: cls };
     c.models.routes.independent_review = { provider: "local", model: rev };
     return c;
   };
   it("returns nothing when no route uses a local model (the default: Claude only)", async () => {
-    expect(await checkLocalRoutes(loadConfig("config"), respond(200, { data: [] }))).toEqual([]);
+    expect(await checkLocalRoutes(fixtureConfig(), respond(200, { data: [] }))).toEqual([]);
   });
   it("warns while a local route still holds the UNCONFIGURED placeholder", async () => {
     const r = await checkLocalRoutes(withLocal("UNCONFIGURED-QWEN", "UNCONFIGURED-QWEN"), respond(200, { data: [{ id: "qwen-a" }] }));
@@ -43,12 +43,12 @@ describe("checkLocalRoutes / local checks", () => {
 
 describe("reviewerIndependence", () => {
   it("is ok when the reviewer is a different model from the author (shipped config: haiku vs default)", () => {
-    const [r] = reviewerIndependence(loadConfig("config"));
+    const [r] = reviewerIndependence(fixtureConfig());
     expect(r).toMatchObject({ status: "ok" });
     expect(r!.detail).toContain("haiku");
   });
   it("warns when the reviewer is the same model as the author", () => {
-    const c = loadConfig("config");
+    const c = fixtureConfig();
     c.models.routes.independent_review = { ...c.models.routes.specification };
     expect(reviewerIndependence(c)[0]).toMatchObject({ status: "warn", detail: expect.stringContaining("same model") });
   });

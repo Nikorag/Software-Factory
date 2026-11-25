@@ -1,9 +1,9 @@
 import { join } from "node:path";
+import { fixtureConfig } from "./helpers/config.js";
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { createContext, type Context } from "../src/app/context.js";
-import { loadConfig } from "../src/config/load.js";
 import { ModelsConfig, ProjectConfig, type LoadedConfig } from "../src/config/schema.js";
 import { Engine } from "../src/core/engine.js";
 import { jobs as jobsTable } from "../src/db/schema.js";
@@ -19,7 +19,7 @@ interface Harness { ctx: Context; claude: ScriptedAgent; local: ScriptedAgent; l
 
 function harness(o: { initialised?: boolean; localModel?: string; fallback?: "claude" | "block"; noLinear?: boolean } = {}): Harness {
   const { repo } = makeRepo(o.initialised === false ? { "README.md": "x" } : { "README.md": "x", ".specify/init-options.json": "{}", ".specify/.gitignore": "feature.json\n", ".claude/skills/speckit-specify/SKILL.md": "skill" });
-  const base = loadConfig("config");
+  const base = fixtureConfig();
   const project = ProjectConfig.parse({ id: "p", name: "P", repository: repo, linear: { teamKey: "JAM" }, commands: { test: "npm test" } });
   const route = (provider: string, model: string) => ({ provider, model });
   const config: LoadedConfig = {

@@ -1,0 +1,23 @@
+# Test fixture only: generic projects used by the suite (the shipped config/projects.yaml is empty).
+projects:
+  - id: example-app
+    name: Example App
+    repository: ~/projects/example/example-app
+    defaultBranch: main
+    autonomy: supervised
+    commands: { install: "npm ci", typecheck: "npx tsc --noEmit", lint: "npm run lint", test: "npm test" }
+    github: { account: example-user }
+    linear: { teamKey: ENG, projectName: "Example App" }
+  - id: example-game
+    name: Example Game
+    defaultBranch: main
+    autonomy: supervised
+    commands: { test: "tests/run.sh" }
+    github: { account: example-user, repo: example-user/Example-Game }
+    linear: { teamKey: ENG, projectName: "Example Game" }
+  - id: no-tests
+    name: No Tests
+    defaultBranch: main
+    commands: {}
+    github: { account: example-user, repo: example-user/No-Tests }
+    linear: { teamKey: ENG, projectName: "No Tests" }

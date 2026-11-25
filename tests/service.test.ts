@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { fixtureConfig } from "./helpers/config.js";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { loadConfig } from "../src/config/load.js";
 import * as control from "../src/core/control.js";
 import { Engine, type HandlerRegistry } from "../src/core/engine.js";
 import { enqueue, getJob } from "../src/core/jobs.js";
@@ -26,7 +26,7 @@ const empty = (): DiscoveryReport => ({ enqueued: [], skipped: [], errors: [] })
 function rig(handlers: HandlerRegistry = simulatedHandlers(), over: { discover?: () => Promise<DiscoveryReport>; flush?: () => Promise<{ sent: number; failed: number; pending: number }>; validate?: () => Promise<void> } = {}) {
   const { db } = openDb(":memory:");
   db.insert(projects).values({ id: "p", configJson: "{}" }).run();
-  const config = loadConfig("config");
+  const config = fixtureConfig();
   const engine = new Engine({ db, logger: pino({ level: "silent" }), config, handlers, backoffBaseMs: 0, heartbeatMs: 60_000 });
   const calls = { discover: 0, flush: 0, validate: 0 };
   const sched = new Scheduler({
@@ -100,7 +100,7 @@ describe("scheduler", () => {
     expect(await until(() => started)).toBe(true);
     await r.sched.stop();
     expect(getJob(r.db, j.id)).toMatchObject({ stage: "IMPLEMENTATION", status: "queued", stageAttempts: 0, leaseOwner: null });
-    const engine2 = new Engine({ db: r.db, logger: pino({ level: "silent" }), config: loadConfig("config"), handlers: simulatedHandlers(), backoffBaseMs: 0 });
+    const engine2 = new Engine({ db: r.db, logger: pino({ level: "silent" }), config: fixtureConfig(), handlers: simulatedHandlers(), backoffBaseMs: 0 });
     const s2 = new Scheduler({ db: r.db, engine: engine2, logger: pino({ level: "silent" }), discover: async () => empty(), flush: async () => ({ sent: 0, failed: 0, pending: 0 }), validate: async () => {}, intervals: { discoveryMs: 40, workerIdleMs: 10 } });
     s2.start();
     expect(await until(() => getJob(r.db, j.id)!.stage === "COMPLETED")).toBe(true);

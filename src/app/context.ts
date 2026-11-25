@@ -40,9 +40,9 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
   const logger = opts.logger ?? createLogger({ level: config.factory.logLevel, file: join(dataDir, "logs", "factory.log") });
   const handle = opts.db ?? openDb(join(dataDir, "database", "factory.sqlite"));
   syncProjects(handle.db, config.projects.projects);
-  const projects = new Map(config.projects.projects.map((p) => [p.id, p]));
+  // Looked up live (not copied into a Map): the settings UI adds and edits projects while the service runs.
   const project = (id: string): ProjectConfig => {
-    const p = projects.get(id);
+    const p = config.projects.projects.find((x) => x.id === id);
     if (!p) throw new ConfigError(`unknown project "${id}"`);
     return p;
   };

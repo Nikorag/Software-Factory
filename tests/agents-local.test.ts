@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
+import { fixtureConfig } from "./helpers/config.js";
 import type { AddressInfo } from "node:net";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,7 +9,7 @@ import { extractJson, LocalModelClient, stripReasoning } from "../src/agents/loc
 import { ModelRouter } from "../src/agents/router.js";
 import { AgentRunner } from "../src/agents/runner.js";
 import type { Agent, AgentRequest, AgentResult } from "../src/agents/types.js";
-import { ConfigError, loadConfig } from "../src/config/load.js";
+import { ConfigError } from "../src/config/load.js";
 import { ModelsConfig } from "../src/config/schema.js";
 import { openDb } from "../src/db/client.js";
 import { agentInvocations, decisions, jobs, projects } from "../src/db/schema.js";
@@ -138,7 +139,7 @@ describe("ModelRouter + config", () => {
     expect(bad("specification")).toBe(false);
     expect(bad("classification")).toBe(true);
   });
-  it("ships a valid models.yaml", () => { expect(loadConfig("config").models.routes.implementation.provider).toBe("anthropic"); });
+  it("ships a valid models.yaml", () => { expect(fixtureConfig().models.routes.implementation.provider).toBe("anthropic"); });
 });
 
 describe("AgentRunner boundaries and recording", () => {

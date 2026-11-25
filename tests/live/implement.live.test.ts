@@ -1,11 +1,11 @@
 import { execFileSync } from "node:child_process";
+import { fixtureConfig } from "../helpers/config.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createContext } from "../../src/app/context.js";
-import { loadConfig } from "../../src/config/load.js";
 import { ModelsConfig, ProjectConfig, type LoadedConfig } from "../../src/config/schema.js";
 import { Engine } from "../../src/core/engine.js";
 import { enqueue, getJob } from "../../src/core/jobs.js";
@@ -31,7 +31,7 @@ describe.skipIf(!process.env.FACTORY_LIVE)("autonomous implementation (live)", (
     await commitPaths(fx.repo, [".specify", ".claude"], "chore: init spec kit");
     sh(fx.repo, "push", "-q");
 
-    const base = loadConfig("config");
+    const base = fixtureConfig();
     const project = ProjectConfig.parse({ id: "todo", name: "Todo", repository: fx.repo, linear: { teamKey: "JAM" }, commands: { test: "node --test test/" } });
     const r = { provider: "anthropic" as const, model: "default" };
     const config: LoadedConfig = {

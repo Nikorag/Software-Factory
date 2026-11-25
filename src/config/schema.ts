@@ -152,5 +152,7 @@ export const LoadedConfig = z.object({
   models: ModelsConfig,
   projects: ProjectsConfig,
   workflows: WorkflowsConfig,
+  /** Where these files were read from (the settings UI writes projects.yaml here). */
+  configDir: z.string().optional(),
 });
 export type LoadedConfig = z.infer<typeof LoadedConfig>;

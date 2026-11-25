@@ -12,6 +12,7 @@ import type { Engine } from "../core/engine.js";
 import { answerJob, cancelJob, JobError, retryJob } from "../core/jobs.js";
 import type { Scheduler } from "../service/scheduler.js";
 import { counts, systemInfo, type HealthChecker } from "../service/metrics.js";
+import { registerSettingsRoutes } from "./settings-routes.js";
 
 export interface ApiDeps {
   db: FactoryDb;
@@ -21,6 +22,8 @@ export interface ApiDeps {
   scheduler?: Scheduler;
   health?: HealthChecker;
   dataDir?: string;
+  /** Settings UI + setup wizard. Absent in tests that do not exercise them. */
+  settings?: Omit<import("./settings-routes.js").SettingsDeps, "db" | "config">;
 }
 
 const ms = (d: Date | null | undefined) => (d ? d.getTime() : null);
@@ -113,7 +116,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
         const row = rows.find((r) => r.id === p.id);
         const report = row?.validationJson ? (JSON.parse(row.validationJson) as { ok?: boolean; findings?: { severity: string; code: string; message: string }[]; branchProtection?: { status: string } }) : null;
         return {
-          id: p.id, name: p.name, enabled: p.enabled, autonomy: p.autonomy, repository: p.repository, managed: p.managed, defaultBranch: p.defaultBranch,
+          id: p.id, name: p.name, enabled: p.enabled, autonomy: p.autonomy, repository: p.repository, managed: p.managed, defaultBranch: p.defaultBranch, githubAccount: p.github.account ?? null,
           linear: p.linear ?? null, githubRepo: p.github.repo ?? null, commands: p.commands,
           validation: report ? { ok: report.ok ?? false, at: ms(row?.lastValidatedAt), protection: report.branchProtection?.status ?? "unknown", findings: (report.findings ?? []).filter((f) => f.severity !== "info").map((f) => `${f.severity}: ${f.message}`) } : null,
           activeJobs: db.select().from(jobs).where(and(eq(jobs.projectId, p.id), inArray(jobs.status, ["queued", "running", "waiting"]))).all().length,
@@ -152,4 +155,5 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     try { return { ok: true, job: jobRow(retryJob(db, req.params.id, actor)) }; }
     catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
   });
+  if (d.settings && d.config) registerSettingsRoutes(app, { ...d.settings, db, config: d.config }, requireToken);
 }
