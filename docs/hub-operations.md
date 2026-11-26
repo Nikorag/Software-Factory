@@ -49,7 +49,7 @@ All via environment variables: non-sensitive in the ConfigMap, sensitive in a Se
 | `FACTORY_TOKEN_PEPPER` 🔒 | ✔ | | ≥32 chars; HMAC key for factory token hashes. Rotating it invalidates all factory tokens |
 | `SESSION_TTL_SECONDS` | | 1209600 | |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` / `WEBAUTHN_ORIGIN` | ✔ | | RP ID `factory.nikorag.co.uk`; changing it orphans existing passkeys |
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` 🔒 / `VAPID_SUBJECT` | | | optional until Web Push exists; all three or none. generate: `node dist/cli.js vapid-generate`; subject `mailto:` or `https:` |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` 🔒 / `VAPID_SUBJECT` | | | enables Web Push notifications (see [Notifications](#notifications-pwa-and-web-push)); all three or none. generate: `node dist/cli.js vapid-generate` (in the image) or `pnpm exec tsx src/cli.ts vapid-generate` (in `hub/`); subject `mailto:` or `https:` |
 | `COMMAND_DEFAULT_TTL_SECONDS` / `COMMAND_LEASE_SECONDS` / `COMMAND_MAX_DELIVERY_ATTEMPTS` | | 3600 / 60 / 5 | |
 | `POLL_MAX_WAIT_SECONDS` / `RATE_LIMIT_PER_MINUTE` | | 25 / 300 | rate limit is per client IP, via Redis, fails open |
 | `RECONCILE_INTERVAL_MS` / `OUTBOX_INTERVAL_MS` | | 15000 / 1000 | |
@@ -98,7 +98,7 @@ No manifests are shipped; declare these resources with the `kubernetes` provider
 **1. Config (`kubernetes_config_map`)**: non-sensitive env vars from the table above, at minimum:
 `NODE_ENV=production`, `PORT=8080`, `PUBLIC_URL=https://factory.nikorag.co.uk`, `WEBAUTHN_RP_ID=factory.nikorag.co.uk`, `WEBAUTHN_ORIGIN=https://factory.nikorag.co.uk`, and optionally `LOG_LEVEL`, `DATABASE_POOL_MAX`, `DATABASE_SSL`, `REDIS_KEY_PREFIX`.
 
-**2. Secret (`kubernetes_secret`)**, keys exactly: `DATABASE_URL`, `REDIS_URL`, `SETUP_TOKEN`, `SESSION_SECRET`, `FACTORY_TOKEN_PEPPER` (plus `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`, optional until Web Push exists, and `REDIS_PASSWORD` / `REDIS_TLS_CA` / `DATABASE_SSL_CA` if used). Source the values from your secret store or Terraform variables marked `sensitive = true`; generate with `openssl rand -base64 48` (setup token/session/pepper) and `node dist/cli.js vapid-generate` (VAPID, if used). Mind that values passed through Terraform land in its state: use an encrypted remote backend. Keep the pepper/session secrets stable across applies (use `lifecycle { ignore_changes }` or `random_password` resources), as rotating them signs everyone out / invalidates factory tokens.
+**2. Secret (`kubernetes_secret`)**, keys exactly: `DATABASE_URL`, `REDIS_URL`, `SETUP_TOKEN`, `SESSION_SECRET`, `FACTORY_TOKEN_PEPPER` (plus `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`, optional: they switch on push notifications, and `REDIS_PASSWORD` / `REDIS_TLS_CA` / `DATABASE_SSL_CA` if used). Source the values from your secret store or Terraform variables marked `sensitive = true`; generate with `openssl rand -base64 48` (setup token/session/pepper) and `node dist/cli.js vapid-generate` (VAPID, if used). Mind that values passed through Terraform land in its state: use an encrypted remote backend. Keep the pepper/session secrets stable across applies (use `lifecycle { ignore_changes }` or `random_password` resources), as rotating them signs everyone out / invalidates factory tokens.
 
 **3. Migration Job (`kubernetes_job_v1`)**, run on every release *before* the Deployment is updated:
 - image `…/software-factory-hub:<version>`, args `["dist/cli.js", "migrate"]`, `env_from` the ConfigMap and Secret.
@@ -176,14 +176,24 @@ How a request flows: browser → hub `/f/<id>/api/*` (passkey session, per-facto
 - Limits: 64 KB request / 5 MB response, 50 waiting requests per factory, 25 s timeout, 1500 requests/min per user (`TUNNEL_*`).
 - Image: `WEB_DIST_DIR` (default `/app/dist/web`) is the bundled build; if it's missing `/f/<id>/` returns 503 saying so.
 
+## Notifications (PWA and Web Push)
+
+The hub is an installable web app (Add to Home Screen / Install from the browser menu) and can send a push notification when a job fails or needs you. It is off until the VAPID keys are set.
+
+- **Keys.** Generate once with `vapid-generate` and set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (secret) and `VAPID_SUBJECT` (a `mailto:` or `https:` contact the push services can reach). **Keep the pair stable**: browsers subscribe against the public key, so regenerating it silently ends every existing subscription and each browser has to turn notifications on again. The hub logs a warning when a push service rejects the keys.
+- **Turning it on.** Signed in, open the Factories page, **Notifications**, **Turn on for this device**. Each browser or device subscribes on its own. On iPhone and iPad this only works from the installed app (Share, Add to Home Screen, then open it from there).
+- **What notifies.** A stage that failed or timed out (`job.failed`), and a decision that needs a person (`job.needs_attention`: blocked or needs attention). Each person can switch either off. The recipients are the members of the factory's organisation (and anyone granted view access), for every browser they subscribed. The notification carries only the ticket key, the stage and the factory name (for a needs-you decision, the factory's short decision text, at most 120 characters; never the free-text rationale).
+- **Delivery.** Created in the same transaction that stores the event, so a re-sent batch never notifies twice. A background loop on each replica sends them (rows are claimed with `SKIP LOCKED`), retries a push-service outage with backoff for up to five attempts, drops anything older than an hour, and switches off a subscription the browser has abandoned (HTTP 404/410). Rows are pruned after seven days (`RUN_BACKGROUND=false` replicas do not send).
+- **Security.** Subscriptions are only accepted for the real push services (Google FCM, Mozilla, Windows, Apple), over HTTPS on port 443, because the hub makes a request to whatever endpoint is registered. The payload is encrypted end to end to the browser.
+- **Offline.** The service worker caches the app shell only (so it opens offline). It never caches the API, sign-in or the per-factory dashboards.
+
 ## Scope: what the hub is and is not
 
 The hub runs no agents and holds no Claude, Anthropic, GitHub or Linear credentials, and it calls no model. All Claude Code, git and tracker work stays on your machine; the hub stores only what a factory reports (see `docs/hub-client.md`) and relays dashboard calls that a factory has explicitly allowed.
 
-Built: passkey authentication, API keys, factory registration/rotation, event + metadata ingest, live overview (SSE), the tunnelled full dashboard, a durable command queue.
+Built: passkey authentication, invitations, installable app and Web Push notifications, API keys, factory registration/rotation, event + metadata ingest, live overview (SSE), the tunnelled full dashboard, a durable command queue.
 
 Not built yet:
 - The durable command queue is not used by the dashboard (it uses the tunnel above); nothing on the factory consumes it.
-- Web Push sending and notification workers (the tables, VAPID settings and queue plumbing exist).
-- More than one user: after the first, there is no invite flow.
+- Sharing a factory between users: an invited user gets their own organisation and sees only their own factories.
 - Ticket titles: the local factory doesn't store them, so jobs show the ticket key.

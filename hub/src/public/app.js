@@ -100,7 +100,7 @@ async function listScreen() {
       h("span", { class: "muted small" }, `${f.activeJobs} active / ${f.jobCount} jobs`), badge(label, cls),
       f.remoteAccess ? h("a", { class: "openlink", href: `/f/${f.id}/`, onclick: (e) => e.stopPropagation() }, "Open dashboard →") : h("span", { class: "muted small" }, "remote access off"))));
   }
-  nodes.push(addFactoryForm(), await invitesCard());
+  nodes.push(addFactoryForm(), await notificationsCard(), await invitesCard());
   if (view.addFocus) queueMicrotask(() => { document.getElementById("newFactoryName")?.focus(); view.addFocus = false; });
   show(...nodes);
 }
@@ -149,6 +149,46 @@ async function invitesCard() {
   return h("div", { class: "card" }, h("h2", { class: "mt0" }, "Invite someone"), h("p", { class: "muted small" }, "Let another person register their own account on this hub."), btn, err, out, list);
 }
 
+// ---- PWA + notifications (Web Push) ----
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => { /* the app works without it */ });
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const iosNeedsInstall = () => /iPad|iPhone|iPod/.test(navigator.userAgent) && !navigator.standalone; // iOS only allows push from an installed web app
+
+async function notificationsCard() {
+  const body = h("div"), err = h("div", { class: "err" });
+  const card = h("div", { class: "card" }, h("h2", { class: "mt0" }, "Notifications"), body, err);
+  const say = (...kids) => body.replaceChildren(...kids);
+  const note = (t) => h("p", { class: "muted small" }, t);
+  if (!pushSupported()) { say(note(iosNeedsInstall() ? "On iPhone and iPad, add this site to your Home Screen (Share, then Add to Home Screen) and open it from there to turn on notifications." : "This browser doesn't support push notifications.")); return card; }
+  const cfg = await api("GET", "/v1/push/config").catch(() => ({ enabled: false }));
+  if (!cfg.enabled) { say(note("Push notifications aren't set up on this hub yet (the server needs its VAPID keys).")); return card; }
+  const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(() => r(null), 3000))]);
+  if (!reg) { say(note("Still starting up. Reload in a moment.")); return card; }
+  const sub = await reg.pushManager.getSubscription().catch(() => null);
+  const act = (btn, fn) => btn.addEventListener("click", async () => { err.textContent = ""; btn.disabled = true; try { await fn(); view.addFocus = false; void render(); } catch (e) { err.textContent = e.name === "NotAllowedError" ? "Notifications were not allowed." : `Failed: ${e.message}`; } finally { btn.disabled = false; } });
+  if (Notification.permission === "denied" && !sub) { say(note("Notifications are blocked for this site. Allow them in your browser's site settings, then reload.")); return card; }
+  if (!sub) {
+    const on = h("button", {}, "Turn on for this device");
+    act(on, async () => {
+      if ((await Notification.requestPermission()) !== "granted") throw Object.assign(new Error("denied"), { name: "NotAllowedError" });
+      const s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u.dec(cfg.publicKey) });
+      await api("POST", "/v1/push/subscribe", s.toJSON());
+    });
+    say(note("Get a notification on this device when a job fails or needs you."), on);
+    return card;
+  }
+  const test = h("button", { class: "ghost" }, "Send a test"), off = h("button", { class: "ghost" }, "Turn off for this device");
+  act(test, async () => { const r = await api("POST", "/v1/push/test", {}); err.textContent = r.queued ? "" : "No devices are subscribed."; });
+  act(off, async () => { await api("POST", "/v1/push/unsubscribe", { endpoint: sub.endpoint }); await sub.unsubscribe(); });
+  const prefs = (await api("GET", "/v1/notifications/preferences").catch(() => ({ types: [] }))).types.map((t) => {
+    const box = h("input", { type: "checkbox", id: `pref-${t.id}` }); box.checked = t.enabled;
+    box.addEventListener("change", async () => { try { await api("PUT", "/v1/notifications/preferences", { types: { [t.id]: box.checked } }); } catch (e) { err.textContent = `Failed: ${e.message}`; box.checked = !box.checked; } });
+    return h("label", { class: "check", for: `pref-${t.id}` }, box, `Notify me when ${t.label.charAt(0).toLowerCase()}${t.label.slice(1)}`);
+  });
+  say(h("p", {}, badge("on for this device", "online")), ...prefs, h("div", { class: "row" }, test, off));
+  return card;
+}
+
 async function factoryScreen(id) {
   const d = await api("GET", `/v1/factories/${id}`), f = d.factory, [label, cls] = presence(f);
   setTitle(f.name);
@@ -187,6 +227,10 @@ async function boot() {
   const st = await api("GET", "/auth/status");
   if (!st.authenticated) { $("shell").classList.add("signed-out"); me = null; return authScreen(st.needsSetup); }
   me = await api("GET", "/v1/me"); $("who").textContent = me.email; $("shell").classList.remove("signed-out");
-  connectStream(); view = { name: "list" }; render();
+  connectStream();
+  // A notification (or a shared link) can open straight onto a factory: /#factory=<id>
+  const wanted = new URLSearchParams(location.hash.slice(1)).get("factory");
+  view = wanted && /^[0-9a-f-]{36}$/i.test(wanted) ? { name: "factory", id: wanted } : { name: "list" };
+  render();
 }
 boot().catch((e) => show(h("div", { class: "err" }, `Cannot reach the hub: ${e.message}`)));

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Db } from "./db.js";
 import { channels, type Bus } from "./infra.js";
+import { enqueueEventNotifications } from "./push.js";
 
 export const eventsBody = z.object({
   events: z.array(z.object({
@@ -19,19 +20,21 @@ export const syncBody = z.object({
 /** Idempotent: re-sending a batch inserts nothing new. Returns how many were new. */
 export async function ingestEvents(db: Db, bus: Bus, factoryId: string, orgId: string, body: z.infer<typeof eventsBody>): Promise<number> {
   const fresh = await db.tx(async (q) => {
-    const out: Array<{ id: number; type: string; jobId?: string }> = [];
+    const out: Array<{ id: number; type: string; jobId?: string; payload: Record<string, unknown> }> = [];
     for (const e of body.events) {
       const job = e.jobId ? (await q.query<{ id: string }>("SELECT id FROM jobs WHERE factory_id=$1 AND external_id=$2", [factoryId, e.jobId])).rows[0] : undefined;
       const r = await q.query<{ id: number }>(
         `INSERT INTO factory_events (factory_id, event_id, job_id, type, payload, occurred_at) VALUES ($1,$2,$3,$4,$5,$6)
          ON CONFLICT (factory_id, event_id) DO NOTHING RETURNING id`,
         [factoryId, e.id, job?.id ?? null, e.type, JSON.stringify(e.payload), e.occurredAt]);
-      if (r.rows[0]) out.push({ id: Number(r.rows[0].id), type: e.type, jobId: e.jobId });
+      if (r.rows[0]) out.push({ id: Number(r.rows[0].id), type: e.type, jobId: e.jobId, payload: e.payload });
     }
+    // In the same transaction, so a notification exists exactly when its event was stored (a re-sent batch inserts no events, so no repeats).
+    await enqueueEventNotifications(q, factoryId, out);
     return out;
   });
   // Live dashboard fan-out is best effort; the durable record is already committed.
-  if (fresh.length) await bus.publish(channels.org(orgId), JSON.stringify({ factoryId, events: fresh })).catch(() => undefined);
+  if (fresh.length) await bus.publish(channels.org(orgId), JSON.stringify({ factoryId, events: fresh.map(({ id, type, jobId }) => ({ id, type, jobId })) })).catch(() => undefined);
   return fresh.length;
 }
 

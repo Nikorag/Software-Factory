@@ -6,15 +6,17 @@ import type { Db } from "./db.js";
 import type { HubState } from "./health.js";
 import type { Bus, DispatchQueue, RateLimiter, Tunnel } from "./infra.js";
 import { pendingMigrations } from "./migrate.js";
+import { createWebPushSender, deliverPending, pruneDeliveries, type PushSender } from "./push.js";
 import { buildServer } from "./server.js";
 
-export interface Infra { db: Db; bus: Bus; tunnel: Tunnel; queue: DispatchQueue; limiter: RateLimiter }
+export interface Infra { db: Db; bus: Bus; tunnel: Tunnel; queue: DispatchQueue; limiter: RateLimiter; /** Tests inject a fake; otherwise built from the VAPID settings (null when push is not configured). */ push?: PushSender | null }
 
 /** Composition root: wires services, background loops and shutdown. Infra is injected (tests use fakes). */
 export function createHub(cfg: Config, infra: Infra, log: Logger) {
   const state: HubState = { shuttingDown: false, initialised: false };
   const commands = new CommandService(cfg, infra.db, infra.queue, infra.bus, log);
-  const app: FastifyInstance = buildServer({ cfg, ...infra, log, commands, state });
+  const push = infra.push !== undefined ? infra.push : createWebPushSender(cfg);
+  const app: FastifyInstance = buildServer({ cfg, ...infra, log, commands, state, push });
   const timers: NodeJS.Timeout[] = [];
   let stopped = false;
 
@@ -46,6 +48,10 @@ export function createHub(cfg: Config, infra: Infra, log: Logger) {
     if (cfg.RUN_BACKGROUND) {
       infra.queue.startWorker((id) => commands.onDispatch(id));
       loop("outbox", cfg.OUTBOX_INTERVAL_MS, () => commands.relayOutbox());
+      if (push) {
+        loop("push", 2_000, () => deliverPending(infra.db, push, log));
+        loop("push-prune", 3_600_000, () => pruneDeliveries(infra.db));
+      }
       loop("reconcile", cfg.RECONCILE_INTERVAL_MS, async () => {
         const r = await commands.reconcile();
         if (r.expired || r.unknown || r.requeued || r.failed || r.reenqueued) log.info(r, "reconciled commands");

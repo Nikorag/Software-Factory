@@ -37,7 +37,8 @@ const schema = z.object({
   WEBAUTHN_RP_NAME: z.string().default("Software Factory Hub"),
   WEBAUTHN_ORIGIN: z.url(),
 
-  // Web Push is not built yet, so VAPID is optional: set all three or none (generate with `node dist/cli.js vapid-generate`).
+  // Web Push (VAPID) is optional: set all three to turn notifications on, or none to leave them off (generate with `node dist/cli.js vapid-generate`).
+  // Keep the pair stable: browsers subscribe against the public key, so changing it ends every existing subscription.
   VAPID_PUBLIC_KEY: z.string().min(1).optional(),
   VAPID_PRIVATE_KEY: z.string().min(1).optional(),
   VAPID_SUBJECT: z.string().regex(/^(mailto:|https:\/\/)/, "VAPID_SUBJECT must be mailto: or https:").optional(),
