@@ -46,7 +46,8 @@ jobs:
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       # PRs build (amd64 only, fast) to catch Dockerfile breakage without publishing.
       # main builds and pushes a multi-arch manifest: sha-<commit> (immutable; pin this in Terraform for exact deploys) and, only
-      # when this commit is still the head of main, <version> (moves with main until you bump hub/package.json).
+      # when this commit is still the head of main, <version> (moves with main until you bump hub/package.json) and
+      # latest (always the newest main build).
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -55,6 +56,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ${{ steps.v.outputs.head == 'true' && format('{0}:{1}', env.IMAGE, steps.v.outputs.version) || '' }}
+            ${{ steps.v.outputs.head == 'true' && format('{0}:latest', env.IMAGE) || '' }}
             ${{ env.IMAGE }}:sha-${{ steps.v.outputs.short }}
           build-args: |
             VERSION=${{ steps.v.outputs.version }}

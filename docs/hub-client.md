@@ -65,6 +65,8 @@ The rules live in one file, `src/hub/remote-policy.ts`, **default-deny**: a rout
 | `PUT /api/settings/projects/:id`, `DELETE /api/settings/projects/:id` | **Decision needed.** A project's settings carry the repository path and the install/build/test shell commands, so editing them remotely means choosing what runs on this machine (sandboxed, but installs have network). Blocked until you decide it should be allowed. |
 | `GET /`, `/assets/*`, `/health` | Local-only; the hub serves its own copy of the dashboard. |
 
+The job page's **Ask Claude** chat works remotely too. It starts a read-only agent on your machine (it can read the job's stages, decisions and recent agent output, and cannot change anything) and the page polls for the answer, so it works through the hub's short request limit.
+
 Everything else the dashboard does is allowed: reading jobs, logs, conversations, the board and settings; pause/resume/stop; answering, retrying, cancelling, archiving and deleting jobs; starting tickets from the board; global settings; tracker connections (add, rename, remove; their credentials are not allowed remotely) and the GitHub Issues/Jira mappings; project actions (clone, validate, run checks, onboarding); tracker setup; the version check (it only looks, it never updates).
 
 ### What passes through the hub

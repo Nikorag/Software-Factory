@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -66,7 +67,19 @@ export function buildChatPrompt(context: string, history: { role: "user" | "assi
   return `<job_summary>\n${context}\n</job_summary>\n\n${convo ? `Conversation so far:\n\n${convo}\n\n` : ""}Developer: ${message}\n\nAnswer the developer's latest message.`;
 }
 
+interface Chat { jobId: string; status: "running" | "done" | "error"; reply?: string; error?: string; startedAt: number }
+const MAX_RUNNING = 2, KEEP_MS = 10 * 60_000, MAX_KEPT = 50;
+
 export function registerChatRoutes(app: FastifyInstance, d: ChatDeps, requireToken: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>) {
+  // Asynchronous: POST starts the agent and answers 202 straight away, and the page polls GET for the reply. A chat answer can take minutes,
+  // but a request relayed from the hub's remote dashboard has to finish in seconds, so one long request cannot work there (or behind a proxy).
+  const chats = new Map<string, Chat>();
+  const sweep = () => {
+    const now = Date.now();
+    for (const [id, c] of chats) if (c.status !== "running" && now - c.startedAt > KEEP_MS) chats.delete(id);
+    while (chats.size > MAX_KEPT) { const oldest = [...chats].find(([, c]) => c.status !== "running"); if (!oldest) break; chats.delete(oldest[0]); }
+  };
+
   // POST (not GET) because it starts an agent; it needs the same same-origin/token proof as the other mutating calls.
   app.post<{ Params: { id: string } }>("/api/jobs/:id/chat", { preHandler: requireToken }, async (req, reply) => {
     if (!d.chat) return reply.code(503).send({ error: "chat is not available in this service" });
@@ -74,12 +87,24 @@ export function registerChatRoutes(app: FastifyInstance, d: ChatDeps, requireTok
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "invalid request" });
     const context = jobContext(d.db, d.dataDir, req.params.id);
     if (context === null) return reply.code(404).send({ error: "no such job" });
+    sweep();
+    if ([...chats.values()].filter((c) => c.status === "running").length >= MAX_RUNNING) return reply.code(429).send({ error: "Claude is already answering other questions. Try again in a moment." });
     const job = d.db.select({ projectId: jobs.projectId }).from(jobs).where(eq(jobs.id, req.params.id)).get()!;
     // An empty directory of its own: the assistant can read here, but not the factory's database, logs or any repository.
     const cwd = join(d.dataDir ?? ".", "chat");
     mkdirSync(cwd, { recursive: true });
-    const r = await d.chat.run({ projectId: job.projectId, prompt: buildChatPrompt(context, parsed.data.history, parsed.data.message), cwd, timeoutMs: TIMEOUT_MS });
-    if (!r.ok) return reply.code(502).send({ error: r.error || "the assistant could not answer" });
-    return { reply: redactSecrets(r.text) };
+    const id = randomUUID();
+    const chat: Chat = { jobId: req.params.id, status: "running", startedAt: Date.now() };
+    chats.set(id, chat);
+    void d.chat.run({ projectId: job.projectId, prompt: buildChatPrompt(context, parsed.data.history, parsed.data.message), cwd, timeoutMs: TIMEOUT_MS })
+      .then((r) => { if (r.ok) { chat.status = "done"; chat.reply = redactSecrets(r.text); } else { chat.status = "error"; chat.error = r.error || "the assistant could not answer"; } })
+      .catch((e: unknown) => { chat.status = "error"; chat.error = (e as Error).message || "the assistant could not answer"; });
+    return reply.code(202).send({ id });
+  });
+
+  app.get<{ Params: { id: string; cid: string } }>("/api/jobs/:id/chat/:cid", async (req, reply) => {
+    const c = chats.get(req.params.cid);
+    if (!c || c.jobId !== req.params.id) return reply.code(404).send({ error: "no such chat (it may have expired)" });
+    return { status: c.status, ...(c.reply !== undefined ? { reply: c.reply } : {}), ...(c.error !== undefined ? { error: c.error } : {}) };
   });
 }
