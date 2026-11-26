@@ -33,6 +33,7 @@ import { repairNativeModules } from "./service/native.js";
 import { backupDatabase, profileDbFile, runUpdate, UpdateRefused } from "./service/update-run.js";
 import { LockHeldError } from "./service/lock.js";
 import { connectHub, disconnectHub, hubStatus, setRemoteAccess } from "./hub/commands.js";
+import { readKeyFromStdin } from "./hub/prompt.js";
 import { HUB_KEY_ENV } from "./hub/settings.js";
 import { installCrashHandlers, shutdownController } from "./agents/children.js";
 
@@ -331,20 +332,6 @@ program
   });
 
 const hub = program.command("hub").description("Report this factory's progress to a central Software Factory Hub (off until you connect)");
-/** Reads a key without echoing it when on a terminal; otherwise takes the first line of stdin (e.g. `pbpaste | factory hub connect ...`). */
-async function readKeyFromStdin(): Promise<string> {
-  const { createInterface } = await import("node:readline");
-  const { Writable } = await import("node:stream");
-  const tty = Boolean(process.stdin.isTTY);
-  let muted = false;
-  const out = new Writable({ write(chunk, _e, cb) { if (!muted) process.stdout.write(chunk); cb(); } });
-  const rl = createInterface({ input: process.stdin, output: out, terminal: tty });
-  return new Promise((resolveKey) => {
-    if (tty) { process.stdout.write("Hub API key: "); muted = true; }
-    rl.once("line", (l) => { rl.close(); if (tty) process.stdout.write("\n"); resolveKey(l); });
-    rl.once("close", () => resolveKey(""));
-  });
-}
 hub
   .command("connect")
   .description("Connect to a hub with an API key from its web page, then start reporting")
@@ -354,7 +341,7 @@ hub
   .action(async (o: { url: string; key?: string; remoteAccess?: boolean }) => {
     const config = loadConfig();
     try {
-      const key = o.key ?? process.env[HUB_KEY_ENV] ?? (await readKeyFromStdin());
+      const key = o.key ?? process.env[HUB_KEY_ENV] ?? (await readKeyFromStdin(process.stdin, process.stdout));
       const r = await connectHub({ url: o.url, key, remoteAccess: o.remoteAccess === true }, { configDir: config.configDir ?? defaultConfigDir(), dataDir: config.factory.dataDir, version: program.version() });
       console.log(`✓ Connected to ${r.url}. Reporting is on: a running factory starts within a minute, otherwise at its next start.`);
       console.log(r.remoteAccess ? "  Remote dashboard access is ON: the hub's web dashboard can operate this factory. Turn it off with `software-factory hub remote-access off`." : "  Remote dashboard access is off. Enable it with `software-factory hub remote-access on`.");
