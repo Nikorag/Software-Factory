@@ -109,6 +109,15 @@ sb("sandboxed project commands (real sandbox-exec)", () => {
     const leak = await run(w, `cat ${w.home}/.software-factory/database/factory.sqlite`, { worktree: wt, sandbox: { home: w.home, gitCommonDir: common } });
     expect(leak.tail).not.toContain("DB-CANARY");
   });
+  it("gives build tools a writable cache dir (TURBO_CACHE_DIR) but never lets a command rewrite its own sandbox profile", async () => {
+    const w = world();
+    const r = await run(w, `mkdir -p "$TURBO_CACHE_DIR" && echo cached > "$TURBO_CACHE_DIR/entry" && cat "$TURBO_CACHE_DIR/entry"`);
+    expect(r.tail).toContain("cached");
+    expect(r.ok).toBe(true);
+    const tamper = await run(w, `echo '(allow default)' > ${w.profileDir}/sandbox-test.sb`);
+    expect(tamper.ok).toBe(false);
+    expect(tamper.tail).toMatch(/Operation not permitted|Permission denied/);
+  });
   it("allows network only for install", async () => {
     const w = world();
     const r = await run(w, `node -e "require('http').get('http://127.0.0.1:${port}',r=>{console.log('NET-OK');process.exit(0)}).on('error',e=>{console.log('NET-BLOCKED');process.exit(3)})"`, { kind: "install" });

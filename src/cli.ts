@@ -425,10 +425,13 @@ program
   .description("Update this install to the newest release (or --ref <tag|branch>), reinstall dependencies and rebuild the dashboard. Stops the running factory first (backing up each profile's database) and restarts it after. Your settings and data are never touched.")
   .option("--check", "only report whether an update is available")
   .option("--ref <ref>", "a release tag or branch instead of the newest release")
+  .option("--experimental", "follow the tip of main instead of the newest release (same as --ref main). Unreleased code: it can be broken")
   .option("--wait", "if jobs are running, wait for them to finish, then update")
   .option("--force", "update even while jobs are running (they are stopped and their stage is redone after the restart)")
-  .action(async (opts: { check?: boolean; ref?: string; wait?: boolean; force?: boolean }) => {
-    const plan = await planUpdate({ ref: opts.ref });
+  .action(async (opts: { check?: boolean; ref?: string; experimental?: boolean; wait?: boolean; force?: boolean }) => {
+    if (opts.experimental && opts.ref && opts.ref !== "main") { console.error("--experimental follows main: do not combine it with --ref (use --ref alone to pick another branch or tag)"); process.exitCode = 1; return; }
+    const plan = await planUpdate({ ref: opts.experimental ? "main" : opts.ref });
+    if (opts.experimental) console.log("EXPERIMENTAL: following the tip of main, which can contain unreleased and untested changes.");
     const where = plan.targetIsTag ? `release ${plan.target}` : plan.target;
     if (plan.upToDate) { console.log(`up to date (${plan.current})`); return; }
     if (plan.behind > 0) console.log(`${plan.current}  ->  ${where}  (${plan.behind} new commit(s))${plan.latestTag ? "" : "  [no releases yet: following main]"}`);

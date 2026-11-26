@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { agentEnv } from "../agents/env.js";
 import { runProcess, type RunResult } from "../agents/process.js";
+import { mkdirSync } from "node:fs";
 import { DEFAULT_WRITE_ALLOW, sandboxAvailable, sandboxPrefix, type SandboxOptions } from "./sandbox.js";
 
 export type CommandKind = "install" | "build" | "test" | "lint" | "typecheck";
@@ -51,14 +52,20 @@ export async function runProjectCommand(o: RunCommandOptions, deps: { run?: type
   const useSandbox = (deps.available ?? sandboxAvailable)();
   if (!useSandbox && required) throw new SandboxUnavailable();
   const isInstall = o.kind === "install";
+  // Build tools default to a cache next to the repository (turbo in a linked worktree picks the MAIN clone's .turbo), which is not writable.
+  // Point them at one dedicated directory the sandbox allows instead. It sits beside, not inside, the sandbox profile files.
+  const cacheDir = join(o.profileDir, "cache");
+  if (useSandbox) mkdirSync(cacheDir, { recursive: true });
+  const toolEnv = { TURBO_CACHE_DIR: join(cacheDir, "turbo"), NX_CACHE_DIRECTORY: join(cacheDir, "nx") };
   const opts: SandboxOptions = {
+    writeDirs: useSandbox ? [cacheDir] : undefined,
     worktree: o.worktree, network: isInstall, loopback: o.sandbox?.loopback, home: o.sandbox?.home, readAllow: o.sandbox?.readAllow, gitCommonDir: o.sandbox?.gitCommonDir,
     writeAllow: isInstall ? (o.sandbox?.writeAllow ?? DEFAULT_WRITE_ALLOW) : undefined, // only installs may touch package-manager caches
   };
   const prefix = useSandbox ? sandboxPrefix(opts, join(o.profileDir, `sandbox-${o.kind}.sb`)) : [];
   const argv = [...prefix, "/bin/sh", "-c", o.command];
   const r: RunResult = await run({
-    cmd: argv[0]!, args: argv.slice(1), cwd: o.worktree, env: agentEnv(process.env, { NO_COLOR: "1", FORCE_COLOR: "0" }),
+    cmd: argv[0]!, args: argv.slice(1), cwd: o.worktree, env: agentEnv(process.env, { NO_COLOR: "1", FORCE_COLOR: "0", ...(useSandbox ? toolEnv : {}) }),
     stdin: "", timeoutMs: o.timeoutMs, signal: o.signal, logFile: o.logFile,
   });
   const out = `${r.stdout}${r.stderr ? `\n[stderr]\n${r.stderr}` : ""}`;

@@ -17,6 +17,7 @@ export interface SandboxOptions {
   loopback?: boolean; // allow TCP to and from this machine only (127.0.0.1 / ::1), nothing external. Ignored when `network` is already on.
   home?: string;
   readAllow?: string[]; // extra dirs under $HOME that tools need (toolchains, caches)
+  writeDirs?: string[]; // extra writable ABSOLUTE dirs (build-tool caches the factory points tools at)
   writeAllow?: string[]; // extra writable dirs (package-manager caches for installs)
   gitCommonDir?: string; // a linked worktree's shared .git: readable so `git` works inside tests
 }
@@ -36,7 +37,7 @@ export function buildProfile(o: SandboxOptions): string {
   const sub = (paths: string[]) => paths.map((p) => `(subpath ${q(p)})`).join(" ");
   const underHome = (rels: string[]) => rels.flatMap((r) => spellings(join(home, r)));
   const readOk = [...wt, ...underHome(o.readAllow ?? DEFAULT_READ_ALLOW), ...(o.gitCommonDir ? spellings(o.gitCommonDir) : [])];
-  const writeOk = [...wt, ...(o.writeAllow ? underHome(o.writeAllow) : [])];
+  const writeOk = [...wt, ...(o.writeAllow ? underHome(o.writeAllow) : []), ...(o.writeDirs ?? []).flatMap(spellings)];
   return [
     "(version 1)",
     "(allow default)",
@@ -58,7 +59,7 @@ export function buildProfile(o: SandboxOptions): string {
     `(allow file-read-data ${sub(wt)})`, // the worktree is always readable even if it lives under .software-factory
     // A linked worktree's repository (its shared .git) is readable even when it lives under ~/.software-factory, which the rule above
     // denies: without this `git show HEAD:file` fails inside tests with "not a git repository". Only that one .git directory, not its parent.
-    ...(o.gitCommonDir ? [`(allow file-read-data ${sub(spellings(o.gitCommonDir))})`] : []),
+    ...(o.gitCommonDir || o.writeDirs?.length ? [`(allow file-read-data ${sub([...(o.gitCommonDir ? spellings(o.gitCommonDir) : []), ...(o.writeDirs ?? []).flatMap(spellings)])})`] : []), // and the tool cache dirs it may write, so it can read its own cache back
   ].filter(Boolean).join("\n");
 }
 
