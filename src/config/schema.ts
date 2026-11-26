@@ -14,8 +14,8 @@ export const FactoryConfig = z.object({
   logLevel: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
   // The gh login this profile uses unless a project names its own. Lets e.g. a "home" and a "work" profile use different GitHub accounts.
   githubAccount: z.string().regex(/^[A-Za-z0-9-]{1,39}$/).optional(),
-  // Which issue tracker this profile uses. The factory never needs both: a "home" profile can be on Linear and a "work" profile on Jira.
-  tracker: z.enum(["linear", "jira"]).default("linear"),
+  // Which issue tracker this profile uses (Linear, Jira or GitHub Issues). The factory never needs two: a "home" profile can be on Linear and a "work" profile on Jira.
+  tracker: z.enum(["linear", "jira", "github"]).default("linear"),
   // automatic: tickets labelled factory:enabled in the pickup status are picked up on their own. manual: nothing starts until you start it from the Board.
   pickupMode: z.enum(["automatic", "manual"]).default("automatic"),
   dryRun: z.boolean().default(false),
@@ -194,6 +194,18 @@ export const JiraConfig = z.object({
 export type JiraConfig = z.infer<typeof JiraConfig>;
 
 /**
+ * GitHub Issues. A repository is the "team"; a milestone is the "project". GitHub issues are only open or closed, so the factory's
+ * workflow statuses are LABELS that start with `statusPrefix` (e.g. "status: In progress"); the factory may create them (labels are cheap),
+ * and "done" also closes the issue. Authentication is the `gh` login the profile already uses (factory.githubAccount): nothing secret lives here.
+ */
+export const GithubIssuesConfig = z.object({
+  statusPrefix: z.string().min(1).max(40).default("status: "),
+  statuses: LinearConfig.shape.statuses,
+  labels: LinearConfig.shape.labels,
+});
+export type GithubIssuesConfig = z.infer<typeof GithubIssuesConfig>;
+
+/**
  * Bitbucket Cloud credentials, by name. The TOKEN is never here (it is in the keychain, one entry per credential name); this only says what
  * kind of token it is. `access-token`: a repository, project or workspace access token (Bearer; git user x-token-auth). `api-token`: an
  * Atlassian account API token with Bitbucket scopes (Basic auth with your account email; git user x-bitbucket-api-token-auth).
@@ -216,9 +228,15 @@ export function effectiveTrackerNames(jira: JiraConfig): LinearConfig {
   });
 }
 
+/** For a GitHub profile: the configured names, in the shape the rest of the factory reads. */
+export function githubTrackerNames(g: GithubIssuesConfig): LinearConfig {
+  return LinearConfig.parse({ statuses: g.statuses, labels: g.labels });
+}
+
 export const LoadedConfig = z.object({
-  linear: LinearConfig, // for a Jira profile: the mapped Jira names (see JiraConfig)
+  linear: LinearConfig, // for a Jira or GitHub profile: the mapped names (see JiraConfig, GithubIssuesConfig)
   jira: JiraConfig,
+  githubIssues: GithubIssuesConfig,
   bitbucket: BitbucketConfig,
   factory: FactoryConfig,
   models: ModelsConfig,

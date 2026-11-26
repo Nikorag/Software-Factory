@@ -147,7 +147,7 @@ export function registerJiraRoutes(app: FastifyInstance, d: JiraRouteDeps, requi
   // ---- choosing the tracker for this profile ----
   app.put<{ Body: { tracker?: unknown } }>("/api/settings/tracker", { preHandler: requireToken }, async (req, reply) => {
     const kind = req.body?.tracker;
-    if (kind !== "linear" && kind !== "jira") return reply.code(400).send({ error: "tracker must be linear or jira" });
+    if (kind !== "linear" && kind !== "jira" && kind !== "github") return reply.code(400).send({ error: "tracker must be linear, jira or github" });
     if (kind === d.config.factory.tracker) return { ok: true };
     const active = d.db.select().from(jobs).where(inArray(jobs.status, ["queued", "running", "waiting"])).all().length;
     if (active) return reply.code(409).send({ error: `${active} job(s) are still active. Finish or cancel them before switching tracker: their tickets belong to the current one.` });

@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 const NEW = "__new";
 
 /** Projects: a list on the left, a full-height editor on the right. */
-function ProjectsPane({ projects, teams, globals, tracker, reload }: { projects: Project[]; teams: TeamAudit[]; globals: GlobalSettings | null; tracker?: "linear" | "jira"; reload: () => void }) {
+function ProjectsPane({ projects, teams, globals, tracker, reload }: { projects: Project[]; teams: TeamAudit[]; globals: GlobalSettings | null; tracker?: "linear" | "jira" | "github"; reload: () => void }) {
   const [params] = useSearchParams();
   const [sel, setSel] = useState<string | null>(params.get("project"));
   const [dirty, setDirty] = useState(false);
