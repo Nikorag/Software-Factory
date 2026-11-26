@@ -7,9 +7,9 @@ import { AgentRunner } from "../agents/runner.js";
 import { ConfigError } from "../config/load.js";
 import type { LoadedConfig, ProjectConfig } from "../config/schema.js";
 import { openDb, type DbHandle } from "../db/client.js";
-import { Engine, type HandlerRegistry, type TypedHandlers } from "../core/engine.js";
+import { Engine, type HandlerRegistry } from "../core/engine.js";
 import type { LinearClient } from "../linear/client.js";
-import { createTrackerClient } from "../tracker/index.js";
+import { trackerSet, type TrackerSet } from "../tracker/index.js";
 import { createIntakeHandlers } from "../linear/handlers.js";
 import { createLinearReporter } from "../linear/reporter.js";
 import { createLogger } from "../logging/logger.js";
@@ -20,8 +20,6 @@ import { createSpecKitHandlers } from "../speckit/handlers.js";
 import { createImplementationHandlers, type ImplDeps } from "../implement/handlers.js";
 import { createDeliveryHandlers, type DeliveryDeps } from "../delivery/handlers.js";
 import type { GitHubClient } from "../github/client.js";
-import { createTypedHandlers } from "../workflows/typed-handlers.js";
-import { backfillJobSnapshots, syncBuiltinWorkflow } from "../workflows/library.js";
 
 export interface Context {
   config: LoadedConfig;
@@ -30,11 +28,11 @@ export interface Context {
   router: ModelRouter;
   runner: AgentRunner;
   worktrees: WorktreeManager;
-  linear: () => LinearClient;
+  linear: (projectId?: string) => LinearClient;
+  /** Which tracker connection each project uses, with its client and names. */
+  trackers: TrackerSet;
   project: (id: string) => ProjectConfig;
   handlers: HandlerRegistry;
-  /** The reusable stage types (agent, review, check) that custom workflows are built from. */
-  typed: TypedHandlers;
   engine: Engine;
   hosts: Hosts;
 }
@@ -45,9 +43,6 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
   const logger = opts.logger ?? createLogger({ level: config.factory.logLevel, file: join(dataDir, "logs", "factory.log") });
   const handle = opts.db ?? openDb(join(dataDir, "database", "factory.sqlite"));
   syncProjects(handle.db, config.projects.projects);
-  // The built-in Default Workflow (kept current with the factory's own process and workflows.yaml), and the snapshot jobs from before workflows existed run on.
-  syncBuiltinWorkflow(handle.db, config.workflows);
-  backfillJobSnapshots(handle.db, config.workflows);
   // Looked up live (not copied into a Map): the settings UI adds and edits projects while the service runs.
   const project = (id: string): ProjectConfig => {
     const p = config.projects.projects.find((x) => x.id === id);
@@ -66,10 +61,11 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     repoPath: (id) => project(id).repository, defaultBranch: (id) => project(id).defaultBranch,
     networkEnv: (id) => hosts.gitAuth(project(id)),
   });
-  const linear = (): LinearClient => (opts.linear ? opts.linear : createTrackerClient(config));
+  const trackers = trackerSet(config, {}, opts.linear);
+  const linear = (projectId?: string): LinearClient => trackers.client(trackers.idOf(projectId ? config.projects.projects.find((p) => p.id === projectId) : undefined));
 
   const handlers: HandlerRegistry = {
-    ...createIntakeHandlers({ db: handle.db, linear, linearConfig: config.linear, project }),
+    ...createIntakeHandlers({ db: handle.db, linear, linearConfig: config.linear, linearNames: (id) => trackers.names(trackers.idOf(project(id))), project }),
     ...createSpecKitHandlers({ db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger }),
     ...createImplementationHandlers({
       db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger,
@@ -81,11 +77,6 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
       github: (p) => opts.github ?? hosts.pr(p), hosts, timing: opts.delivery, now: opts.deliveryNow, push: opts.push,
     }),
   };
-  // The reusable stage types custom workflows are built from (agent, review, command check). Same kit, same router, same sandbox as the built-in stages.
-  const typed = createTypedHandlers({
-    db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger, dataDir, runCommand: opts.runCommand,
-    settings: { commandTimeoutSeconds: config.factory.commandTimeoutSeconds, sandbox: config.factory.sandbox },
-  });
-  const engine = new Engine({ db: handle.db, logger, config, handlers, typed, observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun }) });
-  return { config, handle, logger, router, runner, worktrees, linear, project, handlers, typed, engine, hosts };
+  const engine = new Engine({ db: handle.db, logger, config, handlers, observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun }) });
+  return { config, handle, logger, router, runner, worktrees, linear, trackers, project, handlers, engine, hosts };
 }

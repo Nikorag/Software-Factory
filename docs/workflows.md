@@ -1,9 +1,7 @@
 # Workflows
 
-> The process described here is the built-in **Default Workflow**. Workflows are now configurable, reusable and assignable to projects and Linear labels: see [Configurable workflows](configurable-workflows.md). The engine runs each job against the workflow snapshot taken when the job was created; the tables below describe what the Default Workflow does (it is derived from `src/core/workflow.ts` and `workflows.yaml`).
-
-Stage list: `STAGES` in `src/config/schema.ts`. The built-in process (transitions, remediation routing, which stages mutate) is defined in `src/core/workflow.ts` and turned into the Default Workflow by `src/workflows/default.ts`; the engine reads transitions from the job's workflow snapshot.
-Per-stage timeout/retry policy for the Default Workflow: `config/workflows.yaml` (falls back to `defaults`); custom workflows set their own per stage. Stages that run agents or project commands also have a built-in timeout budget covering that work (`src/config/stage-budgets.ts`: agent timeouts, `commandTimeoutSeconds` per check, and for IMPLEMENTATION the configured passes). It applies to every workflow, and a configured timeout shorter than it is raised to it, since a timeout throws the stage's work away.
+Stage list: `STAGES` in `src/config/schema.ts`. Transitions, remediation routing and which stages mutate: `src/core/workflow.ts`.
+Per-stage timeout/retry policy: `config/workflows.yaml` (falls back to `defaults`). Stages that run agents or project commands also have a built-in timeout budget covering that work (`src/config/stage-budgets.ts`: agent timeouts, `commandTimeoutSeconds` per check, and for IMPLEMENTATION the configured passes). It applies to every workflow, and a configured timeout shorter than it is raised to it, since a timeout throws the stage's work away.
 
 ## Handler contract
 A stage handler is `(ctx) => Promise<StageResult>` and **must be idempotent** (it may be replayed after a crash).

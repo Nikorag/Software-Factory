@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { and, asc, desc, eq, gt, ne, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { FactoryDb } from "../db/client.js";
-import { decisions, jobs, projects, stageExecutions, workflows } from "../db/schema.js";
+import { decisions, jobs, projects, stageExecutions } from "../db/schema.js";
 import { getControl } from "../core/control.js";
 import { HubClient, HubError, type EventIn, type FetchLike, type SyncIn } from "./client.js";
 import type { HubSettings } from "./settings.js";
@@ -39,15 +39,6 @@ const short = (v: unknown, n: number) => (typeof v === "string" ? v.slice(0, n) 
 const iso = (d: Date | null | undefined) => (d ? d.toISOString() : undefined);
 const fingerprint = (key: string) => createHash("sha256").update(key).digest("hex").slice(0, 12);
 
-function routeOf(json: string | null): { action?: string; to?: string; rule?: string } | undefined {
-  if (!json) return undefined;
-  try { const r = JSON.parse(json) as Record<string, unknown>; return { action: short(r.action, 40), to: short(r.to, 60), rule: short(r.rule, 80) }; } catch { return undefined; }
-}
-function gateOf(json: string | null): boolean | undefined {
-  if (!json) return undefined;
-  try { const g = (JSON.parse(json) as { passed?: unknown }).passed; return typeof g === "boolean" ? g : undefined; } catch { return undefined; }
-}
-
 /**
  * Finished stage attempts after the cursor. A row is updated in place from "started" to its outcome, so a still-running attempt
  * with a lower id than a finished one must hold the cursor back: otherwise it would be skipped when it finishes.
@@ -60,14 +51,11 @@ export function collectStageEvents(db: FactoryDb, cursor: number, now = Date.now
     .where(and(gt(stageExecutions.id, cursor), ne(stageExecutions.outcome, "started"), blocker === null ? undefined : sql`${stageExecutions.id} < ${blocker}`))
     .orderBy(asc(stageExecutions.id)).limit(BATCH).all();
   const events = rows.map((r): EventIn => {
-    const route = routeOf(r.routeJson), passed = gateOf(r.gateJson);
     return {
       id: `stage_execution:${r.id}`, type: "stage.finished", jobId: r.jobId, occurredAt: (r.finishedAt ?? r.startedAt).toISOString(),
       payload: {
         stage: r.stage, attempt: r.attempt, outcome: r.outcome, startedAt: iso(r.startedAt), finishedAt: iso(r.finishedAt),
         ...(r.finishedAt ? { durationMs: r.finishedAt.getTime() - r.startedAt.getTime() } : {}),
-        ...(passed !== undefined ? { gatePassed: passed } : {}),
-        ...(route ? { routeAction: route.action, routeTo: route.to, routeRule: route.rule } : {}),
       },
     };
   });
@@ -84,18 +72,18 @@ export function collectDecisionEvents(db: FactoryDb, cursor: number): { events: 
   return { events, next: rows.length ? rows[rows.length - 1]!.id : cursor };
 }
 
-/** Projects, recent jobs and workflow names: identifiers and states only. Project "name" is the project id, never a path. */
+/** Projects, recent jobs and the workflow names they ran: identifiers and states only. Project "name" is the project id, never a path. */
 export function collectSync(db: FactoryDb): SyncIn {
   const ps = db.select({ id: projects.id }).from(projects).all().map((p) => ({ id: p.id, name: p.id }));
   const js = db.select().from(jobs).orderBy(desc(jobs.updatedAt)).limit(1000).all().map((j) => ({
-    id: j.id, projectId: j.projectId, title: j.externalKey, stage: j.stage, status: j.status, workflowId: j.workflowId ?? undefined,
+    id: j.id, projectId: j.projectId, title: j.externalKey, stage: j.stage, status: j.status, workflowId: j.workflow,
     metadata: {
-      workflow: j.workflow, workflowVersion: j.workflowVersion ?? undefined, stageAttempts: j.stageAttempts, remediationAttempts: j.remediationAttempts,
+      workflow: j.workflow, stageAttempts: j.stageAttempts, remediationAttempts: j.remediationAttempts,
       autonomous: j.autonomous, dryRun: j.dryRun, ...(j.prUrl ? { prUrl: short(j.prUrl, 300) } : {}), archived: j.archivedAt !== null,
       createdAt: iso(j.createdAt), updatedAt: iso(j.updatedAt),
     },
   }));
-  const ws = db.select({ id: workflows.id, name: workflows.name, version: workflows.version }).from(workflows).limit(200).all().map((w) => ({ id: w.id, name: w.name, version: String(w.version) }));
+  const ws = [...new Set(js.map((j) => j.workflowId))].slice(0, 200).map((w) => ({ id: w, name: w })); // one workflow per factory: names come from the jobs
   return { projects: ps.slice(0, 500), jobs: js, workflows: ws };
 }
 

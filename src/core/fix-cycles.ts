@@ -1,4 +1,4 @@
-import { and, count, eq, gt, like, max, or } from "drizzle-orm";
+import { and, count, eq, gt, like, max } from "drizzle-orm";
 import type { FactoryDb } from "../db/client.js";
 import { decisions } from "../db/schema.js";
 
@@ -15,11 +15,11 @@ export function fixCycleHistory(db: Pick<FactoryDb, "select">, jobId: string): {
   return { total: n("remediation"), retries: n("job.retry") };
 }
 
-/** Whether CI has already sent this job back for a fix since its last manual retry (i.e. it is in its CI phase). `ciStages`: the workflow's CI stage ids. */
-export function inCiPhase(db: FactoryDb, jobId: string, ciStages: readonly string[] = ["CI_VALIDATION"]): boolean {
+/** Whether CI has already sent this job back for a fix since its last manual retry (i.e. it is in its CI phase). */
+export function inCiPhase(db: FactoryDb, jobId: string): boolean {
   const lastRetry = db.select({ id: max(decisions.id) }).from(decisions).where(and(eq(decisions.jobId, jobId), eq(decisions.kind, "job.retry"))).get()?.id ?? 0;
   return Boolean(db.select({ id: decisions.id }).from(decisions)
-    .where(and(eq(decisions.jobId, jobId), eq(decisions.kind, "remediation"), or(...ciStages.map((s) => like(decisions.decision, `${s} ->%`))), gt(decisions.id, lastRetry))).get());
+    .where(and(eq(decisions.jobId, jobId), eq(decisions.kind, "remediation"), like(decisions.decision, "CI_VALIDATION ->%"), gt(decisions.id, lastRetry))).get());
 }
 
 /** Human-readable note on a job's lifetime fix cycles, or "" when nothing has been retried yet. */

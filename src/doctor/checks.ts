@@ -5,7 +5,7 @@ import type { LoadedConfig } from "../config/schema.js";
 import { findBinary } from "../speckit/tools.js";
 import { resolveSecret } from "../service/secrets.js";
 import { createLinearClient, type LinearClient } from "../linear/client.js";
-import { createTrackerClient, trackerConfigured } from "../tracker/index.js";
+import { createTrackerClient, trackerConfigured, trackerIdsInUse } from "../tracker/index.js";
 
 const run = promisify(execFile);
 
@@ -84,22 +84,25 @@ export function reviewerIndependence(config: LoadedConfig): CheckResult[] {
 }
 
 /** Read-only: asks Linear who the key belongs to. Reports the account name, never the key. */
-export async function checkLinear(config: LoadedConfig, clientOverride?: LinearClient): Promise<CheckResult> {
-  if (config.factory.tracker === "jira") {
-    const name = "jira";
+export async function checkLinear(config: LoadedConfig, clientOverride?: LinearClient, id: string = config.factory.tracker): Promise<CheckResult> {
+  const conn = config.connections[id];
+  if (!conn) return { name: id, status: "fail", detail: `no tracker connection "${id}"` };
+  // The built-in connections keep their original names ("linear", "jira", "github-issues"); any other is named by its id.
+  const name = id === "github" ? "github-issues" : id;
+  if (conn.kind === "jira" || conn.kind === "github") {
     try {
-      if (!clientOverride && !trackerConfigured(config)) return { name, status: "warn", detail: "not connected: set up the OAuth app and connect in Settings → Tracker" };
-      const me = await (clientOverride ?? createTrackerClient(config)).viewer();
+      if (!clientOverride && !trackerConfigured(config, undefined, id)) return { name, status: "warn", detail: "not connected: set up the OAuth app and connect in Settings → Trackers" };
+      const me = await (clientOverride ?? createTrackerClient(config, { id })).viewer();
       return { name, status: "ok", detail: `authenticated as ${me.name}` };
     } catch (e) { return { name, status: "fail", detail: (e as Error).message }; }
   }
-  const key = resolveSecret({ envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService });
-  if (!clientOverride && !key) return { name: "linear", status: "warn", detail: `${config.linear.apiKeyEnv} not set and no keychain entry "${config.linear.keychainService}"` };
+  const key = resolveSecret({ envName: conn.apiKeyEnv, keychainService: conn.keychainService });
+  if (!clientOverride && !key) return { name, status: "warn", detail: `${conn.apiKeyEnv} not set and no keychain entry "${conn.keychainService}"` };
   try {
     const me = await (clientOverride ?? createLinearClient({ apiKey: key!, maxRetries: 1 })).viewer();
-    return { name: "linear", status: "ok", detail: `authenticated as ${me.name}` };
+    return { name, status: "ok", detail: `authenticated as ${me.name}` };
   } catch (e) {
-    return { name: "linear", status: "fail", detail: (e as Error).message };
+    return { name, status: "fail", detail: (e as Error).message };
   }
 }
 
@@ -117,6 +120,6 @@ export async function runDoctor(config: LoadedConfig, fetchImpl: typeof fetch = 
     ...(await localChecks(config, fetchImpl)),
     ...reviewerIndependence(config),
   ];
-  results.push(await checkLinear(config));
+  for (const id of trackerIdsInUse(config)) results.push(await checkLinear(config, undefined, id)); // every tracker connection a project uses
   return results;
 }

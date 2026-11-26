@@ -8,8 +8,7 @@ import { isRunnable, onboardingFor } from "../repo/registry.js";
 import type { LinearClient, LinearIssue } from "./client.js";
 import { enqueueOutbox } from "./outbox.js";
 import { evaluateEligibility } from "./eligibility.js";
-import { resolveWorkflow } from "../workflows/resolver.js";
-import { WorkflowsConfig } from "../config/schema.js";
+import type { TrackerSet } from "../tracker/index.js";
 
 export interface DiscoveryReport {
   enqueued: { key: string; jobId: string; projectId: string; workflow: string; autonomous: boolean }[];
@@ -24,35 +23,38 @@ const specificity = (p: ProjectConfig) => (p.linear?.projectId || p.linear?.proj
  * itself (status writes go through the outbox once a job starts). Safe to run repeatedly and concurrently.
  */
 export async function discoverIssues(deps: {
-  db: FactoryDb; client: LinearClient; linear: LinearConfig; projects: ProjectConfig[]; logger: Logger; dryRun?: boolean;
+  db: FactoryDb; client?: LinearClient; linear: LinearConfig; projects: ProjectConfig[]; logger: Logger; dryRun?: boolean;
+  /** When projects live in different tracker connections: which client and names each one uses. Without it, `client` and `linear` serve every project. */
+  trackers?: TrackerSet;
   /** The profile's default pickup mode: projects in manual mode are never polled. */
   pickupMode?: "automatic" | "manual";
   /** Skip tickets of projects whose onboarding is not complete (the service turns this on). */
   requireOnboarding?: boolean;
-  /** workflows.yaml, for the built-in Default Workflow when the library has not been seeded yet. */
-  workflows?: WorkflowsConfig;
 }): Promise<DiscoveryReport> {
   const { db, client, linear, logger } = deps;
   const report: DiscoveryReport = { enqueued: [], skipped: [], errors: [] };
   const bound = deps.projects.filter((p) => p.enabled && p.linear && pickupModeOf(p, { pickupMode: deps.pickupMode ?? "automatic" }) === "automatic"); // manual projects are started from the Board
 
   // Collect candidates per project; an issue may match several project bindings.
-  const matches = new Map<string, { issue: LinearIssue; projects: ProjectConfig[] }>();
-  if (bound.length && (!linear.statuses.readyForSpecification || !linear.labels.enabled)) {
-    // Jira: nothing is guessed. Until the pickup status and the opt-in label are mapped there is nothing to search for.
-    for (const p of bound) report.errors.push({ projectId: p.id, error: "the tracker mapping is incomplete: map the \"Ready for specification\" status and the \"enabled\" label in Settings → Tracker (or use manual mode)" });
-    return report;
-  }
+  const matches = new Map<string, { issue: LinearIssue; projects: ProjectConfig[]; names: LinearConfig }>();
   for (const p of bound) {
     try {
-      const issues = await client.listIssues({
+      const tid = deps.trackers?.idOf(p) ?? "";
+      const names = deps.trackers ? deps.trackers.names(tid) : linear;
+      if (!names.statuses.readyForSpecification || !names.labels.enabled) {
+        // Jira: nothing is guessed. Until the pickup status and the opt-in label are mapped there is nothing to search for.
+        report.errors.push({ projectId: p.id, error: "the tracker mapping is incomplete: map the \"Ready for specification\" status and the \"enabled\" label in Settings → Trackers (or use manual mode)" });
+        continue;
+      }
+      const issues = await (deps.trackers ? deps.trackers.client(tid) : client!).listIssues({
         teamKey: p.linear!.teamKey, projectId: p.linear!.projectId, projectName: p.linear!.projectName,
-        stateName: linear.statuses.readyForSpecification, labelName: linear.labels.enabled,
+        stateName: names.statuses.readyForSpecification, labelName: names.labels.enabled,
       });
       for (const issue of issues) {
-        const m = matches.get(issue.id) ?? { issue, projects: [] };
+        const k = `${tid}|${issue.id}`; // the same id in two connections is two different tickets
+        const m = matches.get(k) ?? { issue, projects: [], names };
         m.projects.push(p);
-        matches.set(issue.id, m);
+        matches.set(k, m);
       }
     } catch (e) {
       report.errors.push({ projectId: p.id, error: (e as Error).message });
@@ -60,7 +62,7 @@ export async function discoverIssues(deps: {
     }
   }
 
-  for (const { issue, projects } of matches.values()) {
+  for (const { issue, projects, names } of matches.values()) {
     // Most specific binding wins (team+project beats team-only); a tie is ambiguous and is not guessed at.
     const top = Math.max(...projects.map(specificity));
     const best = projects.filter((p) => specificity(p) === top);
@@ -70,7 +72,7 @@ export async function discoverIssues(deps: {
     }
     const project = best[0]!;
     const prior = db.select().from(jobs).where(and(eq(jobs.projectId, project.id), eq(jobs.externalId, issue.id))).orderBy(desc(jobs.createdAt)).limit(1).get();
-    const verdict = evaluateEligibility(issue, project, linear, { projectRunnable: isRunnable(db, project.id), existingJobStatus: prior?.status });
+    const verdict = evaluateEligibility(issue, project, names, { projectRunnable: isRunnable(db, project.id), existingJobStatus: prior?.status });
     if (verdict.eligible && deps.requireOnboarding) {
       const ob = onboardingFor(db, project);
       if (ob.status !== "ready") {
@@ -84,19 +86,11 @@ export async function discoverIssues(deps: {
       if (!prior || prior.status === "cancelled") report.skipped.push({ key: issue.identifier, projectId: project.id, reasons: verdict.reasons });
       continue;
     }
-    // Which workflow runs this ticket is decided now and frozen onto the job. One that cannot run is reported, never replaced by another.
-    const wf = resolveWorkflow(db, { projectId: project.id, labels: issue.labels }, deps.workflows ?? WorkflowsConfig.parse({}));
-    if (!wf.ok) {
-      if (!prior || prior.status === "cancelled") report.skipped.push({ key: issue.identifier, projectId: project.id, reasons: [`workflow: ${wf.reason}`] });
-      continue;
-    }
     const { job, created } = enqueue(db, {
       projectId: project.id, externalId: issue.id, externalKey: issue.identifier,
       workflow: verdict.workflow, autonomous: verdict.autonomous, dryRun: deps.dryRun ?? false,
-      resolved: { workflowId: wf.workflowId, workflowVersion: wf.version, definition: wf.definition, entryStage: wf.entryStage, record: wf.record },
     });
     if (!created) continue;
-    db.insert(decisions).values({ jobId: job.id, kind: "workflow.resolve", actor: "factory", decision: `workflow "${wf.workflowName}" v${wf.version} (${wf.record.source})`, rationale: wf.record.reason }).run();
     db.insert(decisions).values({
       jobId: job.id, kind: "discovery.accept", actor: "factory",
       decision: `accepted ${issue.identifier} as ${verdict.workflow}${verdict.autonomous ? " (autonomous)" : ""}`,

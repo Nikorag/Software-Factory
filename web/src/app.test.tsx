@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { Shell } from "@/components/Shell";
+import { deriveFlow } from "@/lib/pipeline";
 import { JobDetail } from "@/pages/JobDetail";
 import { Settings } from "@/pages/Settings";
 import { Setup } from "@/pages/Setup";
@@ -10,7 +11,6 @@ import { Board } from "@/pages/Board";
 import { Overview } from "@/pages/Overview";
 import { HealthPage } from "@/pages/Health";
 import type { Execution, Job, JobDetail as D, Overview as O } from "@/lib/types";
-import { defaultDefinition } from "@/test-fixtures";
 
 const XSS = `<img src=x onerror="window.__pwned=1"><script>window.__pwned=1</script>`;
 const job = (o: Partial<Job> = {}): Job => ({ id: "j1", key: "JAM-1", project: "p", workflow: "default", stage: "CLAUDE_REVIEW", status: "running", heldFromStage: null, remediationAttempts: 0, stageAttempts: 0, autonomous: false, dryRun: false, prUrl: null, lastError: null, notBefore: null, createdAt: 1000, updatedAt: 2000, ...o });
@@ -20,7 +20,7 @@ const overview = (o: Partial<O> = {}): O => ({
   active: [job()], queued: [], recent: [], scheduler: null, mergeMode: "pr-only", dryRun: false, health: [{ name: "sandbox", status: "ok", detail: "ready", checkedAt: 1 }],
   system: { memory: { availableBytes: 8 * 2 ** 30, totalBytes: 16 * 2 ** 30, freePercent: 50, pressure: "ok" }, disk: { freeBytes: 2 ** 40, totalBytes: 2 ** 41 }, load: [1, 1, 1] }, ...o,
 });
-const detail = (j: Job, executions: Execution[] = [], extra: Partial<D> = {}): D => ({ job: j, workflow: { id: "default", version: 1, name: "Default Workflow", definition: defaultDefinition(), resolution: { source: "default", reason: "no assignment applies: the global default \"Default Workflow\"", matchedLabels: [] }, valid: true }, stageOrder: [], executions, decisions: [], invocations: [], artifacts: [], worktree: null, outbox: [], ...extra });
+const detail = (j: Job, executions: Execution[] = [], extra: Partial<D> = {}): D => ({ job: j, stageOrder: [], executions, decisions: [], invocations: [], artifacts: [], worktree: null, outbox: [], ...extra });
 
 let routes: Record<string, unknown>;
 let calls: { url: string; method: string; headers?: Record<string, string>; body?: string }[];
@@ -39,6 +39,35 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const app = (path: string) => render(
   <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="board" element={<Board />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
 );
+
+describe("flow derivation (from the stage history the factory already stores)", () => {
+  it("marks finished steps, the running step, and counts a fix route only when a fix stage actually ran", () => {
+    const f = deriveFlow(job({ stage: "CLAUDE_REVIEW" }), [exec("AUTOMATED_TESTING", "succeeded", 1), exec("LOCAL_MODEL_REVIEW", "succeeded", 2), exec("REMEDIATION", "succeeded", 3), exec("AUTOMATED_TESTING", "succeeded", 4)], []);
+    expect(f.state["test"]).toBe("done"); expect(f.state["crev"]).toBe("run");
+    expect(f.attempts["test"]).toBe(2);
+    expect(f.loopsUsed.has("hrev>fix")).toBe(true); expect(f.loopsUsed.has("fix>test")).toBe(true);
+    expect(f.loopsUsed.has("ci>fix")).toBe(false);
+  });
+  it("marks the step a held job stopped at, not the held state", () => {
+    const f = deriveFlow(job({ stage: "NEEDS_ATTENTION", status: "waiting", heldFromStage: "FINAL_VALIDATION", remediationAttempts: 3 }), [exec("FINAL_VALIDATION", "failed")], []);
+    expect(f.state["fval"]).toBe("fail"); expect(f.active).toBe("fval");
+  });
+  it("a spec review that sends work to Fix spec skips the direct route to validation", () => {
+    const f = deriveFlow(job({ stage: "SPECIFICATION_VALIDATION" }), [exec("SPECIFICATION_REVIEW", "succeeded", 1), exec("SPECIFICATION_REMEDIATION", "succeeded", 2)], []);
+    expect(f.loopsUsed.has("srev>sfix")).toBe(true); expect(f.skipped.has("srev>sval")).toBe(true);
+  });
+});
+
+describe("flow derivation: waiting", () => {
+  it("does not count re-checks while waiting as attempts or time on the step", () => {
+    const waits = Array.from({ length: 12 }, (_, i) => exec("MERGING", "waiting", 100 + i));
+    const f = deriveFlow(job({ stage: "MERGING", status: "queued" }), [exec("PULL_REQUEST_CREATION"), ...waits], []);
+    expect(f.attempts["hm"]).toBeUndefined();
+    expect(f.duration["hm"]).toBeUndefined();
+    expect(f.state["hm"]).toBe("wait");
+    expect(f.attempts["pr"]).toBe(1);
+  });
+});
 
 describe("dashboard", () => {
   it("renders the overview: state, mode, counts, system and dependency health", async () => {
@@ -85,8 +114,8 @@ describe("dashboard", () => {
     app("/jobs/j1");
     const a = await screen.findByRole("link", { name: /pull request/ });
     expect(a).toHaveAttribute("rel", expect.stringContaining("noopener")); expect(a).toHaveAttribute("target", "_blank");
-    expect(screen.getByRole("img", { name: "Default Workflow flow chart" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Claude review: blocked" })).toBeInTheDocument(); // marked where it stopped (waiting for a person)
+    expect(screen.getByRole("img", { name: "Pipeline flow chart" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Claude review: fail" })).toBeInTheDocument(); // marked where it stopped
     expect(screen.getByRole("button", { name: "Discovered: done" })).toBeInTheDocument();
     expect(screen.getByText(/Retry resumes there/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Answer & resume/ })).toBeDisabled(); // nothing typed yet
@@ -551,7 +580,7 @@ describe("settings and setup", () => {
     expect(progress.queryByRole("button", { name: /Start/ })).toBeNull();
     expect(progress.getByText("implement")).toBeInTheDocument();                             // and what it is doing now
     await userEvent.click(backlog.getByRole("button", { name: "Start" }));
-    await waitFor(() => expect(calls.find((c) => c.url === "/api/board/start")?.body).toBe(JSON.stringify({ issueId: "i1" })));
+    await waitFor(() => expect(calls.find((c) => c.url === "/api/board/start")?.body).toBe(JSON.stringify({ issueId: "i1", projectId: "a" })));
     expect(await screen.findByText("Started ENG-418. It is queued and will begin shortly.")).toBeInTheDocument();
     expect(calls.find((c) => c.url === "/api/board/start")!.headers).toMatchObject({ "X-Factory-UI": "1" });
   });
@@ -641,6 +670,42 @@ describe("settings and setup", () => {
     expect(calls.some((c) => c.url === "/api/settings/tracker")).toBe(false);                      // nothing happens until confirmed
     await userEvent.click(screen.getByRole("button", { name: "Switch" }));
     await waitFor(() => expect(JSON.parse(calls.find((c) => c.url === "/api/settings/tracker")!.body!)).toEqual({ tracker: "jira" }));
+  });
+  const entry = (id: string, kind: string, label: string, o: object = {}) => ({ id, kind, label, builtin: ["linear", "jira", "github"].includes(id), isDefault: id === "linear", connected: false, projects: [], ...o });
+  const trackerList = { default: "linear", trackers: [entry("linear", "linear", "Linear", { connected: true, projects: ["my-app"] }), entry("jira", "jira", "Jira"), entry("github", "github", "GitHub Issues"), entry("work-jira", "jira", "Work Jira")] };
+  it("sets up one of several tracker connections: each Jira has its own app, so its calls say which one", async () => {
+    routes = { ...jiraRoutes(), "/api/setup": setupInfo, "/api/trackers": trackerList, "/api/jira/status?tracker=work-jira": { ...jiraStatus, id: "work-jira", clientId: null, secretSet: false, connected: false, site: null } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    const pick = await screen.findByRole("combobox", { name: "Tracker connection to set up" });
+    expect(screen.getByRole("radio", { name: "Work Jira" })).toBeInTheDocument();                  // every connection can be the profile's default
+    await userEvent.selectOptions(pick, "work-jira");
+    expect(await screen.findByText(/Your Atlassian OAuth app/)).toBeInTheDocument();
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/jira/status?tracker=work-jira")).toBe(true));
+    expect(calls.some((c) => c.url === "/api/jira/status")).toBe(false);                           // the built-in Jira was not asked
+  });
+  it("adds a tracker connection: a named second Jira (or Linear, or GitHub) with its own id", async () => {
+    routes = { ...jiraRoutes(), "/api/setup": setupInfo, "/api/trackers": trackerList };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    await userEvent.click(await screen.findByRole("button", { name: /Add another tracker connection/ }));
+    const form = within(screen.getByRole("group", { name: "Add a tracker connection" }));
+    await userEvent.type(form.getByLabelText("Name"), "Client Jira");
+    await userEvent.click(form.getByRole("button", { name: "Add connection" }));
+    await waitFor(() => expect(JSON.parse(calls.find((c) => c.method === "POST" && c.url === "/api/trackers")!.body!)).toEqual({ id: "client-jira", kind: "jira", label: "Client Jira" }));
+  });
+  it("a project can name its own tracker connection, and then picks its team from that connection", async () => {
+    routes = { ...jiraRoutes(), "/api/projects": { projects: [proj] }, "/api/setup": setupInfo, "/api/trackers": trackerList, "/api/settings/projects/my-app": { ok: true },
+      "/api/setup/linear?tracker=work-jira": { teams: [{ key: "WEB", name: "Web", projects: ["Core"], audit: { ok: true, statuses: [], labels: [] } }] } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("combobox", { name: "tracker connection" }));
+    await userEvent.click(await screen.findByRole("option", { name: "Work Jira" }));
+    expect(await screen.findByText("Jira project")).toBeInTheDocument();                           // the words change with the connection's kind
+    await userEvent.click(await screen.findByRole("combobox", { name: "linear team" }));
+    await userEvent.click(await screen.findByRole("option", { name: "WEB · Web" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT" && c.url === "/api/settings/projects/my-app")).toBeTruthy());
+    expect(JSON.parse(calls.find((c) => c.method === "PUT" && c.url === "/api/settings/projects/my-app")!.body!)).toMatchObject({ tracker: "work-jira", linear: { teamKey: "WEB" } });
   });
   const bbCreds = { credentials: [{ name: "work", kind: "access-token", email: null, hasToken: true, usedBy: ["my-app"] }, { name: "me", kind: "api-token", email: "me@x.com", hasToken: false, usedBy: [] }] };
   it("manages Bitbucket credentials: lists them with the projects that use them, never shows a token, and saves a new one", async () => {

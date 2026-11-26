@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api, send } from "@/lib/api";
 import type { JiraCheck, JiraMapping, JiraMetadata, JiraStatus } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
+import { withTracker } from "@/lib/trackers";
 
 const NONE = "__none";
 const ROLE_LABELS: Record<string, [string, string]> = {
@@ -29,22 +30,23 @@ const LABEL_ROLES: [string, string, string][] = [
 ];
 
 /** Connect Jira with an OAuth app, then map the factory's statuses and labels onto what already exists in your Jira (the factory cannot create statuses there). */
-export function JiraSetup({ onChanged }: { onChanged?: () => void }) {
-  const { data: st, reload } = usePoll(() => api<JiraStatus>("/api/jira/status"), 2500);
+export function JiraSetup({ onChanged, trackerId }: { onChanged?: () => void; trackerId?: string }) {
+  const t = (p: string) => withTracker(p, trackerId, "jira"); // the built-in "jira" connection is the server's default
+  const { data: st, reload } = usePoll(() => api<JiraStatus>(t("/api/jira/status")), 2500);
   const [clientId, setClientId] = useState(""), [secret, setSecret] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   useEffect(() => { if (st?.clientId) setClientId((c) => c || st.clientId!); }, [st?.clientId]);
   const changed = () => { void reload(); onChanged?.(); };
 
-  const saveApp = async () => { const r = await send("PUT", "/api/jira/app", { clientId, clientSecret: secret }); if (r.ok) { setSecret(""); setMsg({ ok: true, text: "Saved. The secret is in your keychain." }); changed(); } else setMsg({ ok: false, text: r.error }); };
+  const saveApp = async () => { const r = await send("PUT", t("/api/jira/app"), { clientId, clientSecret: secret }); if (r.ok) { setSecret(""); setMsg({ ok: true, text: "Saved. The secret is in your keychain." }); changed(); } else setMsg({ ok: false, text: r.error }); };
   const connect = async () => {
-    const r = await send<{ url: string }>("POST", "/api/jira/connect", {});
+    const r = await send<{ url: string }>("POST", t("/api/jira/connect"), {});
     if (!r.ok) return setMsg({ ok: false, text: r.error });
     window.open(r.data.url, "_blank", "noopener,noreferrer"); // the system browser: sign in to Atlassian there, then come back
     setMsg({ ok: true, text: "Approve access in the browser tab that opened, then return here." });
   };
-  const pickSite = async (id: string) => { const r = await send("POST", "/api/jira/site", { cloudId: id }); if (r.ok) changed(); else setMsg({ ok: false, text: r.error }); };
-  const disconnect = async () => { await send("POST", "/api/jira/disconnect", {}); changed(); };
+  const pickSite = async (id: string) => { const r = await send("POST", t("/api/jira/site"), { cloudId: id }); if (r.ok) changed(); else setMsg({ ok: false, text: r.error }); };
+  const disconnect = async () => { await send("POST", t("/api/jira/disconnect"), {}); changed(); };
   if (!st) return null;
   const ready = Boolean(st.clientId && st.secretSet);
 
@@ -71,16 +73,17 @@ export function JiraSetup({ onChanged }: { onChanged?: () => void }) {
         ) : null}
         {msg ? <Alert variant={msg.ok ? "default" : "destructive"}><AlertDescription>{msg.text}</AlertDescription></Alert> : null}
       </section>
-      {st.connected && st.site ? <Mapping /> : <p className="text-sm text-muted-foreground">Connect Jira to map its statuses and labels.</p>}
+      {st.connected && st.site ? <Mapping trackerId={trackerId} /> : <p className="text-sm text-muted-foreground">Connect Jira to map its statuses and labels.</p>}
     </div>
   );
 }
 
-function Mapping() {
-  const { data: map, reload: reloadMap } = usePoll(() => api<JiraMapping>("/api/jira/mapping"), 600000);
+function Mapping({ trackerId }: { trackerId?: string }) {
+  const t = (p: string) => withTracker(p, trackerId, "jira");
+  const { data: map, reload: reloadMap } = usePoll(() => api<JiraMapping>(t("/api/jira/mapping")), 600000);
   const [project, setProject] = useState<string | undefined>(undefined);
-  const { data: meta, error: metaErr } = usePoll(() => api<JiraMetadata>(`/api/jira/metadata${project ? `?project=${encodeURIComponent(project)}` : ""}`), 120000, [project]);
-  const { data: check, reload: reloadCheck } = usePoll(() => api<JiraCheck>("/api/jira/mapping/check"), 120000);
+  const { data: meta, error: metaErr } = usePoll(() => api<JiraMetadata>(t(`/api/jira/metadata${project ? `?project=${encodeURIComponent(project)}` : ""}`)), 120000, [project]);
+  const { data: check, reload: reloadCheck } = usePoll(() => api<JiraCheck>(t("/api/jira/mapping/check")), 120000);
   const [draft, setDraft] = useState<{ statuses: Record<string, string>; labels: Record<string, string> } | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   useEffect(() => { if (map && !draft) setDraft({ statuses: { ...map.statuses }, labels: { ...map.labels } }); }, [map, draft]);
@@ -88,7 +91,7 @@ function Mapping() {
   const dirty = JSON.stringify(draft) !== JSON.stringify({ statuses: map.statuses, labels: map.labels });
   const need = new Set(map.required.statuses), needL = new Set(map.required.labels);
   const missingRequired = [...need].filter((k) => !draft.statuses[k]);
-  const save = async () => { const r = await send("PUT", "/api/jira/mapping", draft); if (r.ok) { setMsg({ ok: true, text: "Saved. Applied immediately." }); setDraft(null); void reloadMap(); void reloadCheck(); } else setMsg({ ok: false, text: r.error }); };
+  const save = async () => { const r = await send("PUT", t("/api/jira/mapping"), draft); if (r.ok) { setMsg({ ok: true, text: "Saved. Applied immediately." }); setDraft(null); void reloadMap(); void reloadCheck(); } else setMsg({ ok: false, text: r.error }); };
 
   return (
     <section className="grid gap-3">

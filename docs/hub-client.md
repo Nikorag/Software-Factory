@@ -25,12 +25,12 @@ Reporting stops and the key is deleted from this machine. Revoke the key on the 
 ## What is sent
 Metadata only, from a fixed list of fields:
 - the factory version, whether it is paused or stopped, the tracker name, job counts by status;
-- project ids; jobs: id, ticket key (e.g. `ENG-123`), stage, status, workflow id/name/version, attempt counts, PR URL, created/updated times;
-- stage events: stage name, attempt, outcome, start/finish times, duration, whether the gate passed, and where the workflow routed next;
+- project ids; jobs: id, ticket key (e.g. `ENG-123`), stage, status, the workflow name, attempt counts, PR URL, created/updated times;
+- stage events: stage name, attempt, outcome, start/finish times, duration;
 - decision events: kind, actor, and a short decision string.
 
 ## What is never sent
-Repository contents, diffs, agent conversations or logs, ticket text, error messages, decision rationales, file paths, environment variables, workflow prompts, or any secret or token. Tests assert this.
+Repository contents, diffs, agent conversations or logs, ticket text, error messages, decision rationales, file paths, environment variables, or any secret or token. Tests assert this.
 
 ## Behaviour
 - Reporting runs every 30 seconds (`factory.hub.reportIntervalSeconds`) inside the service and can never block or crash the factory. If the hub is down it retries with exponential backoff (30 s up to 15 min); nothing is lost, because progress is read from the local database.
@@ -65,7 +65,7 @@ The rules live in one file, `src/hub/remote-policy.ts`, **default-deny**: a rout
 | `PUT /api/settings/projects/:id`, `DELETE /api/settings/projects/:id` | **Decision needed.** A project's settings carry the repository path and the install/build/test shell commands, so editing them remotely means choosing what runs on this machine (sandboxed, but installs have network). Blocked until you decide it should be allowed. |
 | `GET /`, `/assets/*`, `/health` | Local-only; the hub serves its own copy of the dashboard. |
 
-Everything else the dashboard does is allowed: reading jobs, logs, conversations, the board and settings; pause/resume/stop; answering, retrying, cancelling, archiving and deleting jobs; starting tickets from the board; workflows (create, edit, validate, enable, assign); global settings; project actions (clone, validate, run checks, onboarding); tracker setup; the version check (it only looks, it never updates).
+Everything else the dashboard does is allowed: reading jobs, logs, conversations, the board and settings; pause/resume/stop; answering, retrying, cancelling, archiving and deleting jobs; starting tickets from the board; global settings; tracker connections (add, rename, remove; their credentials are not allowed remotely) and the GitHub Issues/Jira mappings; project actions (clone, validate, run checks, onboarding); tracker setup; the version check (it only looks, it never updates).
 
 ### What passes through the hub
 Requests and responses pass through the hub's memory and short-lived Redis keys (seconds, with an expiry) and are **not stored in PostgreSQL**. That includes job lists, ticket keys, **agent conversations and logs** (which can hold ticket text and code), so whoever operates the hub can see them while they are in transit. Only turn this on for a hub you run and trust. The factory itself never logs request or response bodies or headers; at debug level it logs only the method, route pattern, status and duration.

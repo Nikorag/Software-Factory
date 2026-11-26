@@ -1,4 +1,4 @@
-import { BUILTIN_HELP } from "./builtin-stages";
+import { NODES, nodeOfStage } from "./pipeline";
 
 export const ago = (t: number | null | undefined) => {
   if (!t) return "never";
@@ -24,21 +24,12 @@ export const safeLink = (u: unknown): string | null => {
 };
 /** Friendly names for the stages that are not boxes on the flow chart (the job is held, finished or stopped there). */
 const HELD_LABELS: Record<string, string> = { BLOCKED: "Blocked", FAILED: "Failed", CANCELLED: "Cancelled", PAUSED: "Paused", NEEDS_ATTENTION: "Needs attention", COMPLETED: "Completed" };
-/** Stage names by id, as a workflow defines them (see stageNames()). Anything it does not name falls back to the built-in stage's friendly name. */
-export type StageNames = Record<string, string> | undefined;
 /**
- * What a person sees for a stage id such as LOCAL_MODEL_REVIEW: the stage's name in the job's workflow ("Independent review"), or for a
- * built-in stage with no workflow at hand the same friendly name. The engine's ids stay in the API, the database and the logs.
+ * What a person sees for an engine stage id such as LOCAL_MODEL_REVIEW: the same friendly name as its box on the flow chart ("Independent
+ * review"). The engine's ids are an internal vocabulary and stay in the API, the database and the logs.
  */
-export const stageLabel = (s: string, names?: StageNames) => names?.[s] ?? BUILTIN_HELP[s]?.name ?? HELD_LABELS[s] ?? s.replaceAll("_", " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
-const BUILTIN_IDS = [...Object.keys(BUILTIN_HELP), ...Object.keys(HELD_LABELS)];
-const rx = new WeakMap<object, RegExp>();
-const BASE = new RegExp(`\\b(${BUILTIN_IDS.join("|")})\\b`, "g");
-const pattern = (names: NonNullable<StageNames>) => {
-  let r = rx.get(names);
-  if (!r) { r = new RegExp(`\\b(${[...new Set([...BUILTIN_IDS, ...Object.keys(names)])].join("|")})\\b`, "g"); rx.set(names, r); }
-  return r;
-};
-/** Rewrites any stage ids inside a message ("LOCAL_MODEL_REVIEW -> REMEDIATION") into their friendly names. */
-export const stageText = <T extends string | null | undefined>(t: T, names?: StageNames): T => (typeof t === "string" ? (t.replace(names ? pattern(names) : BASE, (m) => stageLabel(m, names)) as T) : t);
+export const stageLabel = (s: string) => nodeOfStage(s)?.label ?? HELD_LABELS[s] ?? s.replaceAll("_", " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+const STAGE_ID = new RegExp(`\\b(${[...NODES.map((n) => n.stage), ...Object.keys(HELD_LABELS)].join("|")})\\b`, "g");
+/** Rewrites any engine stage ids inside a message ("LOCAL_MODEL_REVIEW -> REMEDIATION") into their friendly names. */
+export const stageText = <T extends string | null | undefined>(t: T): T => (typeof t === "string" ? (t.replace(STAGE_ID, (m) => stageLabel(m)) as T) : t);
 export const HELD = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION"];

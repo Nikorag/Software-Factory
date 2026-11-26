@@ -52,7 +52,7 @@ describe("remote access policy decisions", () => {
     for (const [m, p] of [["GET", "/api/overview"], ["GET", "/api/jobs"], ["GET", "/api/jobs/j1"], ["GET", "/api/jobs/j1/invocations/3/log"], ["GET", "/api/jobs/j1/invocations/3/conversation"],
       ["GET", "/api/board"], ["POST", "/api/board/start"], ["POST", "/api/jobs/j1/cancel"], ["POST", "/api/jobs/j1/retry"], ["POST", "/api/jobs/j1/answer"], ["DELETE", "/api/jobs/j1"],
       ["POST", "/api/control/pause"], ["POST", "/api/control/resume"], ["POST", "/api/control/stop"], ["POST", "/api/control/clear-stop"],
-      ["GET", "/api/workflows"], ["PUT", "/api/workflows/w1"], ["POST", "/api/workflows/w1/enable"], ["POST", "/api/workflows/validate"], ["PUT", "/api/workflows/assignments"], ["DELETE", "/api/workflows/assignments"],
+      ["GET", "/api/trackers"], ["POST", "/api/trackers"], ["PUT", "/api/trackers/jira-2"], ["DELETE", "/api/trackers/jira-2"], ["GET", "/api/github-issues/mapping"], ["PUT", "/api/github-issues/mapping"], ["PUT", "/api/settings/tracker"],
       ["PUT", "/api/settings/global"], ["POST", "/api/projects/web/actions/sync"], ["GET", "/api/settings/global"]]) expect(ok(m!, p!), `${m} ${p}`).toBe(true);
   });
 
@@ -72,8 +72,8 @@ describe("remote access policy decisions", () => {
   });
 
   it("the most specific rule wins", () => {
-    expect(classifyRemote("PUT", "/api/workflows/assignments")).toMatchObject({ allowed: true, route: "/api/workflows/assignments" });
-    expect(classifyRemote("PUT", "/api/workflows/other")).toMatchObject({ allowed: true, route: "/api/workflows/:id" });
+    expect(classifyRemote("PUT", "/api/trackers/jira-2")).toMatchObject({ allowed: true, route: "/api/trackers/:id" });
+    expect(classifyRemote("DELETE", "/api/jobs/j1")).toMatchObject({ allowed: true, route: "/api/jobs/:id" });
     expect(classifyRemote("POST", "/api/setup/linear-key")).toMatchObject({ allowed: false, route: "/api/setup/linear-key" });
   });
 
@@ -84,7 +84,7 @@ describe("remote access policy decisions", () => {
 });
 
 describe("remote path validation", () => {
-  const good = ["/api/jobs", "/api/jobs?status=running&page=2", "/api/jobs/abc-123/invocations/4/log?tail=200", "/api/workflows/my.flow_1"];
+  const good = ["/api/jobs", "/api/jobs?status=running&page=2", "/api/jobs/abc-123/invocations/4/log?tail=200", "/api/trackers/jira-2.eu_1"];
   const bad = ["", "api/jobs", "/", "/health", "/apix", "//api/jobs", "/api//jobs", "/api/../health", "/api/jobs/..", "/api/./jobs", "http://evil.example/api/jobs", "https://x/api/jobs",
     "/api/jobs%2f..%2fhealth", "/api/%2e%2e/health", "/api/jobs/%5c", "/api/jobs\\x", "/api/jobs\n", "/api/jobs\u0000", "/api/jobs x", "/api/jobs#frag", "/api/%zz", "/api/" + "a".repeat(2100)];
   for (const p of good) it(`accepts ${p}`, () => expect(validateRemotePath(p)).not.toBeNull());

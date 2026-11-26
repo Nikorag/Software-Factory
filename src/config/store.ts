@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { isMap, isSeq, parseDocument, type Document, type YAMLMap } from "yaml";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir, loadConfig } from "./load.js";
-import { JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, ProjectInput, ProjectOverrides, type LoadedConfig } from "./schema.js";
+import { BUILTIN_TRACKER_IDS, GithubIssuesConfig, JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, KIND_NAME, ProjectInput, TrackerId, TrackerKind, ProjectOverrides, type LoadedConfig } from "./schema.js";
 
 const FILES = ["factory.yaml", "linear.yaml", "models.yaml", "workflows.yaml", "projects.yaml"];
+/** Files that describe tracker connections: every validation copy needs them, or a project naming one would look unknown. */
+const TRACKER_FILES = ["jira.yaml", "github-issues.yaml", "trackers.yaml"];
 
 /**
  * The settings UI edits the user's own copy of the config, never the shipped defaults. The first edit seeds it from the defaults.
@@ -26,6 +28,7 @@ export const ProjectSettings = z.object({
   defaultBranch: z.string().min(1).max(100).default("main"),
   enabled: z.boolean().default(true),
   autonomy: ProjectInput.shape.autonomy,
+  tracker: TrackerId.optional(),
   linear: z.object({ teamKey: z.string().min(1), projectName: z.string().optional() }).optional(),
   host: z.enum(["github", "bitbucket"]).default("github"),
   github: z.object({ account: z.string().optional(), repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional() }).default({}),
@@ -59,7 +62,7 @@ function commit(dir: string, doc: Document): LoadedConfig {
   const text = doc.toString();
   const scratch = mkdtempSync(join(tmpdir(), "factory-cfg-"));
   try {
-    for (const f of FILES) if (existsSync(join(dir, f)) && f !== "projects.yaml") copyFileSync(join(dir, f), join(scratch, f));
+    for (const f of [...FILES, ...TRACKER_FILES]) if (existsSync(join(dir, f)) && f !== "projects.yaml") copyFileSync(join(dir, f), join(scratch, f));
     writeFileSync(join(scratch, "projects.yaml"), text);
     loadConfig(scratch); // throws ConfigError with a readable list
   } finally { rmSync(scratch, { recursive: true, force: true }); }
@@ -154,15 +157,64 @@ const editYaml = (dir: string, file: string, edit: (doc: Document) => void): voi
   edit(doc);
   const scratch = mkdtempSync(join(tmpdir(), "factory-cfg-"));
   try {
-    for (const x of FILES.concat(["jira.yaml"])) if (existsSync(join(dir, x))) copyFileSync(join(dir, x), join(scratch, x));
+    for (const x of FILES.concat(TRACKER_FILES)) if (existsSync(join(dir, x))) copyFileSync(join(dir, x), join(scratch, x));
     writeFileSync(join(scratch, file), doc.toString());
     loadConfig(scratch); // refuse anything that would leave the config unloadable
   } finally { rmSync(scratch, { recursive: true, force: true }); }
   writeFileSync(`${f}.tmp`, doc.toString()); renameSync(`${f}.tmp`, f);
 };
 
-export function updateTracker(kind: "linear" | "jira", dir = seedHomeConfig()): LoadedConfig {
-  editYaml(dir, "factory.yaml", (d) => { d.set("tracker", kind); });
+/** Chooses the profile's DEFAULT tracker connection (by id). Projects that name no tracker of their own follow it. */
+export function updateTracker(id: string, dir = seedHomeConfig()): LoadedConfig {
+  editYaml(dir, "factory.yaml", (d) => { d.set("tracker", id); }); // loadConfig refuses an id that is not a connection
+  return loadConfig(dir);
+}
+
+/** Where a connection's settings live: the built-in three in their own files (so existing setups keep working), the rest in trackers.yaml. */
+const LEGACY_FILE: Record<string, string> = { linear: "linear.yaml", jira: "jira.yaml", github: "github-issues.yaml" };
+interface Scope { set(k: string, v: unknown): void; delete(k: string): void; node(v: unknown): unknown }
+function editConnection(dir: string, id: string, edit: (s: Scope) => void): void {
+  const builtin = BUILTIN_TRACKER_IDS.includes(id);
+  editYaml(dir, builtin ? LEGACY_FILE[id]! : "trackers.yaml", (d) => {
+    const path = builtin ? [] : ["connections", id];
+    if (!builtin && !d.hasIn(path)) throw new ConfigError(`there is no tracker connection "${id}"`);
+    edit({ set: (k, v) => d.setIn([...path, k], v), delete: (k) => { d.deleteIn([...path, k]); }, node: (v) => d.createNode(v) });
+  });
+}
+
+const DEFAULT_KEYCHAIN: Record<string, string> = { linear: "software-factory-linear", jira: "software-factory-jira" };
+/** Adds a named tracker connection (a second Jira, a third Linear...). It gets its own keychain entry (and, for Linear, its own key variable) so credentials never mix. */
+export function createConnection(input: { id: string; kind: string; label?: string; account?: string }, dir = seedHomeConfig()): LoadedConfig {
+  const id = TrackerId.parse(input.id), kind = TrackerKind.parse(input.kind);
+  if (BUILTIN_TRACKER_IDS.includes(id)) throw new ConfigError(`"${id}" is a built-in tracker: choose another id`);
+  const cur = loadConfig(dir);
+  if (cur.connections[id]) throw new ConfigError(`there is already a tracker connection "${id}"`);
+  const base = kind === "linear" ? cur.connections.linear : kind === "jira" ? cur.connections.jira : undefined;
+  const entry: Record<string, unknown> = { kind, label: input.label?.trim() || `${KIND_NAME[kind]} (${id})` };
+  if (kind === "linear") { entry.apiKeyEnv = `LINEAR_API_KEY_${id.toUpperCase().replace(/-/g, "_")}`; entry.keychainService = `${(base as { keychainService: string }).keychainService}-${id}`; }
+  if (kind === "jira") entry.keychainService = `${(base as { keychainService: string }).keychainService ?? DEFAULT_KEYCHAIN.jira}-${id}`;
+  if (kind === "github" && input.account) entry.account = input.account;
+  editYaml(dir, "trackers.yaml", (d) => {
+    if (!d.hasIn(["connections"])) d.set("connections", d.createNode({}));
+    d.setIn(["connections", id], d.createNode(entry));
+  });
+  return loadConfig(dir);
+}
+
+/** Removes a connection that nothing uses. (Its keychain entries are left alone: delete them in Keychain Access if you want them gone.) */
+export function removeConnection(id: string, dir = seedHomeConfig()): LoadedConfig {
+  if (BUILTIN_TRACKER_IDS.includes(id)) throw new ConfigError(`"${id}" is a built-in tracker and cannot be removed`);
+  const cur = loadConfig(dir);
+  if (!cur.connections[id]) throw new ConfigError(`there is no tracker connection "${id}"`);
+  if (cur.factory.tracker === id) throw new ConfigError(`"${id}" is the profile's default tracker: choose another default first`);
+  const users = cur.projects.projects.filter((p) => p.tracker === id).map((p) => p.id);
+  if (users.length) throw new ConfigError(`${users.join(", ")} still use${users.length === 1 ? "s" : ""} "${id}": move them to another tracker first`);
+  editYaml(dir, "trackers.yaml", (d) => { d.deleteIn(["connections", id]); });
+  return loadConfig(dir);
+}
+
+export function renameConnection(id: string, label: string, dir = seedHomeConfig()): LoadedConfig {
+  editConnection(dir, id, (s) => s.set("label", label.trim().slice(0, 60)));
   return loadConfig(dir);
 }
 
@@ -174,15 +226,32 @@ export const JiraMapping = z.object({
 
 export interface JiraPatch { clientId?: string; site?: { cloudId: string; url: string; name: string } | null; mapping?: z.input<typeof JiraMapping> }
 /** Writes jira.yaml (comments preserved). The OAuth client secret and tokens are never written here: they live in the keychain. */
-export function updateJiraConfig(patch: JiraPatch, dir = seedHomeConfig()): LoadedConfig {
+export function updateJiraConfig(patch: JiraPatch, dir = seedHomeConfig(), id = "jira"): LoadedConfig {
   const mapping = patch.mapping ? JiraMapping.parse(patch.mapping) : null;
-  editYaml(dir, "jira.yaml", (d) => {
+  editConnection(dir, id, (d) => {
     if (patch.clientId !== undefined) d.set("clientId", patch.clientId);
-    if (patch.site === null) d.delete("site"); else if (patch.site) d.set("site", d.createNode(patch.site));
+    if (patch.site === null) d.delete("site"); else if (patch.site) d.set("site", d.node(patch.site));
     if (mapping) {
-      d.set("statuses", d.createNode(Object.fromEntries(Object.entries(mapping.statuses).filter(([, v]) => v !== undefined))));
-      d.set("labels", d.createNode(Object.fromEntries(Object.entries(mapping.labels).filter(([, v]) => v !== undefined))));
+      d.set("statuses", d.node(Object.fromEntries(Object.entries(mapping.statuses).filter(([, v]) => v !== undefined))));
+      d.set("labels", d.node(Object.fromEntries(Object.entries(mapping.labels).filter(([, v]) => v !== undefined))));
     }
+  });
+  return loadConfig(dir);
+}
+
+export const GithubIssuesMapping = z.object({
+  statusPrefix: z.string().min(1).max(40).optional(),
+  statuses: GithubIssuesConfig.shape.statuses.optional(),
+  labels: GithubIssuesConfig.shape.labels.optional(),
+});
+/** Writes github-issues.yaml (comments preserved): the status-label prefix and the names of the factory's statuses and labels. */
+export function updateGithubIssuesConfig(patch: z.input<typeof GithubIssuesMapping> & { account?: string | null }, dir = seedHomeConfig(), id = "github"): LoadedConfig {
+  const m = GithubIssuesMapping.parse(patch);
+  editConnection(dir, id, (d) => {
+    if (m.statusPrefix !== undefined) d.set("statusPrefix", m.statusPrefix);
+    if (m.statuses) d.set("statuses", d.node(m.statuses));
+    if (m.labels) d.set("labels", d.node(m.labels));
+    if (patch.account === null) d.delete("account"); else if (patch.account) d.set("account", patch.account);
   });
   return loadConfig(dir);
 }
@@ -190,7 +259,9 @@ export function updateJiraConfig(patch: JiraPatch, dir = seedHomeConfig()): Load
 /** Apply a new tracker setup to the config object the running service holds (in place: handlers captured these objects). */
 export function applyTracker(live: LoadedConfig, fresh: LoadedConfig): void {
   live.factory.tracker = fresh.factory.tracker;
+  live.connections = fresh.connections;
   live.jira = fresh.jira;
+  live.githubIssues = fresh.githubIssues;
   Object.assign(live.linear.statuses, fresh.linear.statuses);
   Object.assign(live.linear.labels, fresh.linear.labels);
   live.linear.keychainService = fresh.linear.keychainService;

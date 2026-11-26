@@ -27,7 +27,7 @@ import { PACKAGE_ROOT } from "../config/load.js";
 import { TaskManager } from "./tasks.js";
 import { UpdateChecker } from "./versions.js";
 import { bbStore } from "../bitbucket/auth.js";
-import { keychainStore, trackerConfigured } from "../tracker/index.js";
+import { jiraStoreFor, trackerConfigured, trackerIdsInUse } from "../tracker/index.js";
 import { pruneAgentLogs, rotateLogs } from "./retention.js";
 import { addProfile, DEFAULT_PROFILE, factoryRoot, listProfiles, removeProfile } from "../config/profiles.js";
 import { isUp, startService as launchService } from "./launch.js";
@@ -59,9 +59,8 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
 
   const usesLocal = Object.values(config.models.routes).some((r) => r.provider === "local");
   const health = new HealthChecker({
-    trackerName: config.factory.tracker,
     claudeAuth: async () => (await run("claude", ["auth", "status"], { timeout: 10_000 })).stdout,
-    linearViewer: async () => ctx.linear().viewer(),
+    trackers: () => trackerIdsInUse(config).map((id) => ({ name: id === "github" ? "github-issues" : id /* "github" is already the gh sign-in probe */, viewer: async () => ctx.trackers.client(id).viewer() })),
     ghAuth: async () => { const r = await run("gh", ["auth", "status"], { timeout: 10_000 }).catch((e) => e as { stdout?: string; stderr?: string }); return `${r.stdout ?? ""}${r.stderr ?? ""}`; },
     sandboxAvailable, specifyInstalled: () => findBinary("specify") !== null,
     localModels: usesLocal ? () => new LocalModelClient({ baseUrl: config.models.local.baseUrl }).listModels() : undefined,
@@ -71,20 +70,25 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     db: ctx.handle.db, engine: ctx.engine, logger,
     intervals: { discoveryMs: config.factory.pollIntervalSeconds * 1000 },
     // Nothing to poll before the first project is added (first run): do not complain about a missing Linear key yet.
-    discover: async () => config.projects.projects.length === 0 ? { enqueued: [], skipped: [], errors: [] } : discoverIssues({ db: ctx.handle.db, client: ctx.linear(), linear: config.linear, projects: config.projects.projects, logger, dryRun: config.factory.dryRun, requireOnboarding: true, pickupMode: config.factory.pickupMode, workflows: config.workflows }),
-    flush: async () => (config.factory.dryRun ? { sent: 0, failed: 0, pending: 0 } : flushOutbox({ db: ctx.handle.db, client: ctx.linear(), linear: config.linear, logger })),
+    discover: async () => config.projects.projects.length === 0 ? { enqueued: [], skipped: [], errors: [] } : discoverIssues({ db: ctx.handle.db, trackers: ctx.trackers, linear: config.linear, projects: config.projects.projects, logger, dryRun: config.factory.dryRun, requireOnboarding: true, pickupMode: config.factory.pickupMode }),
+    flush: async () => (config.factory.dryRun ? { sent: 0, failed: 0, pending: 0 } : flushOutbox({ db: ctx.handle.db, trackers: ctx.trackers, projectOf: (id) => config.projects.projects.find((p) => p.id === id), linear: config.linear, logger })),
     validate: async () => {
       for (const p of config.projects.projects.filter((x) => x.enabled && x.managed)) { const c = await ensureClone(p, { hosts: ctx.hosts }); if (c.status === "error") logger.warn({ project: p.id, err: c.error }, "clone failed"); }
       await validateProjects(ctx.handle.db, config.projects.projects, { hosts: ctx.hosts });
     },
   });
 
-  const keySrc = { envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService };
   const settings = {
-    tasks: new TaskManager(), actions: createProjectActions(ctx), linear: () => ctx.linear(), linearKeyPresent: () => trackerConfigured(config),
-    saveLinearKey: async (key: string) => { const me = await createLinearClient({ apiKey: key }).viewer(); saveSecret(keySrc, key); return { name: me.name }; },
+    tasks: new TaskManager(), actions: createProjectActions(ctx), linear: (id?: string) => ctx.trackers.client(id ?? config.factory.tracker), linearKeyPresent: (id?: string) => trackerConfigured(config, undefined, id),
+    saveLinearKey: async (key: string, id?: string) => {
+      const c = config.connections[id ?? config.factory.tracker];
+      if (!c || c.kind !== "linear") throw new Error("that is not a Linear connection");
+      const me = await createLinearClient({ apiKey: key }).viewer();
+      saveSecret({ keychainService: c.keychainService }, key);
+      return { name: me.name };
+    },
   };
-  const app = buildServer({ shutdown: opts.requestShutdown, db: ctx.handle.db, logger, config, engine: ctx.engine, worktrees: ctx.worktrees, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: keychainStore(config.jira.keychainService), port }, updates: new UpdateChecker(), profiles: {
+  const app = buildServer({ shutdown: opts.requestShutdown, db: ctx.handle.db, logger, config, engine: ctx.engine, worktrees: ctx.worktrees, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: jiraStoreFor(config, "jira"), storeFor: (id) => jiraStoreFor(config, id), port }, updates: new UpdateChecker(), profiles: {
     current: process.env.FACTORY_PROFILE ?? DEFAULT_PROFILE, list: () => listProfiles(), add: (n) => addProfile(n), remove: (n) => removeProfile(n),
     start: (p) => launchService(p, factoryRoot()), isUp: (p) => isUp(p),
   } });

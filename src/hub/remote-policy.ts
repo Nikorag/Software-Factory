@@ -15,13 +15,15 @@ const LIFECYCLE = "controls the factory process itself";
 const LOCAL = "only makes sense on the machine running the factory";
 
 export const RULES: readonly Rule[] = [
-  // ---- reads: overview, jobs, logs, board, workflows, settings, status ----
+  // ---- reads: overview, jobs, logs, board, settings, status ----
   ...allow("GET",
     "/api/overview", "/api/health", "/api/jobs", "/api/jobs/:id", "/api/jobs/:id/invocations/:iid/conversation", "/api/jobs/:id/invocations/:iid/log",
-    "/api/projects", "/api/tasks/:id", "/api/board", "/api/workflows", "/api/workflows/:id", "/api/workflows/labels", "/api/workflows/meta",
+    "/api/projects", "/api/tasks/:id", "/api/board",
     "/api/settings/global", "/api/setup", "/api/setup/github", "/api/setup/linear", "/api/update",
     // Read-only views of integration state. They report names/flags (hasToken, secretSet, connected), never a secret value.
-    "/api/profiles", "/api/bitbucket/credentials", "/api/jira/status", "/api/jira/whoami", "/api/jira/mapping", "/api/jira/mapping/check", "/api/jira/metadata"),
+    "/api/profiles", "/api/bitbucket/credentials", "/api/jira/status", "/api/jira/whoami", "/api/jira/mapping", "/api/jira/mapping/check", "/api/jira/metadata",
+    // Tracker connections: ids, kinds, labels and whether credentials exist (and the NAME of the env var/keychain entry), never a value.
+    "/api/trackers", "/api/github-issues/status", "/api/github-issues/whoami", "/api/github-issues/mapping"),
 
   // ---- factory control (the safe ones) ----
   ...allow("POST", "/api/control/pause", "/api/control/resume", "/api/control/stop", "/api/control/clear-stop"),
@@ -31,13 +33,10 @@ export const RULES: readonly Rule[] = [
   ...allow("POST", "/api/jobs/:id/answer", "/api/jobs/:id/archive", "/api/jobs/:id/unarchive", "/api/jobs/:id/cancel", "/api/jobs/:id/retry", "/api/board/start"),
   ...allow("DELETE", "/api/jobs/:id"),
 
-  // ---- workflows (definition text only; command text comes from project settings, never from a workflow) ----
-  ...allow("POST", "/api/workflows", "/api/workflows/validate", "/api/workflows/:id/duplicate", "/api/workflows/:id/:action(enable|disable)"),
-  ...allow("PUT", "/api/workflows/:id", "/api/workflows/assignments", "/api/workflows/settings"),
-  ...allow("DELETE", "/api/workflows/:id", "/api/workflows/assignments"),
-
   // ---- settings that carry no secret ----
-  ...allow("PUT", "/api/settings/global", "/api/settings/tracker", "/api/jira/mapping"),
+  ...allow("PUT", "/api/settings/global", "/api/settings/tracker", "/api/jira/mapping", "/api/github-issues/mapping"),
+  // Tracker connections: create/rename/remove a NAMED connection. No credential is involved (those are set up separately, and blocked here).
+  ...allow("POST", "/api/trackers"), ...allow("PUT", "/api/trackers/:id"), ...allow("DELETE", "/api/trackers/:id"),
   ...allow("POST", "/api/projects/:id/actions/:kind", "/api/setup/linear/:team/create", "/api/update/check"), // clone/validate/check/onboard; tracker setup; version check (not an update)
   // AMBIGUOUS, blocked pending a decision: project settings carry the repository path and the install/build/test shell commands,
   // so writing them remotely means choosing what runs on this machine (sandboxed, but with network for installs).

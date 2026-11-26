@@ -6,5 +6,3 @@ Useful keys: `factory.maxConcurrentJobs` (1-8), `factory.maxRemediationAttempts`
 
 `factory.hub` (`enabled`, `url`, `reportIntervalSeconds`, `remoteAccess`) is **off by default** and is managed by `factory hub connect` / `disconnect` / `remote-access`: it reports job progress (metadata only) to a central hub, and `remoteAccess` (a separate, also-off switch) lets the hub's web dashboard operate this factory through a default-deny route policy. The API key is never in a config file. See [Hub client](hub-client.md).
 
-## workflows.yaml and the workflow library
-`workflows.yaml` still sets per-stage timeouts and retry counts, and now tunes the built-in **Default Workflow** (its `feature` entry plus `defaults`; changing it gives the Default Workflow a new version, while running jobs keep their snapshot). Custom workflows, their prompts, models, gates, routes, project and label assignments, label priorities and the conflict policy live in the database and are managed in the app: see [Configurable workflows](configurable-workflows.md).

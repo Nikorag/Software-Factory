@@ -3,29 +3,30 @@ import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir } from "../config/load.js";
 import { applyGlobal, applyProjects, globalSettingsOf, ProjectSettings, removeProject, seedHomeConfig, updateGlobalSettings, upsertProject } from "../config/store.js";
-import type { LoadedConfig } from "../config/schema.js";
+import { trackerIdOf, type LoadedConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { jobs } from "../db/schema.js";
 import { auditTeam, type TeamAudit } from "../linear/check.js";
 import { applySetup } from "../linear/setup.js";
 import type { LinearClient } from "../linear/client.js";
 import { createLinearClient } from "../linear/client.js";
-import { trackerName } from "../tracker/index.js";
+import { trackerName, trackerNames } from "../tracker/index.js";
 import { syncProjects } from "../repo/registry.js";
 import { listGhAccounts, type GhAccount } from "../github/accounts.js";
 import { ACTIONS, type ActionKind, type ProjectActions } from "../service/actions.js";
 import type { TaskManager } from "../service/tasks.js";
-import { unassign } from "../workflows/library.js";
 
 export interface SettingsDeps {
   db: FactoryDb;
   config: LoadedConfig;
   tasks: TaskManager;
   actions: ProjectActions;
-  linear: () => LinearClient;
-  /** Validates against Linear first, then stores the key (keychain). Returns who it authenticated as. */
-  saveLinearKey: (key: string) => Promise<{ name: string }>;
-  linearKeyPresent: () => boolean;
+  /** The client of a tracker connection (default: the profile's default). */
+  linear: (trackerId?: string) => LinearClient;
+  /** Validates against Linear first, then stores the key (keychain) for that Linear connection. Returns who it authenticated as. */
+  saveLinearKey: (key: string, trackerId?: string) => Promise<{ name: string }>;
+  /** Is the connection usable (a key exists / Jira is connected)? Default: the profile's default tracker. */
+  linearKeyPresent: (trackerId?: string) => boolean;
   githubAccounts?: () => Promise<GhAccount[]>;
 }
 
@@ -39,40 +40,57 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
   // ---- setup wizard ----
   app.get("/api/setup", async () => ({
     configDir: d.config.configDir ?? null, homeConfigDir: homeConfigDir(), usingDefaults: !d.config.configDir || d.config.configDir === BUNDLED_CONFIG_DIR,
-    projectCount: d.config.projects.projects.length, tracker: { kind: d.config.factory.tracker, name: trackerName(d.config), connected: d.linearKeyPresent() }, linear: { keyPresent: d.linearKeyPresent(), env: d.config.linear.apiKeyEnv, keychainService: d.config.linear.keychainService ?? null },
+    projectCount: d.config.projects.projects.length, tracker: { kind: d.config.connections[d.config.factory.tracker]!.kind, id: d.config.factory.tracker, name: trackerName(d.config), connected: d.linearKeyPresent() }, linear: { keyPresent: d.linearKeyPresent(), env: d.config.linear.apiKeyEnv, keychainService: d.config.linear.keychainService ?? null },
   }));
 
-  app.post<{ Body: { key?: unknown } }>("/api/setup/linear-key", { preHandler: requireToken }, async (req, reply) => {
-    if (d.config.factory.tracker === "jira") return reply.code(400).send({ error: "this profile uses Jira: connect it with OAuth in Settings → Tracker" });
+  app.post<{ Body: { key?: unknown; tracker?: unknown } }>("/api/setup/linear-key", { preHandler: requireToken }, async (req, reply) => {
+    const tid = typeof req.body?.tracker === "string" ? req.body.tracker : d.config.factory.tracker; // which Linear connection the key is for
+    const conn = d.config.connections[tid];
+    if (!conn) return reply.code(404).send({ error: `no tracker connection ${tid}` });
+    if (conn.kind === "jira") return reply.code(400).send({ error: "that is a Jira connection: connect it with OAuth in Settings → Trackers" });
+    if (conn.kind === "github") return reply.code(400).send({ error: "that is a GitHub Issues connection: it signs in with the gh login, not a Linear key" });
     const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
     if (!/^lin_api_[A-Za-z0-9]{20,}$/.test(key)) return reply.code(400).send({ error: "that does not look like a Linear personal API key (it starts with lin_api_)" });
     try {
       await createLinearClient({ apiKey: key }).viewer(); // prove it works before storing anything
-      return { ok: true, ...(await d.saveLinearKey(key)) };
+      return { ok: true, ...(await d.saveLinearKey(key, tid)) };
     } catch (e) { return reply.code(400).send({ error: `Linear rejected that key or it could not be stored: ${(e as Error).message}` }); }
   });
 
   /** Teams, their projects, and which of the statuses/labels the factory needs are missing. Read-only. */
-  app.get("/api/setup/linear", async (_req, reply) => {
+  app.get<{ Querystring: { tracker?: string } }>("/api/setup/linear", async (req, reply) => {
     try {
-      const client = d.linear();
+      const tid = req.query.tracker ?? d.config.factory.tracker;
+      const conn = d.config.connections[tid];
+      if (!conn) return reply.code(404).send({ error: `no tracker connection ${tid}` });
+      const client = d.linear(tid);
       const teams = await client.teams();
-      const out: { key: string; name: string; projects: string[]; audit: TeamAudit }[] = [];
-      const jira = d.config.factory.tracker === "jira";
+      const out: { key: string; name: string; projects: string[]; audit: TeamAudit; audited: boolean }[] = [];
+      const jira = conn.kind === "jira";
       // Jira: "teams" are Jira projects and "projects" their components. Nothing is created in Jira, so there is no audit: see the mapping instead.
-      for (const t of teams) out.push({ key: t.key, name: t.name, projects: (await client.projects(t.id)).map((p) => p.name), audit: jira ? { team: { key: t.key, name: t.name }, statuses: [], labels: [], existingStatuses: [], existingLabels: [], ok: true } : await auditTeam(client, d.config.linear, t) });
+      // GitHub: "teams" are repositories (there can be hundreds), so only the ones a project is linked to are read and audited: the rest just fill the picker.
+      const github = conn.kind === "github";
+      const linked = new Set(d.config.projects.projects.flatMap((p) => (p.linear && trackerIdOf(d.config, p) === tid ? [p.linear.teamKey] : [])));
+      const none = (t: { key: string; name: string }): TeamAudit => ({ team: { key: t.key, name: t.name }, statuses: [], labels: [], existingStatuses: [], existingLabels: [], ok: true });
+      for (const t of teams) {
+        if (github && !linked.has(t.key)) { out.push({ key: t.key, name: t.name, projects: [], audit: none(t), audited: false }); continue; }
+        out.push({ key: t.key, name: t.name, projects: (await client.projects(t.id)).map((p) => p.name), audit: jira ? none(t) : await auditTeam(client, trackerNames(d.config, tid), t), audited: !jira });
+      }
       return { teams: out };
     } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
   });
 
   /** Creates only what is missing (never edits or deletes). */
-  app.post<{ Params: { team: string } }>("/api/setup/linear/:team/create", { preHandler: requireToken }, async (req, reply) => {
-    if (d.config.factory.tracker === "jira") return reply.code(400).send({ error: "Jira statuses and labels cannot be created by the factory: map them to existing ones in Settings → Tracker" });
+  app.post<{ Params: { team: string }; Querystring: { tracker?: string } }>("/api/setup/linear/:team/create", { preHandler: requireToken }, async (req, reply) => {
+    const tid = req.query.tracker ?? d.config.factory.tracker;
+    const conn = d.config.connections[tid];
+    if (!conn) return reply.code(404).send({ error: `no tracker connection ${tid}` });
+    if (conn.kind === "jira") return reply.code(400).send({ error: "Jira statuses and labels cannot be created by the factory: map them to existing ones in Settings → Trackers" });
     try {
-      const client = d.linear();
+      const client = d.linear(tid);
       const team = (await client.teams()).find((t) => t.key === req.params.team);
       if (!team) return reply.code(404).send({ error: `no Linear team ${req.params.team}` });
-      const r = await applySetup(client, d.config.linear, team, {});
+      const r = await applySetup(client, trackerNames(d.config, tid), team, {});
       return { ok: r.failed.length === 0, created: r.created, failed: r.failed };
     } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
   });
@@ -98,7 +116,7 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
     // a running job needs its project's config: removing it under them fails them with a ConfigError and orphans their worktrees
     const active = d.db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.projectId, req.params.id), inArray(jobs.status, ["queued", "running", "waiting"]))).all().length;
     if (active) return reply.code(409).send({ error: `${req.params.id} has ${active} active job(s). Finish or cancel them before removing the project.` });
-    try { apply(removeProject(req.params.id, writableDir(d.config))); unassign(d.db, "project", req.params.id); return { ok: true }; } catch (e) { return fail(reply, e); }
+    try { apply(removeProject(req.params.id, writableDir(d.config))); return { ok: true }; } catch (e) { return fail(reply, e); }
   });
 
   // ---- background actions on a project ----

@@ -5,7 +5,7 @@ import { pino } from "pino";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config/load.js";
 import { openDb } from "../src/db/client.js";
-import { decisions, jobs, projects, stageExecutions, workflows } from "../src/db/schema.js";
+import { decisions, jobs, projects, stageExecutions } from "../src/db/schema.js";
 import type { FetchLike } from "../src/hub/client.js";
 import { connectHub, disconnectHub, hubStatus } from "../src/hub/commands.js";
 import { backoffMs, HubReporter, readState, stateFile } from "../src/hub/reporter.js";
@@ -33,16 +33,15 @@ function fakeHub(respond: (path: string, n: number) => number = () => 200) {
 function seed() {
   const { db } = openDb(":memory:");
   db.insert(projects).values({ id: "web", configJson: JSON.stringify({ repository: "/Users/me/secret-repo", token: "PROJECT_SECRET" }) }).run();
-  db.insert(workflows).values({ id: "default", name: "Default Workflow", version: 3, definitionJson: JSON.stringify({ prompt: "WORKFLOW_PROMPT_SECRET" }) }).run();
-  db.insert(jobs).values({ id: "j1", projectId: "web", externalId: "lin-1", externalKey: "ENG-1", status: "running", stage: "SPECIFY", workflowId: "default", workflowVersion: 3,
-    prUrl: "https://github.com/o/r/pull/9", lastError: "LAST_ERROR_SECRET /Users/me/secret-repo/.env", workflowSnapshotJson: "{\"x\":\"SNAPSHOT_SECRET\"}" }).run();
+  db.insert(jobs).values({ id: "j1", projectId: "web", externalId: "lin-1", externalKey: "ENG-1", status: "running", stage: "SPECIFY", workflow: "feature",
+    prUrl: "https://github.com/o/r/pull/9", lastError: "LAST_ERROR_SECRET /Users/me/secret-repo/.env", }).run();
   return db;
 }
 const exec = (db: ReturnType<typeof seed>, n: number, outcome: "succeeded" | "started" | "failed" = "succeeded") =>
   db.insert(stageExecutions).values({ jobId: "j1", stage: "SPECIFY", attempt: n, outcome, idempotencyKey: `j1:SPECIFY:${n}`, startedAt: new Date(1_700_000_000_000 + n * 1000),
     finishedAt: outcome === "started" ? null : new Date(1_700_000_000_500 + n * 1000),
     inputJson: JSON.stringify({ ticket: "TICKET_TEXT_SECRET" }), outputJson: JSON.stringify({ diff: "DIFF_SECRET" }), error: "STACK_SECRET at /Users/me/x.ts",
-    gateJson: JSON.stringify({ passed: true, trace: ["TRACE_SECRET"] }), routeJson: JSON.stringify({ action: "advance", to: "PLAN", rule: "default", reason: "REASON_SECRET text" }) }).returning({ id: stageExecutions.id }).get().id;
+}).returning({ id: stageExecutions.id }).get().id;
 
 const dir = () => mkdtempSync(join(tmpdir(), "factory-hub-"));
 function reporter(db: ReturnType<typeof seed>, dataDir: string, hub: ReturnType<typeof fakeHub>, o: { enabled?: boolean; key?: string | undefined; now?: () => number; getKey?: () => string | undefined } = {}) {
@@ -145,10 +144,10 @@ describe("reporting", () => {
     expect(hub.calls[0]!.body).toMatchObject({ version: "1.2.3", metadata: { paused: false, tracker: "linear", jobs: { running: 1 } } });
     const sync = hub.calls[1]!.body as { projects: unknown[]; jobs: Array<Record<string, unknown>>; workflows: unknown[] };
     expect(sync.projects).toEqual([{ id: "web", name: "web" }]);
-    expect(sync.jobs[0]).toMatchObject({ id: "j1", projectId: "web", title: "ENG-1", stage: "SPECIFY", status: "running", workflowId: "default", metadata: { prUrl: "https://github.com/o/r/pull/9" } });
-    expect(sync.workflows).toEqual([{ id: "default", name: "Default Workflow", version: "3" }]);
+    expect(sync.jobs[0]).toMatchObject({ id: "j1", projectId: "web", title: "ENG-1", stage: "SPECIFY", status: "running", workflowId: "feature", metadata: { prUrl: "https://github.com/o/r/pull/9" } });
+    expect(sync.workflows).toEqual([{ id: "feature", name: "feature" }]);
     const ev = (hub.calls[2]!.body.events as Array<Record<string, unknown>>)[0]!;
-    expect(ev).toMatchObject({ id: "stage_execution:1", type: "stage.finished", jobId: "j1", payload: { stage: "SPECIFY", attempt: 1, outcome: "succeeded", gatePassed: true, routeAction: "advance", routeTo: "PLAN" } });
+    expect(ev).toMatchObject({ id: "stage_execution:1", type: "stage.finished", jobId: "j1", payload: { stage: "SPECIFY", attempt: 1, outcome: "succeeded" } });
     expect(readState(d).lastSuccessAt).not.toBeNull();
 
     hub.calls.length = 0; await r.tick(); // nothing changed: just a heartbeat

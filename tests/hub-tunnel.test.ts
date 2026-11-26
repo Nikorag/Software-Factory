@@ -149,7 +149,7 @@ describe("running the tunnel", () => {
 
   it("passes the request body through", async () => {
     const hub = fakeHub(), s = stubApp(), { t } = tunnel(s.app, hub);
-    await t.execute(req({ method: "PUT", path: "/api/workflows/assignments", headers: { "content-type": "application/json" }, bodyBase64: Buffer.from('{"a":1}').toString("base64") }));
+    await t.execute(req({ method: "PUT", path: "/api/github-issues/mapping", headers: { "content-type": "application/json" }, bodyBase64: Buffer.from('{"a":1}').toString("base64") }));
     expect(Buffer.from(s.calls[0]!.payload as Buffer).toString()).toBe('{"a":1}');
   });
 
