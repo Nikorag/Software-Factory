@@ -145,3 +145,70 @@ describe("dashboard + static UI", () => {
     for (const u of ["/v1/factories", "/v1/me", "/v1/passkeys"]) expect((await h.app.inject(u)).statusCode).toBe(401);
   });
 });
+
+describe("invites", () => {
+  const get = (url: string, ck: string) => h.app.inject({ url, headers: { cookie: ck } });
+  const mint = async (ck: string) => (await post("/v1/invites", {}, { cookie: ck })).json() as { id: string; token: string; url: string };
+  const redeem = async (token: string, a = new SoftAuthenticator(RP, ORIGIN), email = "new@example.test") => {
+    const o = await post("/auth/invite/options", { token, email, displayName: "New" });
+    if (o.statusCode !== 200) return { opts: o, a };
+    const { challengeId, options } = o.json();
+    return { opts: o, a, verify: await post("/auth/invite/verify", { challengeId, response: a.register(options) }) };
+  };
+  let ck: string;
+  beforeEach(async () => { await setup(); ck = cookieOf(await login()); });
+
+  it("requires sign-in to mint an invite, and the link carries the token in the fragment", async () => {
+    expect((await post("/v1/invites", {})).statusCode).toBe(401);
+    const inv = await mint(ck);
+    expect(inv.url).toContain(`/#invite=${inv.token}`);
+    expect((await db.query("SELECT token_hash FROM invites")).rows[0]).not.toMatchObject({ token_hash: inv.token }); // only a hash is stored
+  });
+
+  it("lets the invitee register with their own org and passkey, and see none of the inviter's factories", async () => {
+    const me = (await get("/v1/me", ck)).json();
+    await post("/v1/factories", { orgId: me.orgs[0].id, name: "mine" }, { cookie: ck });
+    const inv = await mint(ck);
+    const { verify, a } = await redeem(inv.token);
+    expect(verify!.statusCode, verify!.body).toBe(200);
+    const nck = cookieOf(verify!);
+    const nme = (await get("/v1/me", nck)).json();
+    expect(nme).toMatchObject({ email: "new@example.test", orgs: [{ role: "owner" }] });
+    expect(nme.orgs[0].id).not.toBe(me.orgs[0].id);
+    expect((await get("/v1/factories", nck)).json().factories).toEqual([]);
+    expect((await get("/v1/factories", ck)).json().factories).toHaveLength(1);
+    expect((await login(a)).statusCode).toBe(200); // the new passkey signs in
+    const list = (await get("/v1/invites", ck)).json().invites;
+    expect(list[0]).toMatchObject({ usedByEmail: "new@example.test" });
+  });
+
+  it("is single use, can be revoked, and is refused when expired or unknown", async () => {
+    const inv = await mint(ck);
+    expect((await redeem(inv.token)).verify!.statusCode).toBe(200);
+    expect((await redeem(inv.token, new SoftAuthenticator(RP, ORIGIN), "other@example.test")).opts.statusCode).toBe(403);
+    const revoked = await mint(ck);
+    expect((await h.app.inject({ method: "DELETE", url: `/v1/invites/${revoked.id}`, headers: { cookie: ck } })).statusCode).toBe(200);
+    expect((await redeem(revoked.token)).opts.statusCode).toBe(403);
+    const old = await mint(ck);
+    await db.query("UPDATE invites SET expires_at = now() - interval '1 minute' WHERE id=$1", [old.id]);
+    expect((await redeem(old.token)).opts.statusCode).toBe(403);
+    expect((await redeem("x".repeat(43))).opts.statusCode).toBe(403);
+  });
+
+  it("two concurrent registrations on one invite create exactly one user", async () => {
+    const inv = await mint(ck);
+    const mk = async (email: string) => { const a = new SoftAuthenticator(RP, ORIGIN); const o = (await post("/auth/invite/options", { token: inv.token, email, displayName: "N" })).json(); return { a, o }; };
+    const [x, y] = await Promise.all([mk("a@example.test"), mk("b@example.test")]);
+    const res = await Promise.all([x, y].map(({ a, o }) => post("/auth/invite/verify", { challengeId: o.challengeId, response: a.register(o.options) })));
+    expect(res.map((r) => r.statusCode).sort()).toEqual([200, 403]);
+    expect((await db.query("SELECT 1 FROM users")).rows).toHaveLength(2); // the first user + one invitee
+  });
+
+  it("refuses an email that is already registered, and a user cannot revoke someone else's invite", async () => {
+    const inv = await mint(ck);
+    expect((await redeem(inv.token, new SoftAuthenticator(RP, ORIGIN), "ME@example.test")).opts.statusCode).toBe(409);
+    const joined = await redeem(inv.token); const nck = cookieOf(joined.verify!);
+    const mine = await mint(ck);
+    expect((await h.app.inject({ method: "DELETE", url: `/v1/invites/${mine.id}`, headers: { cookie: nck } })).statusCode).toBe(404);
+  });
+});

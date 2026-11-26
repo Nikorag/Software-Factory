@@ -5,8 +5,8 @@ import { pgliteDb } from "./helpers.js";
 describe("migrations", () => {
   it("applies once, is repeatable, and records versions", async () => {
     const db = pgliteDb();
-    expect(await pendingMigrations(db)).toEqual(["0001", "0002"]);
-    expect(await migrate(db)).toEqual(["0001", "0002"]);
+    expect(await pendingMigrations(db)).toEqual(["0001", "0002", "0003"]);
+    expect(await migrate(db)).toEqual(["0001", "0002", "0003"]);
     expect(await migrate(db)).toEqual([]); // re-running a deployment workflow is a no-op
     expect(await pendingMigrations(db)).toEqual([]);
   });

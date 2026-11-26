@@ -18,6 +18,9 @@ const tokenOk = (given: string, want: string) => timingSafeEqual(digest(given), 
 
 const setupOptsBody = z.object({ setupToken: z.string().min(1).max(200), email: z.email().max(200), displayName: z.string().min(1).max(100) });
 const verifyBody = z.object({ challengeId: z.uuid(), response: z.object({ id: z.string() }).loose() });
+const inviteOptsBody = z.object({ token: z.string().min(20).max(200), email: z.email().max(200), displayName: z.string().min(1).max(100) });
+const INVITE_TTL_DAYS = 7;
+const hashToken = (t: string) => createHash("sha256").update(t).digest("hex");
 const addLabel = z.object({ label: z.string().max(100).optional() });
 
 export function setSessionCookie(d: Deps, reply: FastifyReply, cookie: string, expiresAt: Date) {
@@ -36,7 +39,7 @@ export function registerAuthRoutes(app: FastifyInstance, d: Deps, requireUser: (
   }
   // Single use: consumed even if verification then fails, so a challenge can never be retried or replayed.
   async function takeChallenge(id: string, purpose: string, userId?: string) {
-    const r = await db.query<{ challenge: string; data: { email?: string; displayName?: string; userHandle?: string } }>(
+    const r = await db.query<{ challenge: string; data: { email?: string; displayName?: string; userHandle?: string; inviteId?: string } }>(
       "DELETE FROM webauthn_challenges WHERE id=$1 AND purpose=$2 AND expires_at > now() AND ($3::uuid IS NULL OR user_id = $3) RETURNING challenge, data", [id, purpose, userId ?? null]);
     return r.rows[0];
   }
@@ -83,6 +86,72 @@ export function registerAuthRoutes(app: FastifyInstance, d: Deps, requireUser: (
       return u;
     });
     if (!userId) return bad(reply, 403, "setup_closed");
+    await startSession(req, reply, userId);
+    return { ok: true };
+  });
+
+  // ---- Invites: a signed-in user mints a single-use token; the invitee registers a passkey and gets their own organisation ----
+  app.post("/v1/invites", { preHandler: requireUser }, async (req) => {
+    const token = randomBytes(32).toString("base64url");
+    const r = (await db.query<{ id: string; expires_at: Date }>("INSERT INTO invites (token_hash, created_by, expires_at) VALUES ($1,$2, now() + $3 * interval '1 day') RETURNING id, expires_at", [hashToken(token), req.user!.userId, INVITE_TTL_DAYS])).rows[0]!;
+    await audit(db, null, "user", req.user!.userId, "invite.create", r.id, {});
+    // The token goes in the URL fragment so it never reaches server logs or Referer headers.
+    return { id: r.id, token, url: `${cfg.PUBLIC_URL.replace(/\/$/, "")}/#invite=${token}`, expiresAt: r.expires_at };
+  });
+
+  app.get("/v1/invites", { preHandler: requireUser }, async (req) => ({
+    invites: (await db.query(`SELECT i.id, i.created_at AS "createdAt", i.expires_at AS "expiresAt", i.used_at AS "usedAt", u.email AS "usedByEmail"
+      FROM invites i LEFT JOIN users u ON u.id = i.used_by WHERE i.created_by=$1 AND i.revoked_at IS NULL ORDER BY i.created_at DESC LIMIT 50`, [req.user!.userId])).rows,
+  }));
+
+  app.delete("/v1/invites/:id", { preHandler: requireUser }, async (req, reply) => {
+    const id = z.uuid().parse((req.params as { id: string }).id);
+    const r = await db.query("UPDATE invites SET revoked_at = now() WHERE id=$1 AND created_by=$2 AND used_at IS NULL AND revoked_at IS NULL", [id, req.user!.userId]);
+    return r.rowCount ? { ok: true } : reply.code(404).send({ error: "not_found" });
+  });
+
+  const inviteUsable = (q: Queryable, token: string) => q.query<{ id: string }>("SELECT id FROM invites WHERE token_hash=$1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > now()", [hashToken(token)]);
+
+  app.post("/auth/invite/options", async (req, reply) => {
+    const b = inviteOptsBody.parse(req.body);
+    const inv = (await inviteUsable(db, b.token)).rows[0];
+    if (!inv) return bad(reply, 403, "invalid_invite");
+    if ((await db.query("SELECT 1 FROM users WHERE lower(email)=lower($1)", [b.email])).rows.length) return bad(reply, 409, "email_taken");
+    const userHandle = randomBytes(32);
+    const options = await generateRegistrationOptions({ ...rp, userName: b.email, userDisplayName: b.displayName, userID: userHandle, attestationType: "none",
+      authenticatorSelection: { residentKey: "required", userVerification: "required" } });
+    const challengeId = await saveChallenge("invite", options.challenge, null, { email: b.email, displayName: b.displayName, userHandle: userHandle.toString("base64url"), inviteId: inv.id });
+    return { challengeId, options };
+  });
+
+  app.post("/auth/invite/verify", async (req, reply) => {
+    const b = verifyBody.parse(req.body);
+    const ch = await takeChallenge(b.challengeId, "invite");
+    if (!ch?.data.inviteId) return bad(reply);
+    let v;
+    try { v = await verifyRegistrationResponse({ response: b.response as unknown as RegistrationResponseJSON, expectedChallenge: ch.challenge, expectedOrigin: cfg.WEBAUTHN_ORIGIN, expectedRPID: cfg.WEBAUTHN_RP_ID, requireUserVerification: true }); }
+    catch (e) { req.log.warn({ err: (e as Error).message }, "invite verification failed"); return bad(reply); }
+    if (!v.verified) return bad(reply);
+    const info = v.registrationInfo;
+    let userId: string | null;
+    try {
+      userId = await db.tx(async (q) => {
+        // Claim the invite atomically: of two concurrent registrations, exactly one wins.
+        const claimed = await q.query<{ created_by: string }>("UPDATE invites SET used_at = now() WHERE id=$1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > now() RETURNING created_by", [ch.data.inviteId]);
+        if (!claimed.rowCount) return null;
+        const u = (await q.query<{ id: string }>("INSERT INTO users (email, display_name, webauthn_user_handle) VALUES ($1,$2,$3) RETURNING id", [ch.data.email, ch.data.displayName, Buffer.from(ch.data.userHandle!, "base64url")])).rows[0]!.id;
+        await q.query("UPDATE invites SET used_by=$2 WHERE id=$1", [ch.data.inviteId, u]);
+        await storeCredential(q, u, info);
+        const org = (await q.query<{ id: string }>("INSERT INTO organisations (slug, name) VALUES ($1, $2) RETURNING id", [`org-${u}`, `${ch.data.displayName}'s factories`])).rows[0]!.id;
+        await q.query("INSERT INTO memberships (org_id, user_id, role) VALUES ($1,$2,'owner')", [org, u]);
+        await audit(q, org, "user", u, "user.invited", u, { invitedBy: claimed.rows[0]!.created_by });
+        return u;
+      });
+    } catch (e) {
+      if ((e as { code?: string }).code === "23505") return bad(reply, 409, "email_taken"); // someone registered this email since the options call
+      throw e;
+    }
+    if (!userId) return bad(reply, 403, "invalid_invite");
     await startSession(req, reply, userId);
     return { ok: true };
   });
