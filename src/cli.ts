@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
+import { installedVersion } from "./service/versions.js";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Command } from "commander";
@@ -342,7 +343,7 @@ hub
     const config = loadConfig();
     try {
       const key = o.key ?? process.env[HUB_KEY_ENV] ?? (await readKeyFromStdin(process.stdin, process.stdout));
-      const r = await connectHub({ url: o.url, key, remoteAccess: o.remoteAccess === true }, { configDir: config.configDir ?? defaultConfigDir(), dataDir: config.factory.dataDir, version: program.version() });
+      const r = await connectHub({ url: o.url, key, remoteAccess: o.remoteAccess === true }, { configDir: config.configDir ?? defaultConfigDir(), dataDir: config.factory.dataDir, version: await installedVersion(async (file, args, cwd) => execFileSync(file, args, { cwd, encoding: "utf8", timeout: 10_000 })) });
       console.log(`✓ Connected to ${r.url}. Reporting is on: a running factory starts within a minute, otherwise at its next start.`);
       console.log(r.remoteAccess ? "  Remote dashboard access is ON: the hub's web dashboard can operate this factory. Turn it off with `software-factory hub remote-access off`." : "  Remote dashboard access is off. Enable it with `software-factory hub remote-access on`.");
     } catch (e) { console.error(`✗ ${(e as Error).message}`); process.exitCode = 1; }

@@ -59,3 +59,17 @@ describe("update notice", () => {
     expect((await get()).json().available).toBe(true);                   // and the cache now holds the fresh answer
   });
 });
+
+describe("installedVersion", () => {
+  it("reports the release tag (not package.json, which is not bumped on release)", async () => {
+    const { installedVersion } = await import("../src/service/versions.js");
+    expect(await installedVersion(async () => "v0.9.0\n", "/x")).toBe("0.9.0");
+    expect(await installedVersion(async () => "v0.9.0-6-gfaff586", "/x")).toBe("0.9.0-6-gfaff586");
+  });
+  it("falls back to package.json when git cannot say", async () => {
+    const { installedVersion } = await import("../src/service/versions.js");
+    const pkg = (JSON.parse((await import("node:fs")).readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
+    expect(await installedVersion(async () => { throw new Error("not a git repository"); }, "/x")).toBe(pkg);
+    expect(await installedVersion(async () => "faff586", "/x")).toBe(pkg); // no reachable tag
+  });
+});
