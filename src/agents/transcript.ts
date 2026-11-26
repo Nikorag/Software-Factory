@@ -9,6 +9,8 @@ export type Turn =
   | { kind: "tool"; id: string; name: string; input: string }
   | { kind: "tool_result"; id: string; text: string; error: boolean }
   | { kind: "result"; ok: boolean; text: string; turns?: number }
+  /** The prompt size of one model call (input + cached tokens): what the run's context window holds right now. Shown in the status bar, not as a message. */
+  | { kind: "usage"; tokens: number }
   | { kind: "stderr" | "raw"; text: string };
 
 const MAX_FIELD = 4000;
@@ -34,9 +36,14 @@ export function parseLine(line: string): Turn[] {
   switch (o.type) {
     case "factory_prompt": return [{ kind: "prompt", text: safe(String(o.text ?? ""), 20_000) }];
     case "system": return o.subtype === "init" ? [{ kind: "session", model: o.model, tools: Array.isArray(o.tools) ? o.tools.length : undefined }] : [];
-    case "assistant": return (o.message?.content ?? []).flatMap((b: Record<string, any>): Turn[] => // eslint-disable-line @typescript-eslint/no-explicit-any
-      b.type === "text" && b.text ? [{ kind: "text", text: safe(String(b.text)) }]
-      : b.type === "tool_use" ? [{ kind: "tool", id: String(b.id), name: String(b.name), input: safe(summariseInput(String(b.name), b.input), 1500) }] : []);
+    case "assistant": {
+      const turns = (o.message?.content ?? []).flatMap((b: Record<string, any>): Turn[] => // eslint-disable-line @typescript-eslint/no-explicit-any
+        b.type === "text" && b.text ? [{ kind: "text", text: safe(String(b.text)) }]
+        : b.type === "tool_use" ? [{ kind: "tool", id: String(b.id), name: String(b.name), input: safe(summariseInput(String(b.name), b.input), 1500) }] : []);
+      const u = o.message?.usage as Record<string, unknown> | undefined;
+      const tokens = u ? [u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens].reduce<number>((a, n) => a + (typeof n === "number" ? n : 0), 0) : 0;
+      return tokens > 0 ? [...turns, { kind: "usage", tokens }] : turns;
+    }
     case "user": return (Array.isArray(o.message?.content) ? o.message.content : []).flatMap((b: Record<string, any>): Turn[] => // eslint-disable-line @typescript-eslint/no-explicit-any
       b.type === "tool_result" ? [{ kind: "tool_result", id: String(b.tool_use_id), text: safe(asText(b.content)), error: Boolean(b.is_error) }] : []);
     case "result": return [{ kind: "result", ok: !o.is_error && o.subtype === "success", text: safe(String(o.result ?? o.subtype ?? "")), turns: o.num_turns }];

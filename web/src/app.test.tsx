@@ -338,19 +338,44 @@ describe("settings and setup", () => {
   it("shows an agent run's conversation: prompt, messages, tool calls with their results, and the outcome", async () => {
     const run = { id: 7, stageExecutionId: null, agent: "anthropic/implementer", model: "claude-opus-5-5", exitCode: 0, durationMs: 5000, finished: true, usage: null, hasLog: true, at: 1 };
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [run] }), "/api/jobs/j1/invocations/7/conversation?after=0": { offset: 500, done: true, agent: "anthropic/implementer", model: "claude-opus-5-5", turns: [
-      { kind: "prompt", text: "Implement the due-date feature" }, { kind: "session", model: "claude-opus-5-5", tools: 6 }, { kind: "text", text: "I'll start by reading the tests." },
-      { kind: "tool", id: "t1", name: "Bash", input: "npm test" }, { kind: "tool_result", id: "t1", text: "12 passed", error: false }, { kind: "result", ok: true, text: "Done", turns: 3 } ] } };
+      { kind: "prompt", text: "Implement the due-date feature\nline two\nline three\nline four" }, { kind: "session", model: "claude-opus-5-5", tools: 6 }, { kind: "text", text: "I'll start by reading the tests." },
+      { kind: "tool", id: "t1", name: "Bash", input: "npm test" }, { kind: "tool_result", id: "t1", text: "12 passed\n3 skipped\nDone in 4s", error: false }, { kind: "usage", tokens: 50_000 }, { kind: "result", ok: true, text: "Done", turns: 3 } ] } };
     app("/jobs/j1");
     await userEvent.click(await screen.findByRole("tab", { name: "Agent runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Conversation" }));
     expect(await screen.findByText("I'll start by reading the tests.")).toBeInTheDocument();
     expect(screen.getByText("Prompt sent to Claude")).toBeInTheDocument();
-    expect(screen.queryByText("Implement the due-date feature")).toBeNull();          // the prompt is collapsed until asked for
-    const tool = screen.getByRole("button", { name: /Bash.*npm test/ });
-    expect(screen.queryByText("12 passed")).toBeNull();                               // so is the tool output
-    await userEvent.click(tool);
-    expect(screen.getByText("12 passed")).toBeInTheDocument();
+    expect(screen.queryByText(/line four/)).toBeNull();                               // the prompt is folded to its first lines until asked for
+    await userEvent.click(screen.getAllByRole("button", { name: /\+2 lines/ })[0]!); // the prompt is first
+    expect(screen.getByText(/line four/)).toBeInTheDocument();
+    expect(screen.getByText("Bash")).toBeInTheDocument();                             // a tool call reads like Claude Code: Bash(npm test)
+    expect(screen.getByText("(npm test)")).toBeInTheDocument();
+    expect(screen.getByText("12 passed")).toBeInTheDocument();                        // its result shows one line under it, the rest on request
+    expect(screen.queryByText(/Done in 4s/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /\+2 lines \(click to expand\)/ })); // only the tool output is still folded
+    expect(screen.getByText(/Done in 4s/)).toBeInTheDocument();
     expect(screen.getByText(/Finished after 3 turns/)).toBeInTheDocument();
+  });
+  it("shows a Claude Code style status bar: ticket, role, worktree, branch, model, tool calls, context and time", async () => {
+    const run = { id: 9, stageExecutionId: null, agent: "anthropic/spec-writer", model: "claude-opus-5-5", exitCode: 0, durationMs: 185_000, finished: true, usage: null, hasLog: true, at: 1 };
+    const wt = { path: "/Users/me/.software-factory/workspaces/zonto-hub/JAM-419", state: "active", branch: "factory/JAM-419" };
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ key: "JAM-419" }), [], { invocations: [run], worktree: wt }), "/api/jobs/j1/invocations/9/conversation?after=0": { offset: 9, done: true, agent: "anthropic/spec-writer", model: "claude-opus-5-5", cwd: wt.path, startedAt: 1, durationMs: 185_000, turns: [
+      { kind: "session", model: "claude-opus-5-5", tools: 7 }, { kind: "tool", id: "a", name: "Read", input: "/x/y.ts" }, { kind: "tool", id: "b", name: "Bash", input: "ls" },
+      { kind: "usage", tokens: 48_000 }, { kind: "result", ok: true, text: "ok", turns: 2 } ] } };
+    app("/jobs/j1");
+    await userEvent.click(await screen.findByRole("tab", { name: "Agent runs" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Conversation" }));
+    const bar = within(await screen.findByRole("status", { name: "run status" }));
+    expect(bar.getByText("JAM-419")).toBeInTheDocument();
+    expect(bar.getByText("spec-writer")).toBeInTheDocument();
+    expect(bar.getByText("~/…/zonto-hub/JAM-419")).toBeInTheDocument();
+    expect(bar.getByText("factory/JAM-419")).toBeInTheDocument();
+    expect(bar.getByText("Opus 5.5")).toBeInTheDocument();
+    expect(bar.getByText("2 tool calls")).toBeInTheDocument();
+    expect(bar.getByText(/24%/)).toBeInTheDocument();                  // 48k of an assumed 200k window
+    expect(bar.getByText("76% left")).toBeInTheDocument();
+    expect(bar.getByText(/3m 05s/)).toBeInTheDocument();
+    expect(screen.getByText(/finished · read-only view/)).toBeInTheDocument();
   });
   it("renders hostile text in a conversation as inert text", async () => {
     const run = { id: 8, stageExecutionId: null, agent: "anthropic/implementer", model: null, exitCode: 0, durationMs: 1, finished: true, usage: null, hasLog: true, at: 1 };

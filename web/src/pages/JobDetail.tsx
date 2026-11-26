@@ -126,9 +126,9 @@ export function JobDetail() {
       ) : null}
 
       <Dialog open={watch !== null} onOpenChange={(o) => { if (!o) setWatch(null); }}>
-        <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-4xl">
-          <DialogHeader><DialogTitle>{watchRun ? `${watchRun.finished ? "Conversation" : "Live"}: ${watchRun.agent.split("/")[1] ?? watchRun.agent}` : "Conversation"}</DialogTitle><DialogDescription>{watchRun?.model ?? "Claude"} · the full back-and-forth for this agent run.</DialogDescription></DialogHeader>
-          <div className="min-h-0 flex-1 overflow-auto rounded-md border p-3">{watch !== null ? <Conversation jobId={j.id} runId={watch} running={watchRun ? !watchRun.finished : false} /> : null}</div>
+        <DialogContent className="flex h-[85vh] max-h-[85vh] flex-col gap-0 overflow-hidden border-[#34363b] bg-[#1a1b1e] p-0 text-[#dcdcdc] sm:max-w-5xl [&>button]:text-[#8b8f97]">
+          <DialogHeader className="sr-only"><DialogTitle>{watchRun ? `${watchRun.finished ? "Conversation" : "Live"}: ${watchRun.agent.split("/")[1] ?? watchRun.agent}` : "Conversation"}</DialogTitle><DialogDescription>The full back-and-forth for this agent run, shown like a Claude Code session.</DialogDescription></DialogHeader>
+          {watch !== null ? <Conversation jobId={j.id} runId={watch} running={watchRun ? !watchRun.finished : false} ctx={{ key: j.key, branch: d.worktree?.branch }} /> : null}
         </DialogContent>
       </Dialog>
 

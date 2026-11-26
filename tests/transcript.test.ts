@@ -32,6 +32,11 @@ describe("streaming output from Claude Code", () => {
 });
 
 describe("conversation turns", () => {
+  it("reports the size of each model call's prompt (input plus cached tokens) so the status bar can show context use", () => {
+    const line = J({ type: "assistant", message: { content: [{ type: "text", text: "hi" }], usage: { input_tokens: 10, cache_read_input_tokens: 40_000, cache_creation_input_tokens: 2_000, output_tokens: 5 } } });
+    expect(parseLine(line)).toEqual([{ kind: "text", text: "hi" }, { kind: "usage", tokens: 42_010 }]);
+    expect(parseLine(J({ type: "assistant", message: { content: [{ type: "text", text: "no usage" }] } })).map((t) => t.kind)).toEqual(["text"]);
+  });
   it("turns events into prompt, text, tool call, tool result and outcome, dropping noise", () => {
     const turns = [J({ type: "factory_prompt", text: "Do the thing" }), ...STREAM.trim().split("\n")].flatMap(parseLine);
     expect(turns.map((t) => t.kind)).toEqual(["prompt", "session", "text", "tool", "tool_result", "result"]); // rate_limit_event dropped

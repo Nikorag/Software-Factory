@@ -172,7 +172,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     if (!out) return reply.code(404).send({ error: "log not available" });
     const outcome = inv.stageExecutionId === null ? undefined : db.select({ o: stageExecutions.outcome }).from(stageExecutions).where(eq(stageExecutions.id, inv.stageExecutionId)).get()?.o;
     const status = db.select({ s: jobs.status }).from(jobs).where(eq(jobs.id, inv.jobId)).get()?.s;
-    return { ...out, done: runFinished(inv, outcome, status) && !out.more, agent: inv.agent, model: inv.model }; // a finished run with unread log still has pages to send
+    return { ...out, done: runFinished(inv, outcome, status) && !out.more, agent: inv.agent, model: inv.model, cwd: inv.cwd, startedAt: ms(inv.startedAt), durationMs: inv.durationMs }; // a finished run with unread log still has pages to send
   });
 
   app.get("/api/projects", async () => {
