@@ -100,7 +100,13 @@ async function stopAll() {
 // ---- the menu bar icon: the app stays here when its window is closed, so the factory is one click away while the engine runs ----
 /** Showing the Dock icon again after it was hidden brings back the default Electron icon, so set ours every time. */
 function setDockIcon() { if (process.platform === "darwin" && fs.existsSync(ICON)) app.dock?.setIcon(nativeImage.createFromPath(ICON)); }
-function showDock() { if (process.platform !== "darwin" || !app.dock) return; setDockIcon(); void Promise.resolve(app.dock.show()).then(setDockIcon); }
+/** macOS can swap the bundle icon back in a moment after the Dock tile appears, so also re-apply on the next ticks, not just when show() resolves. */
+function showDock() {
+  if (process.platform !== "darwin" || !app.dock) return;
+  setDockIcon();
+  void Promise.resolve(app.dock.show()).then(setDockIcon);
+  for (const ms of [100, 500]) setTimeout(setDockIcon, ms).unref?.();
+}
 
 function openWindow(profile) {
   if (profile) current = profile;
@@ -239,6 +245,7 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: "deny" }; });
   win.webContents.on("will-navigate", (e, url) => { if (url.startsWith("data:")) return; try { if (origins().has(new URL(url).origin)) return; } catch { /* fall through */ } e.preventDefault(); external(url); });
   win.on("closed", () => { win = null; });
+  win.on("show", setDockIcon); // the Dock tile is (re)created as the window appears: put our icon on it
   win.webContents.on("page-title-updated", (e) => e.preventDefault()); // keep the profile name in the title
   win.webContents.once("did-finish-load", () => {
     if (SMOKE) { console.log(`SMOKE ok url=${win.webContents.getURL()} title=${win.getTitle()}`); app.quit(); }
@@ -256,7 +263,7 @@ else {
     if (!SMOKE) createTray();
     createWindow();
     void pollStatus(); // tray and app menu, at the pace pollPlan sets (after the window exists: it counts towards the pace)
-    app.on("activate", () => { if (!win) createWindow(); });
+    app.on("activate", () => { setDockIcon(); if (!win) createWindow(); });
   });
   // Closing the window keeps the app in the menu bar (no Dock icon) so it can be reopened with one click; the factory itself is a separate
   // background service either way. Quit from the menu bar icon or the app menu to really close the app.
