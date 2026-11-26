@@ -38,3 +38,13 @@ export function saveSecret(src: Pick<SecretSource, "keychainService" | "keychain
   run("/usr/bin/security", ["add-generic-password", "-U", "-a", account, "-s", src.keychainService, "-w", value]);
   cache.delete(`${src.keychainService}\0${account}`);
 }
+
+/** Removes a secret from the macOS keychain. Not being there is fine. */
+export function deleteSecret(src: Pick<SecretSource, "keychainService" | "keychainAccount">, deps: { run?: Runner } = {}): void {
+  if (!src.keychainService) return;
+  const account = src.keychainAccount ?? userInfo().username;
+  cache.delete(`${src.keychainService}\0${account}`);
+  if (!deps.run && (process.platform !== "darwin" || process.env.FACTORY_NO_KEYCHAIN)) return;
+  const run: Runner = deps.run ?? ((f, a) => execFileSync(f, a, { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] }));
+  try { run("/usr/bin/security", ["delete-generic-password", "-a", account, "-s", src.keychainService]); } catch { /* not present */ }
+}

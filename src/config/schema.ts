@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+/** https only, except for a hub running on this machine (development). */
+export function validHubUrl(u: string): boolean {
+  try { const x = new URL(u); return x.protocol === "https:" || (x.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(x.hostname)); } catch { return false; }
+}
+
 export const AutonomyLevel = z.enum(["full", "supervised", "off"]);
 export type AutonomyLevel = z.infer<typeof AutonomyLevel>;
 
@@ -18,6 +23,16 @@ export const FactoryConfig = z.object({
   tracker: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default("linear"), // the id of a tracker connection (the built-in ones are "linear", "jira" and "github"; more are named in trackers.yaml)
   // automatic: tickets labelled factory:enabled in the pickup status are picked up on their own. manual: nothing starts until you start it from the Board.
   pickupMode: z.enum(["automatic", "manual"]).default("automatic"),
+  // Reporting progress to a central Software Factory Hub. OFF by default: nothing leaves this machine until you run
+  // `factory hub connect` with an API key from your hub. The key itself is never stored here (keychain / FACTORY_HUB_KEY).
+  hub: z.object({
+    enabled: z.boolean().default(false),
+    url: z.string().default("").refine((u) => u === "" || validHubUrl(u), { message: "hub url must be https (http only for localhost)" }),
+    reportIntervalSeconds: z.number().int().min(10).max(3600).default(30),
+    // Lets the hub's web dashboard operate this factory (it relays dashboard requests to this machine). OFF by default and separate
+    // from `enabled`: reporting progress never grants remote control. Turn on with `factory hub remote-access on`.
+    remoteAccess: z.boolean().default(false),
+  }).prefault({}),
   dryRun: z.boolean().default(false),
   maxRemediationAttempts: z.number().int().min(0).max(10).default(3),
   // How many implement-then-check-against-the-spec rounds one implementation stage may take before it stops for a person. (Not the fix cycle limit: that is review and CI fixes.)

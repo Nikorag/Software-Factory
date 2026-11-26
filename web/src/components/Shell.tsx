@@ -5,7 +5,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { api, post } from "@/lib/api";
+import { api, post, inHubMode } from "@/lib/api";
 import type { Overview, ProfileInfo, UpdateInfo } from "@/lib/types";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePoll } from "@/hooks/usePoll";
@@ -22,7 +22,7 @@ export function Shell() {
   useEffect(() => { if (prof) document.title = prof.profiles.length > 1 ? `Software Factory — ${prof.current}` : "Software Factory"; }, [prof]);
   const { data: upd } = usePoll((signal) => api<UpdateInfo>("/api/update", signal), 30 * 60_000);
   const [hidden, setHidden] = useState<string | null>(() => { try { return localStorage.getItem("dismissed-update"); } catch { return null; } });
-  const showUpdate = upd?.available && upd.latest && hidden !== upd.latest;
+  const showUpdate = !inHubMode() && upd?.available && upd.latest && hidden !== upd.latest; // updating is a local-machine action
   const dismiss = () => { setHidden(upd?.latest ?? null); try { if (upd?.latest) localStorage.setItem("dismissed-update", upd.latest); } catch { /* remembered for this tab only */ } };
   const [busy, setBusy] = useState(false);
   // Pause/resume/clear-stop are disabled while one is in flight or the API is unreachable. Emergency stop never is: it is always worth trying.
@@ -35,8 +35,9 @@ export function Shell() {
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-7xl min-w-0 flex-col gap-4 px-4 py-5">
       <header className="flex flex-wrap items-center gap-3">
+        {inHubMode() ? <a href="/" className="text-sm text-muted-foreground hover:underline">← Hub</a> : null}
         <h1 className="text-lg font-semibold tracking-tight">Software Factory</h1>
-        {prof && prof.profiles.length > 1 ? (
+        {prof && prof.profiles.length > 1 && !inHubMode() ? (
           <Select value={prof.current} onValueChange={(name) => { const p = prof.profiles.find((x) => x.name === name); if (p && !p.current) window.location.href = p.url; }}>
             <SelectTrigger size="sm" className="h-8 w-auto gap-2" aria-label="profile"><SelectValue /></SelectTrigger>
             <SelectContent>{prof.profiles.map((p) => <SelectItem key={p.name} value={p.name} disabled={!p.running && !p.current}>{p.name}{p.running ? "" : " (stopped)"}</SelectItem>)}</SelectContent>

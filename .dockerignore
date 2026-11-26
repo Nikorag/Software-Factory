@@ -1,0 +1,18 @@
+# Build context for hub/Dockerfile (built from the repo root). Only the hub and workspace manifests are needed.
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+.git
+.github
+docs
+desktop
+agents
+bin
+config
+drizzle
+src
+tests
+*.md
+web/dist
+web/node_modules

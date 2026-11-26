@@ -1,13 +1,22 @@
 // Everything that originates from tickets, agents or logs is untrusted. React escapes text children, and this app never injects raw
 // markup or builds HTML strings, so that content can only ever be rendered as text.
+
+// Hub mode: when this same build is served by the central hub it is told which factory it is showing via
+// <meta name="factory-hub-base" content="/f/<id>">, and every API call is prefixed so the hub can tunnel it to that
+// factory. Served locally the meta tag is empty, so nothing changes. This is the ONLY difference between the two deployments.
+const metaBase = (): string => (typeof document === "undefined" ? "" : document.querySelector('meta[name="factory-hub-base"]')?.getAttribute("content") ?? "");
+export const hubBase = (): string => metaBase().replace(/\/+$/, "");
+export const inHubMode = (): boolean => hubBase() !== "";
+const url = (path: string): string => hubBase() + path;
+
 export async function api<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(path, signal ? { signal } : undefined);
+  const res = await fetch(url(path), signal ? { signal } : undefined);
   if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error || `HTTP ${res.status}`);
   return (await res.json()) as T;
 }
 
 export async function apiText(path: string, signal?: AbortSignal): Promise<string> {
-  const res = await fetch(path, signal ? { signal } : undefined);
+  const res = await fetch(url(path), signal ? { signal } : undefined);
   if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error || `HTTP ${res.status}`);
   return res.text();
 }
@@ -18,7 +27,7 @@ export async function apiText(path: string, signal?: AbortSignal): Promise<strin
  */
 export async function post(path: string, body: unknown = {}): Promise<string | null> {
   try {
-    const res = await fetch(path, { method: "POST", headers: { "X-Factory-UI": "1", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const res = await fetch(url(path), { method: "POST", headers: { "X-Factory-UI": "1", "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!res.ok) return ((await res.json().catch(() => ({}))) as { error?: string }).error || `HTTP ${res.status}`;
     return null;
   } catch (e) {
@@ -30,7 +39,7 @@ export async function post(path: string, body: unknown = {}): Promise<string | n
 export type SendResult<T = unknown> = { ok: true; data: T } | { ok: false; error: string; code?: string };
 export async function send<T = unknown>(method: "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<SendResult<T>> {
   try {
-    const res = await fetch(path, { method, headers: { "X-Factory-UI": "1", ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const res = await fetch(url(path), { method, headers: { "X-Factory-UI": "1", ...(body === undefined ? {} : { "Content-Type": "application/json" }) }, body: body === undefined ? undefined : JSON.stringify(body) });
     const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
     return res.ok ? { ok: true, data: data as T } : { ok: false, error: data.error || `HTTP ${res.status}`, ...(data.code ? { code: data.code } : {}) };
   } catch (e) {
