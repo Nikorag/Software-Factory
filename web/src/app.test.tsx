@@ -109,6 +109,44 @@ describe("dashboard", () => {
     expect(screen.getByText(/Retry resumes there/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Answer & resume/ })).toBeDisabled(); // nothing typed yet
   });
+  it("shows friendly stage names, not the engine's ids, in the held banner, the history and the decisions", async () => {
+    const j = job({ stage: "NEEDS_ATTENTION", status: "waiting", heldFromStage: "LOCAL_MODEL_REVIEW", lastError: "remediation attempts exhausted (3): 2 blocking finding(s) in LOCAL_MODEL_REVIEW" });
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [exec("LOCAL_MODEL_REVIEW", "succeeded")], { decisions: [{ id: 1, kind: "hold.NEEDS_ATTENTION", decision: "LOCAL_MODEL_REVIEW -> NEEDS_ATTENTION", rationale: null, actor: "factory", at: 1 }] }) };
+    app("/jobs/j1");
+    expect(await screen.findByText(/Held at Needs attention \(was Independent review\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/LOCAL_MODEL_REVIEW/)).toBeNull();
+  });
+  it("offers to delete the worktree too when deleting a job that still has one", async () => {
+    const j = job({ status: "failed", stage: "FAILED" });
+    const wt = { path: "/Users/me/.software-factory/workspaces/zonto-hub/JAM-418", state: "preserved", branch: "factory/JAM-418" };
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [exec("DISCOVERED")], { worktree: wt }), "/api/jobs/j1?removeWorktree=1": { ok: true } };
+    app("/jobs/j1");
+    await userEvent.click(await screen.findByRole("button", { name: "delete JAM-1" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(await within(dialog).findByText(wt.path)).toBeInTheDocument();
+    const box = within(dialog).getByRole("checkbox");
+    expect(box).toBeChecked();
+    await userEvent.click(box); // unticked: the job cannot be deleted while the worktree exists, so the button is off
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
+    await userEvent.click(box);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Delete job and worktree" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "DELETE")?.url).toBe("/api/jobs/j1?removeWorktree=1"));
+  });
+  it("asks again before discarding uncommitted changes in the worktree", async () => {
+    const j = job({ status: "failed", stage: "FAILED" });
+    const wt = { path: "/w/JAM-418", state: "active", branch: "factory/JAM-418" };
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [exec("DISCOVERED")], { worktree: wt }),
+      "/api/jobs/j1?removeWorktree=1": { __status: 409, error: "worktree /w/JAM-418 has uncommitted changes", code: "worktree-dirty" },
+      "/api/jobs/j1?removeWorktree=1&discardChanges=1": { ok: true } };
+    app("/jobs/j1");
+    await userEvent.click(await screen.findByRole("button", { name: "delete JAM-1" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Delete job and worktree" }));
+    expect(await within(dialog).findByText(/uncommitted changes/)).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === "DELETE")).toHaveLength(1); // nothing is discarded without a second, explicit click
+    await userEvent.click(within(dialog).getByRole("button", { name: "Discard changes and delete" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "DELETE").at(-1)?.url).toBe("/api/jobs/j1?removeWorktree=1&discardChanges=1"));
+  });
   it("clicking a step shows what it does and filters the stage history to it", async () => {
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [exec("AUTOMATED_TESTING", "succeeded", 1), exec("LOCAL_MODEL_REVIEW", "succeeded", 2)]) };
     app("/jobs/j1");
@@ -395,7 +433,7 @@ describe("settings and setup", () => {
     const progress = within(screen.getByRole("region", { name: "In progress" }));
     expect(progress.getByText("the factory is already working on it")).toBeInTheDocument();      // why it cannot be started
     expect(progress.queryByRole("button", { name: /Start/ })).toBeNull();
-    expect(progress.getByText("implementation")).toBeInTheDocument();                             // and what it is doing now
+    expect(progress.getByText("implement")).toBeInTheDocument();                             // and what it is doing now
     await userEvent.click(backlog.getByRole("button", { name: "Start" }));
     await waitFor(() => expect(calls.find((c) => c.url === "/api/board/start")?.body).toBe(JSON.stringify({ issueId: "i1" })));
     expect(await screen.findByText("Started ENG-418. It is queued and will begin shortly.")).toBeInTheDocument();

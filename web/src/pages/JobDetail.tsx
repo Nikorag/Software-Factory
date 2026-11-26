@@ -19,8 +19,8 @@ import { Conversation } from "@/components/Conversation";
 import { Timeline } from "@/components/Timeline";
 import { FlowChart, FlowLegend } from "@/components/FlowChart";
 import { StatusBadge, toneOf } from "@/components/StatusBadge";
-import { api, apiText, post, send } from "@/lib/api";
-import { ago, dur, HELD, safeUrl, stageLabel } from "@/lib/format";
+import { api, apiText, deleteJobRequest, post, send, type DeleteOptions, type SendResult } from "@/lib/api";
+import { ago, dur, HELD, safeUrl, stageLabel, stageText } from "@/lib/format";
 import { deriveFlow, NODE, NODES } from "@/lib/pipeline";
 import type { JobDetail as D } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
@@ -42,9 +42,9 @@ export function JobDetail() {
   const [fh, setFh] = useState(""), [fa, setFa] = useState(""), [fd, setFd] = useState("");
   const execAll = d?.executions ?? [];
   const nodeStage = sel ? NODE[sel]?.stage : null;
-  const histRows = useMemo(() => execAll.filter((e) => (!nodeStage || e.stage === nodeStage) && matches(fh, e.stage, e.outcome, e.error)), [execAll, nodeStage, fh]);
+  const histRows = useMemo(() => execAll.filter((e) => (!nodeStage || e.stage === nodeStage) && matches(fh, e.stage, stageLabel(e.stage), e.outcome, stageText(e.error))), [execAll, nodeStage, fh]);
   const agentRows = useMemo(() => (d?.invocations ?? []).filter((a) => matches(fa, a.agent, a.model, a.exitCode)), [d?.invocations, fa]);
-  const decRows = useMemo(() => (d?.decisions ?? []).filter((x) => matches(fd, x.kind, x.decision, x.rationale, x.actor)), [d?.decisions, fd]);
+  const decRows = useMemo(() => (d?.decisions ?? []).filter((x) => matches(fd, x.kind, stageText(x.decision), stageText(x.rationale), x.actor)), [d?.decisions, fd]);
   const hist = usePaged(histRows, 10, `${id}|${nodeStage}|${fh}`), agents = usePaged(agentRows, 10, `${id}|${fa}`), decs = usePaged(decRows, 10, `${id}|${fd}`);
   const flow = useMemo(() => (d ? deriveFlow(d.job, d.executions, d.invocations) : null), [d]);
   const banner = <ConnectionBanner error={error} updatedAt={updatedAt} what="job" />;
@@ -64,7 +64,7 @@ export function JobDetail() {
   const node = sel ? NODE[sel] : null;
   const execs = node ? execAll.filter((e) => e.stage === node.stage) : execAll;
   const archiveIt = (to: boolean) => guard("archive", async () => { const r = await send("POST", `/api/jobs/${j.id}/${to ? "archive" : "unarchive"}`); setMsg(r.ok ? null : r.error); await reload(); });
-  const deleteIt = () => guard("delete", async () => { const r = await send("DELETE", `/api/jobs/${j.id}`); if (r.ok) nav("/jobs"); else setMsg(r.error); });
+  const deleteIt = async (o: DeleteOptions): Promise<SendResult> => { const r = await deleteJobRequest(j.id, o); if (r.ok) nav("/jobs"); return r; };
   const finished = ["done", "failed", "cancelled"].includes(j.status);
   const cycles = j.remediationAttempts, cap = d.remediationCap ?? 3;
 
@@ -78,7 +78,7 @@ export function JobDetail() {
             {pr ? <Button variant="outline" size="sm" asChild><a href={pr} target="_blank" rel="noopener noreferrer"><ExternalLink />pull request</a></Button> : null}
             {canRetry ? <Button size="sm" disabled={locked} title={archived ? "Retrying restores this job from the archive" : undefined} onClick={() => void run("retry", `/api/jobs/${j.id}/retry`)}>{pending === "retry" ? <Loader2 className="animate-spin" /> : <RotateCcw />}{archived ? "Retry and restore" : "Retry"}</Button> : null}
             {finished ? <Button size="sm" variant="outline" disabled={locked} onClick={() => void archiveIt(!j.archivedAt)}>{j.archivedAt ? <><ArchiveRestore />Restore</> : <><Archive />Archive</>}</Button> : null}
-            {finished ? <DeleteJobButton job={j} label="Delete" disabled={locked} onConfirm={() => void deleteIt()} /> : null}
+            {finished ? <DeleteJobButton job={j} label="Delete" disabled={locked} onDelete={deleteIt} /> : null}
             {canCancel ? (
               <AlertDialog><AlertDialogTrigger asChild><Button variant="destructive" size="sm" disabled={locked}><X />Cancel</Button></AlertDialogTrigger>
                 <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Cancel {j.key}?</AlertDialogTitle><AlertDialogDescription>A running agent is stopped at its next check. The worktree is kept.</AlertDialogDescription></AlertDialogHeader>
@@ -95,7 +95,7 @@ export function JobDetail() {
 
       {error ? banner : null}
       {archived && canRetry ? <Alert role="status"><ArchiveRestore /><AlertDescription>This job is archived. Retrying will restore this job from the archive (it shows in the job list again).</AlertDescription></Alert> : null}
-      {j.lastError ? <Alert variant="destructive"><AlertDescription className="whitespace-pre-wrap">{j.lastError}</AlertDescription></Alert> : null}
+      {j.lastError ? <Alert variant="destructive"><AlertDescription className="whitespace-pre-wrap">{stageText(j.lastError)}</AlertDescription></Alert> : null}
       {held ? <Alert><AlertDescription>Held at {stageLabel(j.stage)}{j.heldFromStage ? ` (was ${stageLabel(j.heldFromStage)})` : ""}. Retry resumes there, with fresh counters.</AlertDescription></Alert> : null}
       {msg ? <Alert variant="destructive" role="alert"><AlertDescription>{msg}</AlertDescription></Alert> : null}
 
@@ -137,7 +137,7 @@ export function JobDetail() {
         <TabsContent value="history"><Card><CardContent>
           <div className="mb-3 flex flex-wrap items-center gap-2"><div className="relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter stage history" className="pl-8" value={fh} onChange={(e) => setFh(e.target.value)} placeholder="Filter by stage, outcome or error" /></div>{node ? <span className="text-xs text-muted-foreground">Showing {node.label} only.</span> : null}</div>
           <Table><TableHeader><TableRow>{["Stage", "#", "Outcome", "Took", "Detail"].map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
-            <TableBody>{hist.slice.map((e) => <TableRow key={e.id}><TableCell className="font-mono text-xs">{e.stage}</TableCell><TableCell>{e.attempt}</TableCell><TableCell className={toneOf(e.outcome)}>{e.outcome}</TableCell><TableCell>{e.finishedAt && e.startedAt ? dur(e.finishedAt - e.startedAt) : "…"}</TableCell><TableCell className={e.error ? "text-destructive" : "text-muted-foreground"}>{(e.error || "").slice(0, 200)}</TableCell></TableRow>)}</TableBody></Table>
+            <TableBody>{hist.slice.map((e) => <TableRow key={e.id}><TableCell className="text-xs" title={e.stage}>{stageLabel(e.stage)}</TableCell><TableCell>{e.attempt}</TableCell><TableCell className={toneOf(e.outcome)}>{e.outcome}</TableCell><TableCell>{e.finishedAt && e.startedAt ? dur(e.finishedAt - e.startedAt) : "…"}</TableCell><TableCell className={e.error ? "text-destructive" : "text-muted-foreground"}>{stageText((e.error || "").slice(0, 200))}</TableCell></TableRow>)}</TableBody></Table>
           <Pager page={hist.page} pages={hist.pages} pageSize={hist.pageSize} total={hist.total} onPage={hist.setPage} onPageSize={hist.setPageSize} />
         </CardContent></Card></TabsContent>
         <TabsContent value="agents"><Card><CardContent>
@@ -151,7 +151,7 @@ export function JobDetail() {
         </CardContent></Card></TabsContent>
         <TabsContent value="decisions"><Card><CardContent>
           {d.decisions.length ? <div className="mb-3 relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter decisions" className="pl-8" value={fd} onChange={(e) => setFd(e.target.value)} placeholder="Filter decisions" /></div> : null}
-          {d.decisions.length ? <><Table><TableBody>{decs.slice.map((x) => <TableRow key={x.id}><TableCell className="font-mono text-xs">{x.kind}</TableCell><TableCell>{x.decision}</TableCell><TableCell className="text-muted-foreground">{x.rationale || ""}</TableCell><TableCell className="text-muted-foreground">{x.actor}</TableCell></TableRow>)}</TableBody></Table><Pager page={decs.page} pages={decs.pages} pageSize={decs.pageSize} total={decs.total} onPage={decs.setPage} onPageSize={decs.setPageSize} /></> : <p className="text-sm text-muted-foreground">None.</p>}
+          {d.decisions.length ? <><Table><TableBody>{decs.slice.map((x) => <TableRow key={x.id}><TableCell className="font-mono text-xs">{x.kind}</TableCell><TableCell>{stageText(x.decision)}</TableCell><TableCell className="text-muted-foreground">{stageText(x.rationale) || ""}</TableCell><TableCell className="text-muted-foreground">{x.actor}</TableCell></TableRow>)}</TableBody></Table><Pager page={decs.page} pages={decs.pages} pageSize={decs.pageSize} total={decs.total} onPage={decs.setPage} onPageSize={decs.setPageSize} /></> : <p className="text-sm text-muted-foreground">None.</p>}
         </CardContent></Card></TabsContent>
         <TabsContent value="more"><Card><CardContent className="grid gap-4 text-sm">
           <div><h4 className="mb-1 font-semibold">Artifacts</h4>{d.artifacts.length ? <ul className="grid gap-1">{d.artifacts.map((a) => <li key={a.path}><b>{a.kind}</b> <span className="font-mono text-xs text-muted-foreground">{a.path}</span></li>)}</ul> : <p className="text-muted-foreground">None.</p>}</div>

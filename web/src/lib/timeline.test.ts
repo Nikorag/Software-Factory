@@ -84,8 +84,8 @@ describe("job timeline", () => {
   it("a human answer shows the held-at line and the answer, not the (possibly long) questions; old one-line rows still work", () => {
     const questions = Array.from({ length: 20 }, (_, i) => `${i + 1}. Which port should the service listen on, and why that one?`).join("\n");
     const text = decisionText({ kind: "human.answer", decision: `answered while held at REQUIREMENTS_ANALYSIS\n\n${questions}`, rationale: "Use port 7777" });
-    expect(text).toBe("answered while held at REQUIREMENTS_ANALYSIS — Use port 7777");
-    expect(decisionText({ kind: "human.answer", decision: "answered while held at BLOCKED", rationale: "yes" })).toBe("answered while held at BLOCKED — yes");
+    expect(text).toBe("answered while held at Requirements — Use port 7777");
+    expect(decisionText({ kind: "human.answer", decision: "answered while held at BLOCKED", rationale: "yes" })).toBe("answered while held at Blocked — yes");
     expect(decisionText({ kind: "remediation", decision: "a\nb", rationale: null })).toBe("a\nb"); // other kinds are untouched
   });
 });

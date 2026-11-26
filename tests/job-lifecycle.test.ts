@@ -7,8 +7,9 @@ import { archiveJob, deleteJob, enqueue, getJob, JobError } from "../src/core/jo
 import { openDb } from "../src/db/client.js";
 import { agentInvocations, decisions, jobs, projects, stageExecutions, worktrees } from "../src/db/schema.js";
 import { buildServer } from "../src/server/app.js";
+import { WorktreeManager } from "../src/repo/worktrees.js";
 import { fixtureConfig } from "./helpers/config.js";
-import { tmp } from "./helpers/git-fixture.js";
+import { makeRepo, sh, tmp } from "./helpers/git-fixture.js";
 
 const TOKEN = "t".repeat(64);
 const AUTH = { host: "127.0.0.1:4780", authorization: `Bearer ${TOKEN}` };
@@ -86,5 +87,75 @@ describe("archive and delete", () => {
     expect((await s.call("GET", "/api/jobs?status=failed")).json().total).toBe(3);
     expect((await s.call("GET", "/api/jobs?q=jam-5")).json().jobs.map((j: { key: string }) => j.key)).toEqual(["JAM-5"]);
     expect((await s.call("GET", "/api/jobs?q=%25")).json().total).toBe(0); // % is literal, not a wildcard
+  });
+});
+
+describe("deleting a job together with its worktree", () => {
+  function withWorktree() {
+    const { db } = openDb(":memory:");
+    const dataDir = tmp();
+    mkdirSync(join(dataDir, "logs"), { recursive: true });
+    db.insert(projects).values({ id: "p", configJson: "{}" }).run();
+    const fx = makeRepo();
+    const mgr = new WorktreeManager({ db, logger: pino({ level: "silent" }), workspacesRoot: fx.workspaces, repoPath: () => fx.repo, defaultBranch: () => "main" });
+    const app = buildServer({ db, logger: pino({ level: "silent" }), config: fixtureConfig(), dataDir, worktrees: mgr, port: 4780, controlToken: TOKEN });
+    const call = (url: string) => app.inject({ method: "DELETE", url, headers: AUTH, remoteAddress: "127.0.0.1" });
+    const mk = async (status: "failed" | "running" = "failed") => {
+      const { job } = enqueue(db, { projectId: "p", externalId: "JAM-9", externalKey: "JAM-9" });
+      db.update(jobs).set({ status, stage: status === "failed" ? "FAILED" : "IMPLEMENTATION" }).where(eq(jobs.id, job.id)).run();
+      return { id: job.id, info: await mgr.create({ id: job.id, projectId: "p", externalKey: "JAM-9" }) };
+    };
+    return { db, fx, call, mk };
+  }
+
+  it("still refuses a plain delete while the worktree exists", async () => {
+    const s = withWorktree();
+    const { id, info } = await s.mk();
+    const r = await s.call(`/api/jobs/${id}`);
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toMatch(/worktree .* still exists/);
+    expect(existsSync(info.path)).toBe(true);
+  });
+
+  it("removes the worktree and the job when asked", async () => {
+    const s = withWorktree();
+    const { id, info } = await s.mk();
+    const r = await s.call(`/api/jobs/${id}?removeWorktree=1`);
+    expect(r.statusCode).toBe(200);
+    expect(existsSync(info.path)).toBe(false);
+    expect(getJob(s.db, id)).toBeUndefined();
+    expect(sh(s.fx.repo, "branch", "--list", "factory/JAM-9")).toBe(""); // nothing on it, so git agrees it is merged
+  });
+
+  it("keeps an unmerged local branch unless the change is discarded, and a pushed one (PR raised) goes", async () => {
+    const s = withWorktree();
+    const { id, info } = await s.mk();
+    writeFileSync(join(info.path, "f.txt"), "f");
+    sh(info.path, "add", "-A"); sh(info.path, "commit", "-q", "-m", "work");
+    expect((await s.call(`/api/jobs/${id}?removeWorktree=1`)).statusCode).toBe(200);
+    expect(sh(s.fx.repo, "branch", "--list", "factory/JAM-9")).toContain("factory/JAM-9"); // unmerged and never pushed: kept
+  });
+
+  it("asks before throwing away uncommitted changes, then discards them when told to", async () => {
+    const s = withWorktree();
+    const { id, info } = await s.mk();
+    writeFileSync(join(info.path, "precious.txt"), "x");
+    const first = await s.call(`/api/jobs/${id}?removeWorktree=1`);
+    expect(first.statusCode).toBe(409);
+    expect(first.json().code).toBe("worktree-dirty");
+    expect(existsSync(join(info.path, "precious.txt"))).toBe(true);
+    expect(getJob(s.db, id)).toBeDefined();
+    const second = await s.call(`/api/jobs/${id}?removeWorktree=1&discardChanges=1`);
+    expect(second.statusCode).toBe(200);
+    expect(existsSync(info.path)).toBe(false);
+    expect(getJob(s.db, id)).toBeUndefined();
+  });
+
+  it("never touches the worktree of a job that is still running", async () => {
+    const s = withWorktree();
+    const { id, info } = await s.mk("running");
+    const r = await s.call(`/api/jobs/${id}?removeWorktree=1`);
+    expect(r.statusCode).toBe(409);
+    expect(existsSync(info.path)).toBe(true);
   });
 });
