@@ -90,6 +90,20 @@ describe("job timeline", () => {
   });
 });
 
+<<<<<<< HEAD
+describe("decisions after a standalone entry", () => {
+  it("attach to the step that was running, not to an earlier 'You retried' entry that has no end", () => {
+    id = 0;
+    const impl = ex("IMPLEMENTATION", "succeeded", 100, 400);
+    const t = buildTimeline(detail([ex("DISCOVERED", "succeeded", 0, 1), impl], [dec("job.retry", "resume at IMPLEMENTATION", 50), dec("implementation.pass", "pass 1", 200), dec("implementation.pass", "pass 2", 300), dec("human.deferred", "T031", 350)]));
+    const retried = t.find((e) => e.title === "You retried")!;
+    expect(retried.events).toHaveLength(0);
+    const step = t.find((e) => e.stage === "IMPLEMENTATION")!;
+    expect(step.events.map((e) => e.label)).toEqual(["Implementation pass", "Implementation pass", "Left for you"]);
+  });
+});
+
+=======
 describe("a step that waits and is re-checked", () => {
   const wait = (stage: string, i: number, reason: string) => ex(stage, "waiting", i * 600, i * 600 + 1, { output: JSON.stringify({ reason, delayMs: 600_000 }) });
   it("is one entry however many times it was checked, saying how many checks and when the last one was", () => {
@@ -123,3 +137,4 @@ describe("a step that waits and is re-checked", () => {
     expect(ci[1]).toMatchObject({ tone: "wait", checks: 2 });
   });
 });
+>>>>>>> origin/main

@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
-import { CheckCircle2, Clock, Info, Loader2, MessageSquare, Pause, RotateCcw, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronRight, Clock, Info, Loader2, MessageSquare, Pause, RotateCcw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ago, dur } from "@/lib/format";
-import { buildTimeline, statsOf, type Tone } from "@/lib/timeline";
-import type { JobDetail } from "@/lib/types";
+import { buildTimeline, statsOf, type TimelineEvent, type Tone } from "@/lib/timeline";
+import type { Invocation, JobDetail } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const TONE: Record<Tone, { icon: React.ReactNode; text: string; rail: string }> = {
@@ -22,7 +22,34 @@ const clock = (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit
  * factory decided (sent back for fixes, review verdicts, your answers) and the agent runs behind it. Click a step to focus it on the flow
  * chart; open a run to read Claude's conversation.
  */
-export function Timeline({ detail, cap, selected, onSelect, onWatch }: { detail: JobDetail; cap: number; selected: string | null; onSelect: (nodeId: string) => void; onWatch: (runId: number) => void }) {
+/** The one button per step that opens its agent sessions, one tab each. */
+export function PeekButton({ runs, onPeek, variant = "outline" }: { runs: Invocation[]; onPeek: (runs: Invocation[]) => void; variant?: "outline" | "secondary" }) {
+  const live = runs.some((r) => !r.finished);
+  return (
+    <Button size="sm" variant={variant} className="h-7 gap-1.5 px-2 text-xs" onClick={() => onPeek(runs)} aria-label={`${live ? "Watch live" : "Peek"}: ${runs.length} session${runs.length === 1 ? "" : "s"}`}>
+      <MessageSquare className="size-3" />{live ? "Watch live" : "Peek"}<span className="text-muted-foreground">· {runs.length} session{runs.length === 1 ? "" : "s"}</span>
+    </Button>
+  );
+}
+
+/** What the factory decided along the way. Long lists (every implementation pass, every deferral) stay folded until asked for. */
+function Events({ events }: { events: TimelineEvent[] }) {
+  const [open, setOpen] = useState(false);
+  const fold = events.length > 2;
+  const shown = open || !fold ? events : [];
+  return (
+    <div className="mt-1 text-xs text-muted-foreground">
+      {fold ? <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="inline-flex items-center gap-1 hover:text-foreground"><ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />{open ? "Hide" : "Show"} {events.length} details</button> : null}
+      {shown.length ? (
+        <ul className="mt-1 grid gap-0.5">
+          {shown.map((ev, j) => <li key={j} className="flex gap-1.5"><span className="shrink-0 font-medium text-foreground/70">{ev.label}:</span><span className="min-w-0 break-words">{ev.text}</span></li>)}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+export function Timeline({ detail, cap, selected, onSelect, onPeek }: { detail: JobDetail; cap: number; selected: string | null; onSelect: (nodeId: string) => void; onPeek: (runs: Invocation[]) => void }) {
   const all = useMemo(() => buildTimeline(detail, cap), [detail, cap]);
   const [newestFirst, setNewestFirst] = useState(true);
   const [onlyProblems, setOnlyProblems] = useState(false);
@@ -65,19 +92,9 @@ export function Timeline({ detail, cap, selected, onSelect, onWatch }: { detail:
                     </div>
                     {e.summary ? <p className={cn("mt-0.5 text-sm", e.tone === "fail" ? "text-destructive" : e.tone === "loop" ? "text-foreground" : "text-muted-foreground")}>{e.summary}</p> : null}
                     {e.detail ? <p className="mt-0.5 text-xs text-muted-foreground">{e.detail}</p> : null}
-                    {e.events.length ? (
-                      <ul className="mt-1 grid gap-0.5 text-xs text-muted-foreground">
-                        {e.events.map((ev, j) => <li key={j} className="flex gap-1.5"><span className="shrink-0 font-medium text-foreground/70">{ev.label}:</span><span className="min-w-0 break-words">{ev.text}</span></li>)}
-                      </ul>
-                    ) : null}
+                    {e.events.length ? <Events events={e.events} /> : null}
                     {e.runs.length ? (
-                      <div className="mt-1.5 flex flex-wrap gap-1.5">
-                        {e.runs.map((r) => (
-                          <Button key={r.id} size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-xs" onClick={() => onWatch(r.id)}>
-                            <MessageSquare className="size-3" />{r.finished ? "Conversation" : "Watch live"}: {r.agent.split("/")[1] ?? r.agent}{r.durationMs ? ` · ${dur(r.durationMs)}` : ""}
-                          </Button>
-                        ))}
-                      </div>
+                      <div className="mt-1.5"><PeekButton runs={e.runs} onPeek={onPeek} /></div>
                     ) : null}
                   </div>
                 </li>

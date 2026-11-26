@@ -388,6 +388,61 @@ describe("settings and setup", () => {
     expect(bar.getByText(/3m 05s/)).toBeInTheDocument();
     expect(screen.getByText(/finished · read-only view/)).toBeInTheDocument();
   });
+  describe("peek: one button per step, a tab per agent session", () => {
+    const T = 1_700_000_000_000;
+    const mk = (id: number, agent: string, ms: number, o: object = {}) => ({ id, stageExecutionId: 1, agent, model: "claude-opus-5-5", exitCode: 0, durationMs: ms, finished: true, usage: null, hasLog: true, at: T, ...o });
+    const runs = [mk(11, "anthropic/implementer", 32_000), mk(12, "anthropic/spec-writer", 50_000), mk(13, "anthropic/implementer", 6_000)];
+    const conv = (text: string) => ({ offset: 1, done: true, agent: "anthropic/implementer", model: "claude-opus-5-5", turns: [{ kind: "text", text }] });
+    const setup = () => {
+      const exs = [{ id: 1, stage: "IMPLEMENTATION", attempt: 1, outcome: "failed", error: "did not converge", output: null, startedAt: T, finishedAt: T + 120_000 }];
+      routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ stage: "IMPLEMENTATION", status: "running" }), exs, { invocations: runs, worktree: { path: "/w/JAM-1", state: "active", branch: "factory/JAM-1" } }),
+        "/api/jobs/j1/invocations/11/conversation?after=0": conv("first session"), "/api/jobs/j1/invocations/12/conversation?after=0": conv("second session"), "/api/jobs/j1/invocations/13/conversation?after=0": conv("third session") };
+    };
+    it("shows a single Peek button for a step with many sessions, not one per session", async () => {
+      setup(); app("/jobs/j1");
+      expect(await screen.findByText("What happened")).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /^(Peek|Watch live)/ })).toHaveLength(1);
+      expect(screen.getByRole("button", { name: "Peek: 3 sessions" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Conversation: implementer/ })).toBeNull();
+    });
+    it("opens the sessions as tabs (the latest first), and switching tab shows that session", async () => {
+      setup(); app("/jobs/j1");
+      await userEvent.click(await screen.findByRole("button", { name: "Peek: 3 sessions" }));
+      const tabs = within(await screen.findByRole("tablist", { name: "Agent sessions" })).getAllByRole("tab");
+      expect(tabs).toHaveLength(3);
+      expect(tabs[2]).toHaveAttribute("aria-selected", "true");
+      expect(await screen.findByText("third session")).toBeInTheDocument();
+      await userEvent.click(tabs[1]!);
+      expect(await screen.findByText("second session")).toBeInTheDocument();
+      expect(screen.queryByText("third session")).toBeNull();
+      expect(within(screen.getByRole("tablist", { name: "Agent sessions" })).getAllByRole("tab")[1]).toHaveAttribute("aria-selected", "true");
+    });
+    it("has a Close button in the window's header and a wrap tick box that is on by default and remembered", async () => {
+      setup(); app("/jobs/j1");
+      await userEvent.click(await screen.findByRole("button", { name: "Peek: 3 sessions" }));
+      const wrap = await screen.findByRole("checkbox", { name: "Wrap lines" });
+      expect(wrap).toBeChecked();
+      await userEvent.click(wrap);
+      expect(wrap).not.toBeChecked();
+      expect(localStorage.getItem("sf.session.wrap")).toBe("0");
+      await userEvent.click(screen.getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByRole("tablist", { name: "Agent sessions" })).toBeNull());
+      await userEvent.click(screen.getByRole("button", { name: "Peek: 3 sessions" }));
+      expect(await screen.findByRole("checkbox", { name: "Wrap lines" })).not.toBeChecked();   // remembered
+      localStorage.removeItem("sf.session.wrap");
+    });
+    it("keeps a long list of a step's events folded until asked for", async () => {
+      const dec = (id: number, at: number) => ({ id, kind: "implementation.pass", decision: `pass ${id}`, rationale: "x", actor: "factory", at });
+      const exs = [{ id: 1, stage: "IMPLEMENTATION", attempt: 1, outcome: "failed", error: "did not converge", output: null, startedAt: T, finishedAt: T + 120_000 }];
+      routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ stage: "IMPLEMENTATION", status: "running" }), exs, { decisions: [1, 2, 3, 4, 5].map((i) => dec(i, T + i * 1000)) }) };
+      app("/jobs/j1");
+      const toggle = await screen.findByRole("button", { name: /Show 5 details/ });
+      expect(screen.queryByText("pass 3 — x")).toBeNull();
+      await userEvent.click(toggle);
+      expect(screen.getByText("pass 3 — x")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Hide 5 details/ })).toBeInTheDocument();
+    });
+  });
   it("renders hostile text in a conversation as inert text", async () => {
     const run = { id: 8, stageExecutionId: null, agent: "anthropic/implementer", model: null, exitCode: 0, durationMs: 1, finished: true, usage: null, hasLog: true, at: 1 };
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [run] }), "/api/jobs/j1/invocations/8/conversation?after=0": { offset: 1, done: true, agent: "x", model: null, turns: [
@@ -648,7 +703,7 @@ describe("settings and setup", () => {
     expect(screen.getByText("run 2")).toBeInTheDocument();                                                          // the re-run after the fix
     expect(screen.getAllByText("3 tests failed").length).toBeGreaterThanOrEqual(1);                                    // and how it ended (also in the stage history table)
     expect(screen.getByText(/1 fix cycle/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Conversation: implementer · 1m 50s/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Peek: 1 session" })).toBeInTheDocument();
     const order = screen.getAllByRole("listitem").map((li) => li.textContent ?? "").filter((t) => /Run checks|Independent review|Fix findings/.test(t));
     expect(order[0]).toMatch(/Run checks/); expect(order[0]).toMatch(/3 tests failed/);                             // newest first
     await userEvent.click(screen.getByRole("button", { name: "Newest first" }));
