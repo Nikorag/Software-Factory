@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNull, lte, lt, or } from "drizzle-orm";
 import type { FactoryDb } from "../db/client.js";
 import { agentInvocations, artifacts, decisions, jobs, linearOutbox, stageExecutions, worktrees } from "../db/schema.js";
+import type { StageName } from "../config/schema.js";
 import { fixCycleHistory } from "./fix-cycles.js";
 
 export type JobRow = typeof jobs.$inferSelect;
@@ -24,21 +25,13 @@ export function listJobs(db: FactoryDb, status?: JobRow["status"]): JobRow[] {
  */
 export function enqueue(
   db: FactoryDb,
-  input: {
-    projectId: string; externalId: string; externalKey: string; workflow?: string; autonomous?: boolean; dryRun?: boolean; manual?: boolean;
-    /** The workflow the resolver chose. It is frozen onto the job: later edits, renames, assignments and priorities never reach it. Absent: the job runs the built-in Default Workflow. */
-    resolved?: { workflowId: string; workflowVersion: number; definition: unknown; entryStage: string; record: unknown };
-  },
+  input: { projectId: string; externalId: string; externalKey: string; workflow?: string; autonomous?: boolean; dryRun?: boolean; manual?: boolean },
 ): { job: JobRow; created: boolean } {
   const existing = db.select().from(jobs)
     .where(and(eq(jobs.projectId, input.projectId), eq(jobs.externalId, input.externalId), inArray(jobs.status, [...ACTIVE]))).get();
   if (existing) return { job: existing, created: false };
   const id = randomUUID();
-  const { resolved, ...rest } = input;
-  db.insert(jobs).values({
-    id, ...rest, autonomous: input.autonomous ?? false, dryRun: input.dryRun ?? false, manual: input.manual ?? false,
-    ...(resolved ? { stage: resolved.entryStage, workflowId: resolved.workflowId, workflowVersion: resolved.workflowVersion, workflowSnapshotJson: JSON.stringify(resolved.definition), workflowResolutionJson: JSON.stringify(resolved.record) } : {}),
-  }).run();
+  db.insert(jobs).values({ id, ...input, autonomous: input.autonomous ?? false, dryRun: input.dryRun ?? false, manual: input.manual ?? false }).run();
   return { job: getJob(db, id)!, created: true };
 }
 
@@ -111,13 +104,13 @@ export function cancelJob(db: FactoryDb, id: string, actor: string): JobRow {
  * Manually retry a failed/held job from the stage it stopped at, with fresh attempt counters. The error being cleared and the job's
  * lifetime fix cycles are recorded with the retry, so what went wrong (and how often) stays visible. A retried archived job is unarchived.
  */
-export function retryJob(db: FactoryDb, id: string, actor: string, resumeAt?: string): JobRow {
+export function retryJob(db: FactoryDb, id: string, actor: string, resumeAt?: StageName): JobRow {
   return db.transaction((tx) => {
     const job = tx.select().from(jobs).where(eq(jobs.id, id)).get();
     if (!job) throw new JobError(`no such job ${id}`);
     const held = HELD.includes(job.stage);
     if (!held) throw new JobError(`job is not retryable (stage ${job.stage}, status ${job.status})`);
-    const resume = resumeAt ?? job.heldFromStage ?? "DISCOVERED";
+    const resume = resumeAt ?? ((job.heldFromStage ?? "DISCOVERED") as StageName);
     const before = fixCycleHistory(tx, id);
     try {
       tx.update(jobs).set({ stage: resume, status: "queued", heldFromStage: null, stageAttempts: 0, remediationAttempts: 0, cancelRequested: false, lastError: null, notBefore: null, archivedAt: null, updatedAt: new Date() })
@@ -146,7 +139,7 @@ export function answerJob(db: FactoryDb, id: string, text: string, actor: string
   const job = getJob(db, id);
   if (!job) throw new JobError(`no such job ${id}`);
   const heldAt = job.heldFromStage ?? job.stage;
-  const resumeAt = job.heldFromStage === "SPECIFICATION_VALIDATION" ? "SPECIFICATION_REMEDIATION" : undefined;
+  const resumeAt = job.heldFromStage === "SPECIFICATION_VALIDATION" ? "SPECIFICATION_REMEDIATION" as StageName : undefined;
   const questions = askedQuestions(job.lastError); // read before retryJob clears lastError
   const retried = retryJob(db, id, actor, resumeAt);
   db.insert(decisions).values({ jobId: id, kind: "human.answer", decision: `${ANSWERED_AT}${heldAt}${questions ? `\n\n${questions}` : ""}`, rationale: answer, actor }).run();

@@ -9,8 +9,6 @@ import type { LinearClient, LinearIssue } from "./client.js";
 import { enqueueOutbox } from "./outbox.js";
 import { evaluateEligibility } from "./eligibility.js";
 import type { TrackerSet } from "../tracker/index.js";
-import { resolveWorkflow } from "../workflows/resolver.js";
-import { WorkflowsConfig } from "../config/schema.js";
 
 export interface DiscoveryReport {
   enqueued: { key: string; jobId: string; projectId: string; workflow: string; autonomous: boolean }[];
@@ -32,8 +30,6 @@ export async function discoverIssues(deps: {
   pickupMode?: "automatic" | "manual";
   /** Skip tickets of projects whose onboarding is not complete (the service turns this on). */
   requireOnboarding?: boolean;
-  /** workflows.yaml, for the built-in Default Workflow when the library has not been seeded yet. */
-  workflows?: WorkflowsConfig;
 }): Promise<DiscoveryReport> {
   const { db, client, linear, logger } = deps;
   const report: DiscoveryReport = { enqueued: [], skipped: [], errors: [] };
@@ -90,19 +86,11 @@ export async function discoverIssues(deps: {
       if (!prior || prior.status === "cancelled") report.skipped.push({ key: issue.identifier, projectId: project.id, reasons: verdict.reasons });
       continue;
     }
-    // Which workflow runs this ticket is decided now and frozen onto the job. One that cannot run is reported, never replaced by another.
-    const wf = resolveWorkflow(db, { projectId: project.id, labels: issue.labels }, deps.workflows ?? WorkflowsConfig.parse({}));
-    if (!wf.ok) {
-      if (!prior || prior.status === "cancelled") report.skipped.push({ key: issue.identifier, projectId: project.id, reasons: [`workflow: ${wf.reason}`] });
-      continue;
-    }
     const { job, created } = enqueue(db, {
       projectId: project.id, externalId: issue.id, externalKey: issue.identifier,
       workflow: verdict.workflow, autonomous: verdict.autonomous, dryRun: deps.dryRun ?? false,
-      resolved: { workflowId: wf.workflowId, workflowVersion: wf.version, definition: wf.definition, entryStage: wf.entryStage, record: wf.record },
     });
     if (!created) continue;
-    db.insert(decisions).values({ jobId: job.id, kind: "workflow.resolve", actor: "factory", decision: `workflow "${wf.workflowName}" v${wf.version} (${wf.record.source})`, rationale: wf.record.reason }).run();
     db.insert(decisions).values({
       jobId: job.id, kind: "discovery.accept", actor: "factory",
       decision: `accepted ${issue.identifier} as ${verdict.workflow}${verdict.autonomous ? " (autonomous)" : ""}`,

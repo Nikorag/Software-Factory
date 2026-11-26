@@ -41,7 +41,6 @@ Everything that talks to a tracker asks for the project's own connection and use
 - **The outbox** sends each job's status, label, comment and PR-link writes to the connection of the job's project, with its status names.
 - **Intake, spec and implementation stages** read the live ticket from that connection.
 - **The Board** shows every project's tickets, asking each connection for its own; a connection that is down shows a warning instead of hiding the rest. Starting a ticket reads it from the connection of the project it was listed under.
-- **Workflow label routing** lists the labels of every connection in use.
 - **Health and the doctor** check every connection a project uses.
 
 ## Changing the default

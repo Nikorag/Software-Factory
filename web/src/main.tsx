@@ -10,8 +10,6 @@ import { Jobs } from "@/pages/Jobs";
 import { Overview } from "@/pages/Overview";
 import { Settings } from "@/pages/Settings";
 import { Setup } from "@/pages/Setup";
-import { WorkflowEditor } from "@/pages/WorkflowEditor";
-import { Workflows } from "@/pages/Workflows";
 import "./index.css";
 
 createRoot(document.getElementById("root")!).render(
@@ -25,8 +23,6 @@ createRoot(document.getElementById("root")!).render(
             <Route path="jobs" element={<Jobs />} />
             <Route path="jobs/:id" element={<JobDetail />} />
             <Route path="projects" element={<Navigate to="/settings" replace />} />
-            <Route path="workflows" element={<Workflows />} />
-            <Route path="workflows/:id" element={<WorkflowEditor />} />
             <Route path="health" element={<HealthPage />} />
             <Route path="settings" element={<Settings />} />
             <Route path="setup" element={<Setup />} />

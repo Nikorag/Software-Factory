@@ -54,7 +54,7 @@ export async function harness(o: { passes?: number; projectPasses?: number; comm
   write(info.path, `${dir}/ticket.md`, `# JAM-1: ${TITLE}\n`);
   await commitPaths(info.path, [dir], "spec(JAM-1): all");
   ctx.handle.db.update(jobs).set({ stage: "IMPLEMENTATION_PREPARATION" }).where(eq(jobs.id, jobId)).run();
-  const engine = new Engine({ db: ctx.handle.db, logger: pino({ level: "silent" }), config, handlers: ctx.handlers, typed: ctx.typed, backoffBaseMs: 0, observer: createLinearReporter(ctx.handle.db), ...(o.now ? { now: o.now } : {}) });
+  const engine = new Engine({ db: ctx.handle.db, logger: pino({ level: "silent" }), config, handlers: ctx.handlers, backoffBaseMs: 0, observer: createLinearReporter(ctx.handle.db), ...(o.now ? { now: o.now } : {}) });
   const hist = () => ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.jobId, jobId)).all().map((x) => `${x.stage}:${x.outcome}`);
   return { github, linear, ctx, claude, haiku, repo, jobId, engine, wt: info.path, hist, stages: () => hist().map((h) => h.split(":")[0]!) };
 }
