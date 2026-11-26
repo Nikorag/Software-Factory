@@ -34,3 +34,16 @@ export class UpdateChecker {
     return this.inflight;
   }
 }
+
+/**
+ * The release this install is actually running, e.g. "0.9.0" or "0.9.0-6-gfaff586" (six commits past the tag). Releases are git tags
+ * (that is what updates follow), and package.json's version is NOT bumped on release, so reading it reports a stale number that happens
+ * to match the hub's own version. Falls back to package.json when git cannot say (no .git, no tags).
+ */
+export async function installedVersion(run: Run, root = PACKAGE_ROOT): Promise<string | undefined> {
+  try {
+    const d = (await run("git", ["describe", "--tags", "--match", "v[0-9]*"], root)).trim();
+    if (/^v\d/.test(d)) return d.slice(1);
+  } catch { /* not a git checkout, or no release tag reachable */ }
+  return VERSION;
+}

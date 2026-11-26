@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -23,9 +22,8 @@ import { saveSecret } from "./secrets.js";
 import { HubReporter } from "../hub/reporter.js";
 import { HubTunnel } from "../hub/tunnel.js";
 import { hubKey, readHubSettings } from "../hub/settings.js";
-import { PACKAGE_ROOT } from "../config/load.js";
 import { TaskManager } from "./tasks.js";
-import { UpdateChecker } from "./versions.js";
+import { installedVersion, UpdateChecker } from "./versions.js";
 import { bbStore } from "../bitbucket/auth.js";
 import { jiraStoreFor, trackerConfigured, trackerIdsInUse } from "../tracker/index.js";
 import { pruneAgentLogs, rotateLogs } from "./retention.js";
@@ -117,7 +115,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
   let hubTimer: NodeJS.Timeout | undefined;
   let tunnel: HubTunnel | undefined, tunnelTimer: NodeJS.Timeout | undefined;
   if (opts.scheduler !== false) {
-    const version = (() => { try { return (JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf8")) as { version?: string }).version; } catch { return undefined; } })();
+    const version = await installedVersion(async (file, args, cwd) => (await run(file, args, { cwd, timeout: 10_000 })).stdout);
     const reporter = new HubReporter({ db: ctx.handle.db, dataDir, logger, getSettings: () => readHubSettings(config.configDir), getKey: hubKey, version, tracker: config.factory.tracker, dryRun: config.factory.dryRun });
     let nextAt = 0;
     hubTimer = setInterval(() => {
