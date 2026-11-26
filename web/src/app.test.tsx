@@ -443,6 +443,60 @@ describe("settings and setup", () => {
       expect(screen.getByRole("button", { name: /Hide 5 details/ })).toBeInTheDocument();
     });
   });
+  describe("What happened: a few entries at a time", () => {
+    const T = 1_700_000_000_000;
+    const STAGES = ["DISCOVERED", "ELIGIBILITY_CHECK", "REQUIREMENTS_ANALYSIS", "SPECIFICATION_GENERATION", "SPECIFICATION_REVIEW", "SPECIFICATION_VALIDATION", "IMPLEMENTATION_PREPARATION", "IMPLEMENTATION", "AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW"];
+    const open = (n: number) => {
+      const exs = STAGES.slice(0, n).map((stage, i) => ({ id: i + 1, stage, attempt: 1, outcome: "succeeded", error: null, output: null, startedAt: T + i * 60_000, finishedAt: T + i * 60_000 + 30_000 }));
+      routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ stage: "LOCAL_MODEL_REVIEW", status: "running" }), exs) };
+      return app("/jobs/j1");
+    };
+    const title = (name: string) => screen.queryByRole("button", { name });
+    it("shows 3 entries, then 3 more per click, and offers View all only after the first View more", async () => {
+      open(10);
+      expect(await screen.findByText("Showing 3 of 10")).toBeInTheDocument();
+      expect(title("Independent review")).not.toBeNull();   // newest first
+      expect(title("Implement")).not.toBeNull();
+      expect(title("Prepare")).toBeNull();                   // the 4th newest is not shown yet
+      expect(screen.getByRole("button", { name: "View more" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "View all" })).toBeNull();
+      await userEvent.click(screen.getByRole("button", { name: "View more" }));
+      expect(screen.getByText("Showing 6 of 10")).toBeInTheDocument();
+      expect(title("Prepare")).not.toBeNull();
+      expect(title("Discovered")).toBeNull();
+      expect(screen.getByRole("button", { name: "View more" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "View all" })).toBeInTheDocument();   // now offered
+      await userEvent.click(screen.getByRole("button", { name: "View more" }));
+      expect(screen.getByText("Showing 9 of 10")).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "View more" }));
+      expect(screen.getByText("Showing 10 of 10")).toBeInTheDocument();
+      expect(title("Discovered")).not.toBeNull();
+      expect(screen.queryByRole("button", { name: "View more" })).toBeNull();            // nothing left to load
+      expect(screen.queryByRole("button", { name: "View all" })).toBeNull();
+    });
+    it("View all shows everything at once", async () => {
+      open(10);
+      await userEvent.click(await screen.findByRole("button", { name: "View more" }));
+      await userEvent.click(screen.getByRole("button", { name: "View all" }));
+      expect(screen.getByText("Showing 10 of 10")).toBeInTheDocument();
+      expect(title("Discovered")).not.toBeNull();
+    });
+    it("starts again at 3 when the order or filter changes", async () => {
+      open(10);
+      await userEvent.click(await screen.findByRole("button", { name: "View more" }));
+      expect(screen.getByText("Showing 6 of 10")).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Newest first" }));
+      expect(screen.getByText("Showing 3 of 10")).toBeInTheDocument();
+      expect(title("Discovered")).not.toBeNull();            // oldest first now
+      expect(title("Independent review")).toBeNull();
+    });
+    it("has no footer when everything already fits", async () => {
+      open(3);
+      expect(await screen.findByText("What happened")).toBeInTheDocument();
+      expect(screen.queryByText(/^Showing /)).toBeNull();
+      expect(screen.queryByRole("button", { name: "View more" })).toBeNull();
+    });
+  });
   it("renders hostile text in a conversation as inert text", async () => {
     const run = { id: 8, stageExecutionId: null, agent: "anthropic/implementer", model: null, exitCode: 0, durationMs: 1, finished: true, usage: null, hasLog: true, at: 1 };
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [run] }), "/api/jobs/j1/invocations/8/conversation?after=0": { offset: 1, done: true, agent: "x", model: null, turns: [

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, ChevronRight, Clock, Info, Loader2, MessageSquare, Pause, RotateCcw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +15,7 @@ const TONE: Record<Tone, { icon: React.ReactNode; text: string; rail: string }> 
   loop: { icon: <RotateCcw className="size-4" />, text: "text-loop", rail: "bg-loop/50" },
   info: { icon: <Info className="size-4" />, text: "text-muted-foreground", rail: "bg-border" },
 };
+const PAGE = 3;
 const clock = (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 /**
@@ -55,7 +56,12 @@ export function Timeline({ detail, cap, selected, onSelect, onPeek }: { detail: 
   const [onlyProblems, setOnlyProblems] = useState(false);
   const stats = statsOf(all);
   const shown = (onlyProblems ? all.filter((e) => e.tone === "fail" || e.tone === "loop" || e.tone === "wait") : all);
-  const rows = newestFirst ? [...shown].reverse() : shown;
+  const ordered = newestFirst ? [...shown].reverse() : shown;
+  // A long job has dozens of entries: show a few, then 3 more at a time (and, once you have asked for more, a way to see everything).
+  const [limit, setLimit] = useState(PAGE);
+  useEffect(() => { setLimit(PAGE); }, [newestFirst, onlyProblems]);
+  const rows = ordered.slice(0, limit);
+  const hidden = ordered.length - rows.length;
 
   return (
     <Card>
@@ -102,6 +108,13 @@ export function Timeline({ detail, cap, selected, onSelect, onPeek }: { detail: 
             })}
           </ol>
         )}
+        {ordered.length > PAGE ? (
+          <div className="flex flex-wrap items-center gap-2 border-t pt-3 text-xs text-muted-foreground">
+            <span>Showing {rows.length} of {ordered.length}</span>
+            {hidden > 0 ? <Button size="sm" variant="outline" onClick={() => setLimit(limit + PAGE)}>View more</Button> : null}
+            {hidden > 0 && limit > PAGE ? <Button size="sm" variant="outline" onClick={() => setLimit(ordered.length)}>View all</Button> : null}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );
