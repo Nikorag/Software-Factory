@@ -55,6 +55,19 @@ function authScreen(needsSetup) {
   const err = h("div", { class: "err" });
   const guard = (btn, fn) => async () => { err.textContent = ""; btn.disabled = true; try { await fn(); await boot(); } catch (e) { err.textContent = e.name === "NotAllowedError" ? "Passkey prompt cancelled." : `Failed: ${e.message}`; } finally { btn.disabled = false; } };
   if (!passkeysSupported()) return show(h("div", { class: "card center" }, h("h1", {}, "Passkeys required"), h("p", {}, "This browser does not support passkeys. Use a current Chrome, Safari, Edge or Firefox.")));
+  const inviteToken = new URLSearchParams(location.hash.slice(1)).get("invite");
+  if (inviteToken) {
+    const email = h("input", { type: "email", autocomplete: "username" }), name = h("input", { autocomplete: "name" });
+    const btn = h("button", {}, "Create passkey & join");
+    btn.addEventListener("click", guard(btn, async () => {
+      await createPasskey("/auth/invite/options", "/auth/invite/verify", { opts: { token: inviteToken, email: email.value, displayName: name.value } });
+      history.replaceState(null, "", location.pathname); // drop the used token from the address bar
+    }));
+    const signIn = h("a", { href: "#", onclick: (e) => { e.preventDefault(); history.replaceState(null, "", location.pathname); authScreen(false); } }, "Already have an account? Sign in");
+    return show(h("div", { class: "card center" }, h("h1", {}, "You're invited"),
+      h("p", { class: "muted" }, "Create your account. Sign-in is by passkey only; there are no passwords. You'll get your own space for your factories."),
+      h("label", {}, "Email"), email, h("label", {}, "Your name"), name, h("p", {}, btn), err, h("p", { class: "small" }, signIn)));
+  }
   if (needsSetup) {
     const token = h("input", { type: "password", autocomplete: "off" }), email = h("input", { type: "email", autocomplete: "username" }), name = h("input", { autocomplete: "name" });
     const btn = h("button", {}, "Create passkey & finish setup");
@@ -87,7 +100,7 @@ async function listScreen() {
       h("span", { class: "muted small" }, `${f.activeJobs} active / ${f.jobCount} jobs`), badge(label, cls),
       f.remoteAccess ? h("a", { class: "openlink", href: `/f/${f.id}/`, onclick: (e) => e.stopPropagation() }, "Open dashboard →") : h("span", { class: "muted small" }, "remote access off"))));
   }
-  nodes.push(addFactoryForm());
+  nodes.push(addFactoryForm(), await invitesCard());
   if (view.addFocus) queueMicrotask(() => { document.getElementById("newFactoryName")?.focus(); view.addFocus = false; });
   show(...nodes);
 }
@@ -111,6 +124,29 @@ function addFactoryForm() {
     catch (e) { err.textContent = e.status === 409 ? "A factory with that name already exists." : `Failed: ${e.message}`; }
   });
   return h("div", { class: "card" }, h("h2", { class: "mt0" }, "Add a factory"), h("p", { class: "muted small" }, "Reporting stays off in a local factory until you paste this key into it."), h("div", { class: "row" }, h("div", { class: "grow" }, name), btn), err, out);
+}
+
+async function invitesCard() {
+  const out = h("div"), err = h("div", { class: "err" }), list = h("div");
+  const draw = async () => {
+    const { invites } = await api("GET", "/v1/invites");
+    list.replaceChildren(...invites.map((i) => {
+      const used = !!i.usedAt, expired = !used && new Date(i.expiresAt) < new Date();
+      return h("div", { class: "row small" }, h("div", { class: "grow muted" }, used ? `Joined: ${i.usedByEmail || "a user"} (${ago(i.usedAt)})` : expired ? `Expired (${ago(i.expiresAt)})` : `Pending, created ${ago(i.createdAt)}`),
+        used || expired ? "" : h("button", { class: "ghost", onclick: async () => { await api("DELETE", `/v1/invites/${i.id}`); void draw(); } }, "Revoke"));
+    }));
+  };
+  const btn = h("button", { class: "ghost" }, "Create invite link");
+  btn.addEventListener("click", async () => {
+    err.textContent = "";
+    try {
+      const r = await api("POST", "/v1/invites", {});
+      out.replaceChildren(h("p", { class: "muted small" }, "Send this single-use link to the person you're inviting. It expires in 7 days and is shown once. They get their own space; they can't see your factories."), h("pre", {}, r.url),
+        h("button", { class: "ghost", onclick: (e) => { navigator.clipboard?.writeText(r.url); e.target.textContent = "Link copied"; } }, "Copy link")); void draw();
+    } catch (e) { err.textContent = `Failed: ${e.message}`; }
+  });
+  await draw().catch(() => {});
+  return h("div", { class: "card" }, h("h2", { class: "mt0" }, "Invite someone"), h("p", { class: "muted small" }, "Let another person register their own account on this hub."), btn, err, out, list);
 }
 
 async function factoryScreen(id) {
