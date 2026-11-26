@@ -10,19 +10,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { DeleteJobButton } from "@/components/JobsTable";
 import { Pager } from "@/components/Pager";
 import { matches, usePaged } from "@/lib/paging";
-import { Conversation } from "@/components/Conversation";
-import { Timeline } from "@/components/Timeline";
+import { Peek } from "@/components/Peek";
+import { PeekButton, Timeline } from "@/components/Timeline";
 import { FlowChart, FlowLegend } from "@/components/FlowChart";
 import { StatusBadge, toneOf } from "@/components/StatusBadge";
 import { api, apiText, deleteJobRequest, post, send, type DeleteOptions, type SendResult } from "@/lib/api";
 import { ago, dur, HELD, safeUrl, stageLabel, stageText } from "@/lib/format";
 import { deriveFlow, NODE, NODES } from "@/lib/pipeline";
-import type { JobDetail as D } from "@/lib/types";
+import type { Invocation, JobDetail as D } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
 import { ConnectionBanner, useOffline } from "@/components/ConnectionBanner";
 import { cn } from "@/lib/utils";
@@ -37,7 +36,9 @@ export function JobDetail() {
   const [msg, setMsg] = useState<string | null>(null);
   const [answer, setAnswer] = useState("");
   const [log, setLog] = useState<string | null>(null);
-  const [watch, setWatch] = useState<number | null>(null); // the agent run whose conversation is open
+  const [peek, setPeek] = useState<{ ids: number[]; id: number } | null>(null); // the agent sessions open in the peek window, and which tab
+  const [wrap, setWrap] = useState(() => { try { return localStorage.getItem("sf.session.wrap") !== "0"; } catch { return true; } });
+  const setWrapPref = (w: boolean) => { setWrap(w); try { localStorage.setItem("sf.session.wrap", w ? "1" : "0"); } catch { /* a preference only */ } };
   const nav = useNavigate();
   const [fh, setFh] = useState(""), [fa, setFa] = useState(""), [fd, setFd] = useState("");
   const execAll = d?.executions ?? [];
@@ -60,7 +61,8 @@ export function JobDetail() {
   const run = (name: string, path: string, body?: unknown) => guard(name, async () => { const err = await post(path, body); setMsg(err); if (!err) { if (name === "answer") setAnswer(""); await reload(); } });
   const locked = pending !== null || offline;
   const archived = Boolean(j.archivedAt);
-  const watchRun = watch !== null ? d.invocations.find((i) => i.id === watch) : undefined;
+  const openPeek = (runs: Invocation[], id?: number) => { if (runs.length) setPeek({ ids: runs.map((r) => r.id), id: id ?? runs.find((r) => !r.finished)?.id ?? runs.at(-1)!.id }); };
+  const peekRuns = peek ? d.invocations.filter((i) => peek.ids.includes(i.id)) : [];
   const node = sel ? NODE[sel] : null;
   const execs = node ? execAll.filter((e) => e.stage === node.stage) : execAll;
   const archiveIt = (to: boolean) => guard("archive", async () => { const r = await send("POST", `/api/jobs/${j.id}/${to ? "archive" : "unarchive"}`); setMsg(r.ok ? null : r.error); await reload(); });
@@ -112,25 +114,19 @@ export function JobDetail() {
         <FlowLegend />
       </CardContent></Card>
 
-      <Timeline detail={d} cap={cap} selected={sel} onSelect={setSel} onWatch={setWatch} />
+      <Timeline detail={d} cap={cap} selected={sel} onSelect={setSel} onPeek={(runs) => openPeek(runs)} />
 
       {node ? (
         <Card><CardContent className="grid gap-4 md:grid-cols-2">
           <div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Selected step</div><h3 className="text-base font-semibold">{node.label}</h3><div className="font-mono text-xs text-muted-foreground">{node.stage}</div>
             <p className="mt-2 text-sm">{({ done: "Finished", run: "Running now", wait: "Waiting", fail: "Stopped here", idle: "Not reached yet" })[flow.state[node.id] ?? "idle"]}{(flow.attempts[node.id] ?? 0) > 1 ? ` · ${flow.attempts[node.id]} attempts` : ""}{flow.duration[node.id] ? ` · ${dur(flow.duration[node.id])}` : ""}</p>
-            {(() => { const ids = new Set(execs.map((e) => e.id)); const runs = d.invocations.filter((i) => i.stageExecutionId !== null && ids.has(i.stageExecutionId)); return runs.length ? (
-              <div className="mt-3 flex flex-wrap gap-2">{runs.map((r) => <Button key={r.id} size="sm" variant="secondary" onClick={() => setWatch(r.id)}>{r.finished ? "Conversation" : "Watch live"}: {r.agent.split("/")[1] ?? r.agent}</Button>)}</div>) : null; })()}
+            {(() => { const ids = new Set(execs.map((e) => e.id)); const runs = d.invocations.filter((i) => i.stageExecutionId !== null && ids.has(i.stageExecutionId)); return runs.length ? <div className="mt-3"><PeekButton runs={runs} variant="secondary" onPeek={(r) => openPeek(r)} /></div> : null; })()}
             <Button variant="ghost" size="sm" className="mt-2" onClick={() => setSel(null)}>Show all steps</Button></div>
           <div className="grid gap-3 text-sm"><div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">What happens here</div><p>{node.what}</p></div><div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">If it finds problems</div><p>{node.issues}</p></div></div>
         </CardContent></Card>
       ) : null}
 
-      <Dialog open={watch !== null} onOpenChange={(o) => { if (!o) setWatch(null); }}>
-        <DialogContent className="flex h-[85vh] max-h-[85vh] flex-col gap-0 overflow-hidden border-[#34363b] bg-[#1a1b1e] p-0 text-[#dcdcdc] sm:max-w-5xl [&>button]:text-[#8b8f97]">
-          <DialogHeader className="sr-only"><DialogTitle>{watchRun ? `${watchRun.finished ? "Conversation" : "Live"}: ${watchRun.agent.split("/")[1] ?? watchRun.agent}` : "Conversation"}</DialogTitle><DialogDescription>The full back-and-forth for this agent run, shown like a Claude Code session.</DialogDescription></DialogHeader>
-          {watch !== null ? <Conversation jobId={j.id} runId={watch} running={watchRun ? !watchRun.finished : false} ctx={{ key: j.key, branch: d.worktree?.branch }} /> : null}
-        </DialogContent>
-      </Dialog>
+      {peek && peekRuns.length ? <Peek jobId={j.id} runs={peekRuns} activeId={peek.id} onActive={(id) => setPeek({ ids: peek.ids, id })} onClose={() => setPeek(null)} wrap={wrap} onWrap={setWrapPref} ctx={{ key: j.key, branch: d.worktree?.branch }} /> : null}
 
       <Tabs defaultValue="history">
         <TabsList><TabsTrigger value="history">Stage history</TabsTrigger><TabsTrigger value="agents" id="agent-runs-tab">Agent runs</TabsTrigger><TabsTrigger value="decisions">Decisions</TabsTrigger><TabsTrigger value="more">Artifacts &amp; write-back</TabsTrigger></TabsList>
@@ -144,7 +140,7 @@ export function JobDetail() {
           <div className="mb-3 relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter agent runs" className="pl-8" value={fa} onChange={(e) => setFa(e.target.value)} placeholder="Filter by agent or model" /></div>
           <Table><TableHeader><TableRow>{["Agent", "Model", "Took", "Exit", "Denied", "", "Log"].map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
             <TableBody>{agents.slice.map((a) => <TableRow key={a.id}><TableCell>{a.agent}</TableCell><TableCell>{a.model || ""}</TableCell><TableCell>{dur(a.durationMs)}</TableCell><TableCell>{a.exitCode ?? (a.finished ? <span className="text-muted-foreground" title="The run ended without an exit code: it was stopped (timeout, cancel, emergency stop), failed to start, or the service restarted mid-run.">stopped</span> : "")}</TableCell><TableCell className={a.usage?.denials ? "text-loop" : "text-muted-foreground"}>{a.usage?.denials ?? ""}</TableCell>
-              <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={() => setWatch(a.id)}>{a.finished ? "Conversation" : "Watch live"}</Button> : ""}</TableCell>
+              <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={() => openPeek(a.stageExecutionId === null ? [a] : d.invocations.filter((i) => i.stageExecutionId === a.stageExecutionId), a.id)}>{a.finished ? "Conversation" : "Watch live"}</Button> : ""}</TableCell>
               <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={async () => { try { setLog(await apiText(`/api/jobs/${j.id}/invocations/${a.id}/log?tail=30000`)); } catch (e) { setLog(`No log: ${(e as Error).message}`); } }}>view</Button> : ""}</TableCell></TableRow>)}</TableBody></Table>
           <Pager page={agents.page} pages={agents.pages} pageSize={agents.pageSize} total={agents.total} onPage={agents.setPage} onPageSize={agents.setPageSize} />
           {log !== null ? <pre className="mt-3 max-h-96 overflow-auto rounded-md border bg-muted/40 p-3 text-xs whitespace-pre-wrap">{log}</pre> : null}

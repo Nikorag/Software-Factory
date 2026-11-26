@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GitBranch } from "lucide-react";
+import { GitBranch, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { DialogClose } from "@/components/ui/dialog";
 import { dur } from "@/lib/format";
 import { contextPercent, contextWindow, prettyModel, resultPreview, shortPath, tokensShort } from "@/lib/session";
 import { nextDelay } from "@/hooks/usePoll";
@@ -15,6 +16,8 @@ interface Page { turns: Turn[]; offset: number; done: boolean; agent: string; mo
 /** The terminal look is the same in light and dark mode: it is meant to read like a Claude Code session. */
 export const TERM = { bg: "bg-[#1a1b1e]", text: "text-[#dcdcdc]", dim: "text-[#8b8f97]", line: "border-[#34363b]", coral: "text-[#d97757]", ok: "text-[#7fbf7f]", err: "text-[#e5737e]" };
 const SPIN = ["✻", "✽", "✶", "✳", "✢", "·"];
+/** Wrapped text never needs a horizontal scroll; unwrapped keeps each line as it was written. */
+const flow = (wrap: boolean) => (wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre");
 
 /** Ticks once a second while `on`, so a live run's clock and spinner move. */
 function useNow(on: boolean): number {
@@ -34,14 +37,14 @@ function Seg({ bg, fg, z, first, children, title }: { bg: string; fg: string; z:
 }
 
 /** Collapsible tool output: the first line, "… +N lines" to expand, like Claude Code. */
-function Output({ text, error }: { text: string; error: boolean }) {
+function Output({ text, error, wrap }: { text: string; error: boolean; wrap: boolean }) {
   const [open, setOpen] = useState(false);
   const { first, more } = resultPreview(text);
   return (
     <div className={cn("flex gap-2 pl-5", error ? TERM.err : TERM.dim)}>
       <span aria-hidden>⎿</span>
       <div className="min-w-0 flex-1">
-        {open ? <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words font-mono">{text || "(no output)"}</pre> : <span className="block truncate">{first || "(no output)"}</span>}
+        {open ? <pre className={cn("max-h-96 overflow-auto font-mono", flow(wrap))}>{text || "(no output)"}</pre> : <span className={cn("block", flow(wrap))}>{first || "(no output)"}</span>}
         {more > 0 || open ? <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="underline-offset-2 hover:underline">{open ? "show less" : `… +${more} line${more === 1 ? "" : "s"} (click to expand)`}</button> : null}
       </div>
     </div>
@@ -49,13 +52,13 @@ function Output({ text, error }: { text: string; error: boolean }) {
 }
 
 /** The prompt the factory sent, drawn like a user message: a highlighted block, folded to a few lines. */
-function Prompt({ text }: { text: string }) {
+function Prompt({ text, wrap }: { text: string; wrap: boolean }) {
   const [open, setOpen] = useState(false);
   const lines = text.split("\n");
   const shown = open ? lines : lines.slice(0, 2);
   return (
     <div className="bg-[#2a2c31] px-3 py-2">
-      <div className="flex gap-2"><span aria-hidden className={TERM.dim}>❯</span><div className="min-w-0 flex-1 whitespace-pre-wrap break-words"><b>Prompt sent to Claude</b>{"\n"}{shown.join("\n")}</div></div>
+      <div className="flex gap-2"><span aria-hidden className={TERM.dim}>❯</span><div className={cn("min-w-0 flex-1", flow(wrap))}><b>Prompt sent to Claude</b>{"\n"}{shown.join("\n")}</div></div>
       {lines.length > 2 || open ? <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={cn("ml-5 mt-1 underline-offset-2 hover:underline", TERM.dim)}>{open ? "show less" : `… +${lines.length - 2} lines (click to expand)`}</button> : null}
     </div>
   );
@@ -65,7 +68,7 @@ function Prompt({ text }: { text: string }) {
  * One agent run's back-and-forth, drawn like a Claude Code session with its status bar. Everything here is untrusted text (tickets, code,
  * command output) and is only ever rendered as text. `ctx` is what the job page already knows: the ticket key and the worktree's branch.
  */
-export function Conversation({ jobId, runId, running, ctx }: { jobId: string; runId: number; running: boolean; ctx?: { key?: string; branch?: string | null } }) {
+export function Conversation({ jobId, runId, running, ctx, wrap = true, onWrap, tabs }: { jobId: string; runId: number; running: boolean; ctx?: { key?: string; branch?: string | null }; wrap?: boolean; onWrap?: (w: boolean) => void; /** shown straight under the title bar (the peek window's session tabs) */ tabs?: React.ReactNode }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [meta, setMeta] = useState<Omit<Page, "turns" | "offset">>({ agent: "", model: null, done: !running });
   const [err, setErr] = useState<string | null>(null);
@@ -115,19 +118,24 @@ export function Conversation({ jobId, runId, running, ctx }: { jobId: string; ru
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col font-mono text-[13px] leading-relaxed", TERM.bg, TERM.text)}>
-      <div className={cn("flex items-center gap-2 border-b px-4 py-2 pr-12 text-xs", TERM.line)}>
-        <span className={cn("font-semibold", TERM.coral)}>✻</span><b>Claude Code</b><span className={cn("truncate", TERM.dim)}>{shortPath(meta.cwd) || "agent run"}</span>
-        <span className="ml-auto shrink-0">{liveNow ? <span className={TERM.coral}>● live</span> : <span className={TERM.dim}>finished</span>}</span>
+      <div className={cn("flex h-10 items-center gap-2 border-b px-4 text-xs", TERM.line)}>
+        <span className={cn("font-semibold", TERM.coral)}>✻</span><b>Claude Code</b><span className={cn("min-w-0 truncate", TERM.dim)}>{shortPath(meta.cwd) || "agent run"}</span>
+        <span className="ml-auto flex shrink-0 items-center gap-3">
+          {onWrap ? <label className={cn("flex cursor-pointer items-center gap-1.5", TERM.dim)}><input type="checkbox" className="accent-[#d97757]" checked={wrap} onChange={(e) => onWrap(e.target.checked)} />Wrap lines</label> : null}
+          {liveNow ? <span className={TERM.coral}>● live</span> : <span className={TERM.dim}>finished</span>}
+          <DialogClose aria-label="Close" className="grid size-6 place-items-center rounded text-[#8b8f97] outline-none hover:bg-[#2a2c31] hover:text-[#dcdcdc] focus-visible:ring-2 focus-visible:ring-[#d97757]"><X className="size-4" /></DialogClose>
+        </span>
       </div>
+      {tabs}
 
       <div className="min-h-0 flex-1 overflow-auto px-4 py-3" onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
-        <div className="grid gap-2.5">
+        <div className={cn("grid gap-2.5", !wrap && "w-max min-w-full")}>
           {err ? <p role="alert" className={TERM.err}>{turns.length ? "Lost the connection to this run" : "No conversation for this run yet"}: {err}. Retrying…</p> : null}
           {turns.map((t, i) => {
             switch (t.kind) {
-              case "prompt": return <Prompt key={i} text={t.text} />;
+              case "prompt": return <Prompt key={i} text={t.text} wrap={wrap} />;
               case "session": return <div key={i} className={TERM.dim}>Session started{t.model ? ` with ${t.model}` : ""}{t.tools != null ? ` · ${t.tools} tools` : ""}</div>;
-              case "text": return <div key={i} className="flex gap-2"><span aria-hidden>⏺</span><div className="min-w-0 flex-1 whitespace-pre-wrap break-words">{t.text}</div></div>;
+              case "text": return <div key={i} className="flex gap-2"><span aria-hidden>⏺</span><div className={cn("min-w-0 flex-1", flow(wrap))}>{t.text}</div></div>;
               case "tool": {
                 const r = results.get(t.id);
                 const [first] = t.input.split("\n");
@@ -135,19 +143,19 @@ export function Conversation({ jobId, runId, running, ctx }: { jobId: string; ru
                   <div key={i} className="grid gap-0.5">
                     <div className="flex gap-2">
                       <span aria-hidden className={r ? (r.error ? TERM.err : TERM.ok) : TERM.dim}>⏺</span>
-                      <div className="min-w-0 flex-1 truncate"><b>{t.name}</b><span className={TERM.dim}>({first})</span></div>
+                      <div className={cn("min-w-0 flex-1", wrap ? "whitespace-pre-wrap break-all" : "whitespace-nowrap")}><b>{t.name}</b><span className={TERM.dim}>({first})</span></div>
                     </div>
-                    {r ? <Output text={r.text} error={r.error} /> : <div className={cn("pl-5", TERM.dim)}>⎿ {meta.done ? "(no result recorded)" : "Running…"}</div>}
+                    {r ? <Output text={r.text} error={r.error} wrap={wrap} /> : <div className={cn("pl-5", TERM.dim)}>⎿ {meta.done ? "(no result recorded)" : "Running…"}</div>}
                   </div>
                 );
               }
               case "tool_result": case "usage": return null; // shown under its call / in the status bar
               case "result": return (
-                <div key={i} className={cn("whitespace-pre-wrap break-words", t.ok ? TERM.dim : TERM.err)}>
+                <div key={i} className={cn(flow(wrap), t.ok ? TERM.dim : TERM.err)}>
                   <div>{t.ok ? "✻ Finished" : "✗ Failed"}{t.turns ? ` after ${t.turns} turns` : ""}</div>{t.text ? <div className="pl-4">{t.text}</div> : null}
                 </div>
               );
-              default: return <pre key={i} className={cn("whitespace-pre-wrap break-words", TERM.dim)}>{t.text}</pre>;
+              default: return <pre key={i} className={cn(flow(wrap), TERM.dim)}>{t.text}</pre>;
             }
           })}
           {turns.length === 0 && !err ? <p className={TERM.dim}>Waiting for the first message…</p> : null}

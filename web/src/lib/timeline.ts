@@ -25,7 +25,7 @@ const EVENT_LABEL: Record<string, string> = {
   "discovery.accept": "Picked up", "manual.start": "Started from the Board", "job.retry": "You retried", "job.cancel": "Cancel requested", "human.answer": "You answered",
   remediation: "Sent back", "review.result": "Review", "review.degraded": "Reviewer fallback", "agent.violation": "Boundary violation", recovery: "Recovered after a restart",
   "dry-run": "Dry run", eligibility: "Eligibility", "worktree.create": "Workspace", "code-review.independent": "Independent review", "code-review.verdict": "Claude's verdict",
-  "security-review": "Security review", baseline: "Baseline checks", "implementation.pass": "Implementation pass", "pr.merged": "Merged", "ci.none": "CI", "ci.external-failing": "External CI failing",
+  "security-review": "Security review", baseline: "Baseline checks", "implementation.pass": "Implementation pass", "pr.merged": "Merged", "human.deferred": "Left for you", "ci.none": "CI", "ci.external-failing": "External CI failing",
 };
 const eventLabel = (kind: string) => EVENT_LABEL[kind] ?? (kind.startsWith("hold.") ? `Stopped (${kind.slice(5).toLowerCase().replace("_", " ")})` : kind);
 
@@ -103,7 +103,7 @@ export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
   // decisions belong to the step that was running when they were made; the rest stand on their own
   const attach = (x: Decision): boolean => {
     const at = x.at ?? 0;
-    const home = [...entries].reverse().find((en) => at >= en.at - 1000 && at <= (en.end ?? Number.MAX_SAFE_INTEGER) + 3000);
+    const home = [...entries].reverse().find((en) => en.stage && at >= en.at - 1000 && at <= (en.end ?? Number.MAX_SAFE_INTEGER) + 3000); // standalone entries (no stage, no end) must not swallow everything after them
     if (!home) return false;
     home.events.push({ at, label: eventLabel(x.kind), text: decisionText(x) });
     return true;
