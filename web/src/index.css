@@ -3,31 +3,21 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* shadcn/ui "zinc" theme. Status colours are the factory's own: ok = route taken, run = running now, loop = sent back for fixes. */
-:root {
+/* The factory's own dark palette (see the redesign): near-black surfaces, one calm accent per state.
+   ok = route taken, run = running now, loop = sent back for fixes / needs you, fail = failed. The app is dark only. */
+:root, .dark {
   --radius: 0.625rem;
-  --background: oklch(0.985 0 0); --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(1 0 0); --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(1 0 0); --popover-foreground: oklch(0.141 0.005 285.823);
-  --primary: oklch(0.21 0.006 285.885); --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.967 0.001 286.375); --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.967 0.001 286.375); --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375); --accent-foreground: oklch(0.21 0.006 285.885);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.92 0.004 286.32); --input: oklch(0.92 0.004 286.32); --ring: oklch(0.705 0.015 286.067);
-  --ok: oklch(0.55 0.15 150); --run: oklch(0.55 0.19 260); --loop: oklch(0.6 0.15 65); --wait: oklch(0.55 0.05 260);
-}
-.dark {
-  --background: oklch(0.141 0.005 285.823); --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0.006 285.885); --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.21 0.006 285.885); --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.92 0.004 286.32); --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.274 0.006 286.033); --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.274 0.006 286.033); --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033); --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%); --input: oklch(1 0 0 / 15%); --ring: oklch(0.552 0.016 285.938);
-  --ok: oklch(0.8 0.17 150); --run: oklch(0.72 0.14 255); --loop: oklch(0.82 0.15 85); --wait: oklch(0.75 0.06 260);
+  --background: #0E0E10; --foreground: #ECECEE;
+  --card: #141417; --card-foreground: #ECECEE;
+  --popover: #17171A; --popover-foreground: #ECECEE;
+  --primary: #ECECEE; --primary-foreground: #0E0E10;
+  --secondary: #1C1C21; --secondary-foreground: #ECECEE;
+  --muted: #1C1C21; --muted-foreground: #A1A1AA;
+  --accent: #222227; --accent-foreground: #ECECEE;
+  --destructive: #F87171;
+  --border: #232328; --input: #2E2E35; --ring: #52525B;
+  --rail: #121214; --line: #1E1E22; --dim: #8E8E98;
+  --ok: #4ADE80; --run: #60A5FA; --loop: #FBBF24; --wait: #FBBF24;
 }
 
 @theme inline {
@@ -40,14 +30,20 @@
   --color-muted: var(--muted); --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent); --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive); --color-border: var(--border); --color-input: var(--input); --color-ring: var(--ring);
+  --color-rail: var(--rail); --color-line: var(--line); --color-dim: var(--dim);
   --color-ok: var(--ok); --color-run: var(--run); --color-loop: var(--loop); --color-wait: var(--wait);
 }
 
 @layer base {
   * { @apply border-border outline-ring/50; }
-  body { @apply bg-background text-foreground antialiased; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { @apply bg-background text-foreground antialiased; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 13.5px; }
+  .font-mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
 }
 
 @keyframes flow { to { stroke-dashoffset: -22; } }
 @keyframes pulse-ring { from { transform: scale(1); opacity: 0.55; } to { transform: scale(1.12, 1.35); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .anim { animation: none !important; } }
+
+/* Electron: the native title bar is hidden, so the rail header and the tab bar are the drag handle; controls inside opt out. */
+.app-drag { -webkit-app-region: drag; }
+.app-drag button, .app-drag a, .app-drag select, .app-drag input, .no-drag { -webkit-app-region: no-drag; }

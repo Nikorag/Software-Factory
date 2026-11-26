@@ -74,7 +74,7 @@ describe("dashboard", () => {
     routes = { "/api/overview": overview() };
     app("/");
     expect(await screen.findByText("RUNNING")).toBeInTheDocument();
-    expect(screen.getByText(/PR-only: never merges/)).toBeInTheDocument();
+    expect(screen.getByText(/PR-only/)).toBeInTheDocument();
     expect(await screen.findByText("memory free")).toBeInTheDocument();
     expect(screen.getByText("Dashboard only: the scheduler is not running.")).toBeInTheDocument();
     expect(screen.getByText("JAM-1")).toBeInTheDocument(); expect(screen.getByText("sandbox")).toBeInTheDocument();

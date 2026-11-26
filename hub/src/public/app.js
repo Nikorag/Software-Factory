@@ -21,6 +21,20 @@ const show = (...nodes) => main.replaceChildren(...nodes);
 const ago = (iso) => { if (!iso) return "never"; const s = Math.max(0, (Date.now() - new Date(iso)) / 1000); return s < 60 ? "just now" : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`; };
 const presence = (f) => { if (f.status === "disabled") return ["disabled", "offline"]; if (!f.lastSeenAt) return ["never connected", "offline"]; const s = (Date.now() - new Date(f.lastSeenAt)) / 1000; return s < 120 ? ["online", "online"] : s < 900 ? ["quiet", "stale"] : ["offline", "offline"]; };
 const badge = (text, cls) => h("span", { class: `badge ${cls}` }, text);
+const setTitle = (t) => { $("title").textContent = t; };
+
+// ---- Shell: the factory rail (left), a title bar and a status bar (bottom), as in the dashboard ----
+let factories = [];
+function renderRail() {
+  $("railList").replaceChildren(...(factories.length ? factories.map((f) => {
+    const [label, cls] = presence(f);
+    return h("button", { class: "rail-item", type: "button", "aria-current": String(view.name === "factory" && view.id === f.id), title: label, onclick: () => go({ name: "factory", id: f.id }) },
+      h("span", { class: `dot ${cls}`, role: "img", "aria-label": label }), h("span", { class: "name" }, f.name), h("span", { class: "meta" }, f.activeJobs ? `${f.activeJobs} active` : label));
+  }) : [h("div", { class: "muted small" }, "No factories yet.")]));
+  const online = factories.filter((f) => presence(f)[1] === "online").length, active = factories.reduce((n, f) => n + (f.activeJobs || 0), 0);
+  $("status").replaceChildren(h("span", {}, `${online} of ${factories.length} online`), h("span", {}, `${active} active job${active === 1 ? "" : "s"}`), h("span", { class: "right" }, me ? me.email : ""));
+}
+async function loadRail() { factories = (await api("GET", "/v1/factories")).factories; renderRail(); }
 
 // ---- WebAuthn (browser side) ----
 function creationOptions(o) { return { ...o, challenge: b64u.dec(o.challenge), user: { ...o.user, id: b64u.dec(o.user.id) }, excludeCredentials: (o.excludeCredentials || []).map((c) => ({ ...c, id: b64u.dec(c.id) })) }; }
@@ -61,8 +75,10 @@ function authScreen(needsSetup) {
 let me, view = { name: "list" }, stream;
 
 async function listScreen() {
-  const { factories } = await api("GET", "/v1/factories");
-  const nodes = [h("div", { class: "row" }, h("h1", { class: "grow" }, "Factories"))];
+  setTitle("Factories");
+  const online = factories.filter((f) => presence(f)[1] === "online").length, active = factories.reduce((n, f) => n + (f.activeJobs || 0), 0), jobs = factories.reduce((n, f) => n + (f.jobCount || 0), 0);
+  const stat = (n, l) => h("div", { class: "stat" }, h("b", {}, String(n)), h("span", {}, l));
+  const nodes = [h("div", { class: "stats" }, stat(factories.length, "factories"), stat(online, "online"), stat(active, "active jobs"), stat(jobs, "jobs in total"))];
   if (!factories.length) nodes.push(h("div", { class: "card muted" }, "No factories yet. Add one to get an API key for your local factory."));
   for (const f of factories) {
     const [label, cls] = presence(f);
@@ -72,6 +88,7 @@ async function listScreen() {
       f.remoteAccess ? h("a", { class: "openlink", href: `/f/${f.id}/`, onclick: (e) => e.stopPropagation() }, "Open dashboard →") : h("span", { class: "muted small" }, "remote access off"))));
   }
   nodes.push(addFactoryForm());
+  if (view.addFocus) queueMicrotask(() => { document.getElementById("newFactoryName")?.focus(); view.addFocus = false; });
   show(...nodes);
 }
 
@@ -86,25 +103,25 @@ function keyBox(token, name) {
 }
 
 function addFactoryForm() {
-  const name = h("input", { placeholder: "e.g. mac-mini", maxlength: "100" }), out = h("div"), err = h("div", { class: "err" });
+  const name = h("input", { id: "newFactoryName", placeholder: "e.g. mac-mini", maxlength: "100", "aria-label": "Factory name" }), out = h("div"), err = h("div", { class: "err" });
   const btn = h("button", {}, "Create factory & API key");
   btn.addEventListener("click", async () => {
     err.textContent = ""; if (!name.value.trim()) return;
-    try { const r = await api("POST", "/v1/factories", { orgId: me.orgs[0].id, name: name.value.trim() }); out.replaceChildren(keyBox(r.token, name.value.trim())); name.value = ""; }
+    try { const r = await api("POST", "/v1/factories", { orgId: me.orgs[0].id, name: name.value.trim() }); out.replaceChildren(keyBox(r.token, name.value.trim())); name.value = ""; void loadRail(); }
     catch (e) { err.textContent = e.status === 409 ? "A factory with that name already exists." : `Failed: ${e.message}`; }
   });
-  return h("div", { class: "card" }, h("h2", { style: "margin-top:0" }, "Add a factory"), h("p", { class: "muted small" }, "Reporting stays off in a local factory until you paste this key into it."), h("div", { class: "row" }, h("div", { class: "grow" }, name), btn), err, out);
+  return h("div", { class: "card" }, h("h2", { class: "mt0" }, "Add a factory"), h("p", { class: "muted small" }, "Reporting stays off in a local factory until you paste this key into it."), h("div", { class: "row" }, h("div", { class: "grow" }, name), btn), err, out);
 }
 
 async function factoryScreen(id) {
   const d = await api("GET", `/v1/factories/${id}`), f = d.factory, [label, cls] = presence(f);
+  setTitle(f.name);
   const out = h("div"), err = h("div", { class: "err" });
   const rotate = h("button", { class: "ghost", onclick: async () => { if (!confirm("Replace the API key? The old key stops working immediately.")) return; try { out.replaceChildren(keyBox((await api("POST", `/v1/factories/${id}/rotate-key`, {})).token, f.name)); } catch (e) { err.textContent = e.message; } } }, "Rotate API key");
   const disable = h("button", { class: "danger", onclick: async () => { if (!confirm("Disable this factory and revoke its keys?")) return; await api("POST", `/v1/factories/${id}/disable`, {}); go({ name: "factory", id }); } }, "Disable");
-  const table = (cols, rows) => h("table", {}, h("tr", {}, cols.map((c) => h("th", {}, c))), rows.length ? rows : h("tr", {}, h("td", { class: "muted", colspan: String(cols.length) }, "Nothing yet")));
+  const table = (cols, rows) => h("div", { class: "card flush table-wrap" }, h("table", {}, h("tr", {}, cols.map((c) => h("th", {}, c))), rows.length ? rows : h("tr", {}, h("td", { class: "muted", colspan: String(cols.length) }, "Nothing yet"))));
   show(
-    h("p", {}, h("a", { onclick: () => go({ name: "list" }) }, "← Factories")),
-    h("div", { class: "row" }, h("h1", { class: "grow" }, f.name), badge(label, cls), rotate, disable),
+    h("div", { class: "row" }, h("h1", { class: "grow" }, f.name), badge(label, cls), h("button", { class: "ghost", onclick: () => go({ name: "list" }) }, "All factories"), rotate, disable),
     h("p", { class: "muted small" }, `v${f.version || "?"} · last seen ${ago(f.lastSeenAt)} · registered ${ago(f.createdAt)}`), err, out,
     f.remoteAccess
       ? h("div", { class: "card" }, h("div", { class: "row" }, h("div", { class: "grow" }, h("strong", {}, "Full dashboard"), h("div", { class: "muted small" }, "The same dashboard you get locally, running against this factory.")), h("a", { class: "btn", href: `/f/${f.id}/` }, "Open dashboard")))
@@ -114,7 +131,7 @@ async function factoryScreen(id) {
     h("h2", {}, "Projects & workflows"), h("p", { class: "muted" }, `${d.projects.map((p) => p.name).join(", ") || "no projects"} · ${d.workflows.map((w) => w.name).join(", ") || "no workflows"}`));
 }
 
-async function render() { try { if (view.name === "factory") await factoryScreen(view.id); else await listScreen(); } catch (e) { if (e.status === 401) await boot(); else show(h("div", { class: "err" }, `Failed to load: ${e.message}`)); } }
+async function render() { try { await loadRail(); if (view.name === "factory") await factoryScreen(view.id); else await listScreen(); } catch (e) { if (e.status === 401) await boot(); else show(h("div", { class: "err" }, `Failed to load: ${e.message}`)); } }
 function go(v) { view = v; render(); }
 
 function connectStream() {
@@ -124,6 +141,7 @@ function connectStream() {
 }
 setInterval(() => { if (me) render(); }, 30000); // keeps "last seen" fresh even with no events
 
+$("addFactory").addEventListener("click", () => go({ name: "list", addFocus: true }));
 $("logout").addEventListener("click", async () => { await api("POST", "/auth/logout", {}); stream?.close(); me = null; await boot(); });
 $("addPasskey").addEventListener("click", async () => {
   try { await createPasskey("/v1/passkeys/options", "/v1/passkeys/verify", { opts: {}, verify: { label: prompt("Name this passkey (e.g. iPhone)") || undefined } }); alert("Passkey added."); } catch (e) { if (e.name !== "NotAllowedError") alert(`Failed: ${e.message}`); }
@@ -131,8 +149,8 @@ $("addPasskey").addEventListener("click", async () => {
 
 async function boot() {
   const st = await api("GET", "/auth/status");
-  if (!st.authenticated) { $("bar").hidden = true; me = null; return authScreen(st.needsSetup); }
-  me = await api("GET", "/v1/me"); $("who").textContent = me.email; $("bar").hidden = false;
+  if (!st.authenticated) { $("shell").classList.add("signed-out"); me = null; return authScreen(st.needsSetup); }
+  me = await api("GET", "/v1/me"); $("who").textContent = me.email; $("shell").classList.remove("signed-out");
   connectStream(); view = { name: "list" }; render();
 }
 boot().catch((e) => show(h("div", { class: "err" }, `Cannot reach the hub: ${e.message}`)));
