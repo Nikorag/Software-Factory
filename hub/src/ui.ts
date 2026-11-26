@@ -3,12 +3,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 
-// The dashboard is three static files (no framework, no build step, no third-party scripts), so the
+// The dashboard is a few static files (no framework, no build step, no third-party scripts), so the
 // Content-Security-Policy can be strict: only same-origin scripts/styles, no inline code, no framing.
 const FILES: Record<string, { file: string; type: string }> = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
   "/style.css": { file: "style.css", type: "text/css; charset=utf-8" },
+  "/favicon.png": { file: "favicon.png", type: "image/png" },
 };
 
 export function publicDir(): string {

@@ -122,6 +122,9 @@ describe("dashboard + static UI", () => {
     expect(r.headers["x-frame-options"]).toBe("DENY");
     expect(r.body).not.toMatch(/<script(?![^>]*src=)/);
     expect((await h.app.inject("/app.js")).headers["content-type"]).toContain("javascript");
+    const icon = await h.app.inject("/favicon.png");
+    expect(icon.statusCode).toBe(200); expect(icon.headers["content-type"]).toBe("image/png"); expect(icon.rawPayload.subarray(1, 4).toString()).toBe("PNG");
+    expect(r.body).toContain('rel="icon"');
   });
 
   it("lists factories and shows a factory's jobs/events, scoped to the member", async () => {
