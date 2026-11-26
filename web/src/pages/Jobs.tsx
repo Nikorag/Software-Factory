@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { JobsTable } from "@/components/JobsTable";
 import { Pager } from "@/components/Pager";
-import { api, send } from "@/lib/api";
+import { api, deleteJobRequest, send } from "@/lib/api";
 import type { Job, Project } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
 import { ConnectionBanner, useOffline } from "@/components/ConnectionBanner";
@@ -51,7 +51,7 @@ export function Jobs() {
       <ConnectionBanner error={error} updatedAt={updatedAt} what="job list" />
       {msg ? <Alert variant="destructive"><AlertDescription>{msg}</AlertDescription></Alert> : null}
       <Card><CardContent>
-        <JobsTable jobs={data?.jobs ?? []} disabled={busy || offline || error !== null} actions={{ archive: (j, a) => void act(() => send("POST", `/api/jobs/${j.id}/${a ? "archive" : "unarchive"}`)), remove: (j) => void act(() => send("DELETE", `/api/jobs/${j.id}`)) }} />
+        <JobsTable jobs={data?.jobs ?? []} disabled={busy || offline || error !== null} actions={{ archive: (j, a) => void act(() => send("POST", `/api/jobs/${j.id}/${a ? "archive" : "unarchive"}`)), remove: async (j, o) => { const r = await deleteJobRequest(j.id, o); if (r.ok) { setMsg(null); await reload(); } return r; } }} />
         {data ? <Pager page={data.page} pages={data.pages} pageSize={data.pageSize} total={data.total} onPage={setPage} onPageSize={setPageSize} /> : null}
       </CardContent></Card>
     </div>

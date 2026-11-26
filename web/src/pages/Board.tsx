@@ -14,7 +14,7 @@ import { api, send } from "@/lib/api";
 import type { Board as BoardData, BoardItem } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
 import { ConnectionBanner, useOffline } from "@/components/ConnectionBanner";
-import { safeLink } from "@/lib/format";
+import { safeLink, stageLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const ALL = "__all";
@@ -44,7 +44,7 @@ function Ticket({ t, onStart, busy }: { t: BoardItem; onStart: (t: BoardItem) =>
       {t.labels.length ? <div className="flex flex-wrap gap-1">{t.labels.map((l) => <Badge key={l} variant="outline" className="text-[10px]">{l}</Badge>)}</div> : null}
       <div className="flex items-center gap-2">
         {t.job ? (
-          <Link to={`/jobs/${t.job.id}`} className="flex items-center gap-2 text-xs hover:underline"><StatusBadge status={t.job.status} /><span className="text-muted-foreground">{t.job.stage.replaceAll("_", " ").toLowerCase()}</span></Link>
+          <Link to={`/jobs/${t.job.id}`} className="flex items-center gap-2 text-xs hover:underline"><StatusBadge status={t.job.status} /><span className="text-muted-foreground">{stageLabel(t.job.stage).toLowerCase()}</span></Link>
         ) : null}
         <span className="flex-1" />
         {t.canStart ? <Button size="sm" disabled={busy} onClick={() => onStart(t)}><Play />{t.job ? "Start again" : "Start"}</Button> : null}

@@ -58,9 +58,11 @@ export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: 
               <rect x={n.x} y={n.y} width={W} height={H} rx={9} strokeWidth={s === "run" || s === "fail" || s === "wait" || used ? 2 : 1.5} className={boxClass(s, !!n.fix, used)} />
               {s === "run" && <rect x={n.x} y={n.y} width={W} height={H} rx={9} fill="none" strokeWidth={2} className="anim stroke-run opacity-50 animate-[pulse-ring_1.6s_ease-out_infinite]" style={{ transformBox: "fill-box", transformOrigin: "center" }} />}
               <rect x={n.x - 4} y={n.y - 4} width={W + 8} height={H + 8} rx={12} fill="none" strokeWidth={1.5} className={cn("sel stroke-foreground [stroke-dasharray:3_3]", selected === n.id ? "opacity-100" : "opacity-0")} />
-              <text x={n.x + 12} y={n.y + 22} className={cn("text-[13px] font-semibold", s === "idle" ? "fill-muted-foreground" : "fill-foreground")}>{n.label}</text>
+              <text x={n.x + 12} y={n.y + 22} className={cn("text-[13px] font-semibold", s === "idle" ? "fill-muted-foreground" : "fill-foreground")} {...(n.label.length > 16 ? { textLength: W - 24, lengthAdjust: "spacingAndGlyphs" as const } : {})}>{n.label}</text>
               <text x={n.x + 12} y={n.y + 40} className={cn("text-[11px]", s === "run" || s === "wait" ? "fill-run" : "fill-muted-foreground", d ? "font-mono" : "")}>{subtitle(n, s, d)}</text>
-              <Icon kind={s} cx={n.x + W - 20} cy={n.y + 17} />
+              {/* The status badge sits on the bottom-right corner, half outside the box, so it can never overlap the title or the subtitle. */}
+              <circle cx={n.x + W - 3} cy={n.y + H - 1} r={11} className="fill-background" />
+              <Icon kind={s} cx={n.x + W - 3} cy={n.y + H - 1} />
               {att > 1 || (n.fix && att >= 1) ? (
                 <g><rect x={n.x + W - 34} y={n.y - 15} width={30} height={18} rx={9} className="fill-card stroke-loop" strokeWidth={1.5} /><text x={n.x + W - 19} y={n.y - 2} textAnchor="middle" className="fill-loop text-[11px] font-semibold">×{att}</text></g>
               ) : null}

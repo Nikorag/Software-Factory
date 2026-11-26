@@ -78,7 +78,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     tasks: new TaskManager(), actions: createProjectActions(ctx), linear: () => ctx.linear(), linearKeyPresent: () => trackerConfigured(config),
     saveLinearKey: async (key: string) => { const me = await createLinearClient({ apiKey: key }).viewer(); saveSecret(keySrc, key); return { name: me.name }; },
   };
-  const app = buildServer({ shutdown: opts.requestShutdown, db: ctx.handle.db, logger, config, engine: ctx.engine, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: keychainStore(config.jira.keychainService), port }, updates: new UpdateChecker(), profiles: {
+  const app = buildServer({ shutdown: opts.requestShutdown, db: ctx.handle.db, logger, config, engine: ctx.engine, worktrees: ctx.worktrees, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: keychainStore(config.jira.keychainService), port }, updates: new UpdateChecker(), profiles: {
     current: process.env.FACTORY_PROFILE ?? DEFAULT_PROFILE, list: () => listProfiles(), add: (n) => addProfile(n), remove: (n) => removeProfile(n),
     start: (p) => launchService(p, factoryRoot()), isUp: (p) => isUp(p),
   } });

@@ -1,3 +1,4 @@
+import { stageText } from "./format";
 import { nodeOfStage } from "./pipeline";
 import type { Decision, Execution, Invocation, JobDetail } from "./types";
 
@@ -63,7 +64,7 @@ export function summarise(output: Record<string, unknown> | null): string | unde
  */
 export function decisionText(x: Pick<Decision, "kind" | "decision" | "rationale">): string {
   const decision = x.kind === "human.answer" ? (x.decision ?? "").split("\n")[0]!.trim() : x.decision;
-  return clip([decision, x.rationale].filter(Boolean).join(" — "), 260);
+  return stageText(clip([decision, x.rationale].filter(Boolean).join(" — "), 260));
 }
 
 export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
@@ -95,7 +96,7 @@ export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
     entries.push({
       key: `e${e.id}`, at: e.startedAt ?? 0, end: e.finishedAt, tone, run, stage: e.stage, nodeId: node?.id,
       title: fix ? `${node?.label ?? e.stage}${cycle ? ` · cycle ${cycle} of ${cap}` : ""}` : (node?.label ?? e.stage),
-      cycle: fix && cycle ? cycle : undefined, summary, detail: e.error && e.outcome !== "failed" ? e.error : undefined,
+      cycle: fix && cycle ? cycle : undefined, summary: stageText(summary), detail: e.error && e.outcome !== "failed" ? e.error : undefined,
       events: [], runs: d.invocations.filter((i) => i.stageExecutionId === e.id),
     });
   }
@@ -115,7 +116,7 @@ export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
   if (HELD.has(d.job.stage)) {
     entries.push({ key: "held", at: d.job.updatedAt ?? Date.now(), end: null, tone: d.job.stage === "FAILED" ? "fail" : "wait", run: 1, events: [], runs: [],
       title: d.job.stage === "NEEDS_ATTENTION" ? "Needs your attention" : d.job.stage === "BLOCKED" ? "Waiting for you" : d.job.stage === "PAUSED" ? "Paused" : d.job.stage === "CANCELLED" ? "Cancelled" : "Failed",
-      summary: d.job.lastError ? clip(d.job.lastError.split("\n")[0]!, 260) : undefined, stage: d.job.heldFromStage ?? undefined, nodeId: d.job.heldFromStage ? nodeOfStage(d.job.heldFromStage)?.id : undefined });
+      summary: d.job.lastError ? stageText(clip(d.job.lastError.split("\n")[0]!, 260)) : undefined, stage: d.job.heldFromStage ?? undefined, nodeId: d.job.heldFromStage ? nodeOfStage(d.job.heldFromStage)?.id : undefined });
   }
   return entries.sort((a, b) => a.at - b.at);
 }

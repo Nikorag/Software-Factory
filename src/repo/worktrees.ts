@@ -161,19 +161,22 @@ export class WorktreeManager {
    * Remove a worktree after its work has merged. Refuses if it has uncommitted changes. The local branch is
    * deleted with `-d` (merge-checked) unless `deleteBranch: "force"`, which callers use only after verifying
    * the merge (squash merges are invisible to `-d`).
+   * `discardChanges` is for a human who has been told what is lost (deleting a job): uncommitted changes are discarded
+   * (`worktree remove --force`) instead of refusing.
    */
-  remove(jobId: string, opts: { deleteBranch?: "safe" | "force" } = {}): Promise<void> {
+  remove(jobId: string, opts: { deleteBranch?: "safe" | "force"; discardChanges?: boolean } = {}): Promise<void> {
     const row = this.o.db.select().from(worktrees).where(eq(worktrees.jobId, jobId)).get();
     if (!row) throw new WorktreeError(`no worktree for job ${jobId}`, "not-found");
     return this.serialize(row.path, async () => {
       if (row.state === "removed") return;
       const repo = this.o.repoPath(row.projectId);
       if (existsSync(row.path)) {
-        if (!(await this.isClean(row.path))) {
+        const dirty = !(await this.isClean(row.path));
+        if (dirty && !opts.discardChanges) {
           this.preserve(jobId, "dirty at cleanup");
           throw new WorktreeError(`worktree ${row.path} has uncommitted changes; preserved`, "dirty");
         }
-        await this.git(repo, ["worktree", "remove", row.path]);
+        await this.git(repo, ["worktree", "remove", ...(dirty ? ["--force"] : []), row.path]);
       }
       await this.git(repo, ["worktree", "prune"]);
       const flag = opts.deleteBranch === "force" ? "-D" : "-d";

@@ -9,7 +9,8 @@ import type { FactoryDb } from "../db/client.js";
 import { agentInvocations, artifacts, decisions, jobs, linearOutbox, projects, stageExecutions, worktrees } from "../db/schema.js";
 import * as control from "../core/control.js";
 import type { Engine } from "../core/engine.js";
-import { answerJob, archiveJob, cancelJob, deleteJob, JobError, retryJob } from "../core/jobs.js";
+import { answerJob, archiveJob, cancelJob, deleteJob, getJob, JobError, retryJob } from "../core/jobs.js";
+import { WorktreeError } from "../repo/worktrees.js";
 import type { Scheduler } from "../service/scheduler.js";
 import { cachedSystemInfo, counts, type HealthChecker } from "../service/metrics.js";
 import { readConversation } from "../agents/transcript.js";
@@ -29,6 +30,8 @@ export interface ApiDeps {
   scheduler?: Scheduler;
   health?: HealthChecker;
   dataDir?: string;
+  /** Removes a job's worktree and local branch (the "also remove the worktree" option when deleting a job). */
+  worktrees?: Pick<import("../repo/worktrees.js").WorktreeManager, "remove">;
   /** Settings UI + setup wizard. Absent in tests that do not exercise them. */
   profiles?: import("./profile-routes.js").ProfileDeps;
   bitbucket?: Omit<import("./bitbucket-routes.js").BitbucketRouteDeps, "config">;
@@ -238,8 +241,28 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
       catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
     });
   }
-  app.delete<{ Params: { id: string } }>("/api/jobs/:id", { preHandler: requireToken }, async (req, reply) => {
+  /**
+   * Delete a finished job. `?removeWorktree=1` also removes its worktree and local branch first (a job whose worktree is still on disk
+   * cannot be deleted otherwise). A worktree with uncommitted changes is refused with code `worktree-dirty` until the caller repeats the
+   * request with `&discardChanges=1`, so unsaved work is only ever thrown away deliberately.
+   */
+  app.delete<{ Params: { id: string }; Querystring: { removeWorktree?: string; discardChanges?: string } }>("/api/jobs/:id", { preHandler: requireToken }, async (req, reply) => {
     try {
+      const job = getJob(db, req.params.id);
+      if (!job) throw new JobError(`no such job ${req.params.id}`);
+      if (req.query.removeWorktree === "1" && ["done", "failed", "cancelled"].includes(job.status)) {
+        if (!d.worktrees) throw new JobError("this service cannot remove worktrees");
+        const wt = db.select().from(worktrees).where(eq(worktrees.jobId, job.id)).get();
+        if (wt && wt.state !== "removed") {
+          const discardChanges = req.query.discardChanges === "1";
+          // A pushed branch (a PR was raised) loses nothing when the local copy goes; otherwise only delete it if git says it is merged, or the human said to discard.
+          try { await d.worktrees.remove(job.id, { deleteBranch: discardChanges || job.prUrl ? "force" : "safe", discardChanges }); }
+          catch (e) {
+            if (e instanceof WorktreeError && e.code === "dirty") return reply.code(409).send({ error: e.message.replace(/; preserved$/, ""), code: "worktree-dirty" });
+            throw new JobError(`could not remove the worktree: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+      }
       const { logPaths } = deleteJob(db, req.params.id);
       if (d.dataDir) for (const p of logPaths) removeLog(d.dataDir, p);
       return { ok: true };
