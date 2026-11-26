@@ -1,0 +1,39 @@
+name: Security
+# Syft builds a software bill of materials (SBOM) from the lockfile; Grype scans it
+# for known vulnerabilities. The job fails on any High or Critical finding, so the
+# README badge turns red when a dependency needs attention.
+on:
+  push: { branches: [main] }
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1" # weekly: new CVEs appear without any code change
+  workflow_dispatch:
+permissions:
+  contents: read
+  security-events: write # upload SARIF to the Security tab
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          artifact-name: sbom.cdx.json
+      - name: Scan SBOM for vulnerabilities (Grype)
+        id: grype
+        uses: anchore/scan-action@v6
+        with:
+          sbom: sbom.cdx.json
+          fail-build: true
+          severity-cutoff: high
+          output-format: sarif
+      - name: Upload SARIF to code scanning
+        if: always() && hashFiles(steps.grype.outputs.sarif) != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: grype

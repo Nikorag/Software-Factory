@@ -12,6 +12,7 @@
 <p align="center">
   <a href="https://github.com/Nikorag/Software-Factory/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Nikorag/Software-Factory?sort=semver&color=4f46e5" /></a>
   <a href="https://github.com/Nikorag/Software-Factory/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Nikorag/Software-Factory/ci.yml?branch=main&label=CI" /></a>
+  <a href="https://github.com/Nikorag/Software-Factory/actions/workflows/security.yml"><img alt="Security scan: Syft + Grype" src="https://img.shields.io/github/actions/workflow/status/Nikorag/Software-Factory/security.yml?branch=main&label=Syft%20%2B%20Grype" /></a>
   <a href="LICENSE"><img alt="License: ISC" src="https://img.shields.io/badge/license-ISC-blue" /></a>
   <img alt="Platform: macOS" src="https://img.shields.io/badge/platform-macOS-lightgrey" />
   <img alt="Node 22+" src="https://img.shields.io/badge/node-%E2%89%A522-339933" />
