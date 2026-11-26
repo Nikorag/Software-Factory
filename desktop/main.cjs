@@ -41,7 +41,7 @@ let current = find(profileArg(process.argv));
 const origins = () => new Set(readProfiles().map((p) => new URL(urlOf(p)).origin));
 
 const stoppedPage = (p) => `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><meta charset=utf-8><title>Software Factory</title>
-<body style="font:15px -apple-system,sans-serif;background:#18181b;color:#e4e4e7;display:grid;place-items:center;height:100vh;margin:0">
+<body style="font:15px -apple-system,sans-serif;background:#0E0E10;color:#ECECEE;display:grid;place-items:center;height:100vh;margin:0">
 <div style="max-width:460px;text-align:center"><h2 style="margin:0 0 8px">Profile “${p.name.replace(/[<>&"]/g, "")}” is not running</h2>
 <p style="color:#a1a1aa">Choose <b>Profiles → Start all profiles</b> in the menu, or run <code>software-factory start</code> in a terminal.</p></div>`)}`;
 
@@ -226,7 +226,11 @@ function trayRoundTrip() {
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1440, height: 920, minWidth: 900, minHeight: 600, title: `Software Factory — ${current.name}`, backgroundColor: "#18181b", show: !SMOKE,
+    width: 1440, height: 920, minWidth: 900, minHeight: 600, title: `Software Factory — ${current.name}`, backgroundColor: "#121214", show: !SMOKE,
+    // No native title bar: the dashboard's rail header and tab bar are the drag handle (web/src/index.css, .app-drag) and leave room for these controls.
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 20 } }
+      : { titleBarStyle: "hidden", titleBarOverlay: { color: "#121214", symbolColor: "#A1A1AA", height: 52 } }),
     icon: fs.existsSync(ICON) ? ICON : undefined,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false },
   });

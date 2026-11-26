@@ -8,6 +8,7 @@ import { JobDetail } from "@/pages/JobDetail";
 import { Board } from "@/pages/Board";
 import { Jobs } from "@/pages/Jobs";
 import { Overview } from "@/pages/Overview";
+import { ProjectOverview } from "@/pages/ProjectOverview";
 import { Settings } from "@/pages/Settings";
 import { Setup } from "@/pages/Setup";
 import "./index.css";
@@ -19,6 +20,7 @@ createRoot(document.getElementById("root")!).render(
         <Routes>
           <Route element={<Shell />}>
             <Route index element={<Overview />} />
+            <Route path="p/:projectId" element={<ProjectOverview />} />
             <Route path="board" element={<Board />} />
             <Route path="jobs" element={<Jobs />} />
             <Route path="jobs/:id" element={<JobDetail />} />

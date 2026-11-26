@@ -3,18 +3,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>Software Factory Hub</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header id="bar" hidden>
-    <strong>Software Factory Hub</strong>
-    <span class="spacer"></span>
-    <span id="who" class="muted"></span>
-    <button id="addPasskey" class="ghost">Add passkey</button>
-    <button id="logout" class="ghost">Sign out</button>
-  </header>
-  <main id="main"><p class="muted">Loading…</p></main>
+  <div id="shell" class="shell signed-out">
+    <aside id="rail" aria-label="Factories">
+      <div class="rail-head"><strong>Software Factory</strong><span class="rail-tag">Hub</span></div>
+      <div class="rail-label"><span>Factories</span><button id="addFactory" class="icon" aria-label="Add factory" title="Add factory">+</button></div>
+      <nav id="railList" aria-label="Factory list"></nav>
+      <div class="rail-foot">
+        <div id="who" class="muted small"></div>
+        <button id="addPasskey" class="ghost wide">Add passkey</button>
+        <button id="logout" class="ghost wide">Sign out</button>
+      </div>
+    </aside>
+    <div class="col">
+      <header class="topbar"><h1 id="title">Software Factory Hub</h1></header>
+      <main id="main"><p class="muted">Loading…</p></main>
+      <footer id="status" class="status" aria-live="polite"></footer>
+    </div>
+  </div>
   <script src="/app.js" type="module"></script>
 </body>
 </html>

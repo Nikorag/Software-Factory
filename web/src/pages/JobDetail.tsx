@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { Archive, ArchiveRestore, ArrowLeft, ExternalLink, Loader2, RotateCcw, Search, Send, X } from "lucide-react";
+import { useNavigate, useParams } from "react-router-dom";
+import { Archive, ArchiveRestore, ExternalLink, Loader2, RotateCcw, Search, Send, X } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -66,13 +66,12 @@ export function JobDetail() {
   const node = sel ? NODE[sel] : null;
   const execs = node ? execAll.filter((e) => e.stage === node.stage) : execAll;
   const archiveIt = (to: boolean) => guard("archive", async () => { const r = await send("POST", `/api/jobs/${j.id}/${to ? "archive" : "unarchive"}`); setMsg(r.ok ? null : r.error); await reload(); });
-  const deleteIt = async (o: DeleteOptions): Promise<SendResult> => { const r = await deleteJobRequest(j.id, o); if (r.ok) nav("/jobs"); return r; };
+  const deleteIt = async (o: DeleteOptions): Promise<SendResult> => { const r = await deleteJobRequest(j.id, o); if (r.ok) nav(`/p/${encodeURIComponent(j.project)}`); return r; };
   const finished = ["done", "failed", "cancelled"].includes(j.status);
   const cycles = j.remediationAttempts, cap = d.remediationCap ?? 3;
 
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
-      <Link to="/jobs" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" />jobs</Link>
       <Card><CardContent className="grid gap-4 md:grid-cols-[1.6fr_1fr_1fr] md:items-center">
         <div>
           <div className="flex flex-wrap items-center gap-2"><h2 className="font-mono text-base font-semibold">{j.key}</h2><StatusBadge status={j.status} /><span className="text-sm text-muted-foreground">{j.project} · {j.workflow}{j.autonomous ? " · autonomous" : ""}{j.dryRun ? " · dry run" : ""}</span></div>
@@ -95,8 +94,20 @@ export function JobDetail() {
         <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground"><div><b className="block text-base text-foreground tabular-nums">{dur(flow.elapsedMs)}</b>elapsed</div><div><b className="block text-base text-foreground tabular-nums">{dur(flow.agentMs)}</b>agent time</div></div>
       </CardContent></Card>
 
+      <Card><CardHeader className="flex flex-row flex-wrap items-baseline gap-x-3.5 gap-y-1"><CardTitle className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Flow</CardTitle><span className="font-semibold">{stageLabel(j.status === "failed" && j.heldFromStage ? j.heldFromStage : j.stage)}</span>{cycles ? <span className="text-xs text-loop">Sent back {cycles} time{cycles === 1 ? "" : "s"}</span> : null}<span className="ml-auto text-xs text-muted-foreground">Updated {ago(j.updatedAt)}</span></CardHeader><CardContent>
+        <FlowChart flow={flow} selected={sel} onSelect={setSel} />
+        <p className="mt-1 text-xs text-muted-foreground">The chart scrolls sideways on a narrow window. Click a step to see what it does and filter the stage history to it.</p>
+        <FlowLegend />
+      </CardContent></Card>
+
       {error ? banner : null}
       {archived && canRetry ? <Alert role="status"><ArchiveRestore /><AlertDescription>This job is archived. Retrying will restore this job from the archive (it shows in the job list again).</AlertDescription></Alert> : null}
+      {j.status === "waiting" && j.stage === "MERGING" && pr ? (
+        <section aria-label="Needs your attention" className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-xl border border-[#5A4413] bg-[#1F1A0E] px-4 py-3.5">
+          <div className="min-w-0 flex-1 basis-[360px]"><div className="font-semibold text-loop">Awaiting your merge</div><div className="mt-0.5 text-[13px] text-[#C4C4CC]">The pull request is ready. The factory runs in PR-only mode, so it will not merge for you.</div></div>
+          <Button asChild className="bg-loop text-background hover:bg-loop/90"><a href={pr} target="_blank" rel="noopener noreferrer">Review pull request</a></Button>
+        </section>
+      ) : null}
       {j.lastError ? <Alert variant="destructive"><AlertDescription className="whitespace-pre-wrap">{stageText(j.lastError)}</AlertDescription></Alert> : null}
       {held ? <Alert><AlertDescription>Held at {stageLabel(j.stage)}{j.heldFromStage ? ` (was ${stageLabel(j.heldFromStage)})` : ""}. Retry resumes there, with fresh counters.</AlertDescription></Alert> : null}
       {msg ? <Alert variant="destructive" role="alert"><AlertDescription>{msg}</AlertDescription></Alert> : null}
@@ -108,28 +119,37 @@ export function JobDetail() {
         </CardContent></Card>
       ) : null}
 
-      <Card><CardHeader><CardTitle className="text-sm uppercase tracking-wider text-muted-foreground">Flow</CardTitle></CardHeader><CardContent>
-        <FlowChart flow={flow} selected={sel} onSelect={setSel} />
-        <p className="mt-1 text-xs text-muted-foreground">On a narrow screen the chart scrolls sideways. Click a step to see what it does and filter the stage history to it.</p>
-        <FlowLegend />
-      </CardContent></Card>
-
-      <Timeline detail={d} cap={cap} selected={sel} onSelect={setSel} onPeek={(runs) => openPeek(runs)} />
 
       {node ? (
         <Card><CardContent className="grid gap-4 md:grid-cols-2">
           <div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Selected step</div><h3 className="text-base font-semibold">{node.label}</h3><div className="font-mono text-xs text-muted-foreground">{node.stage}</div>
             <p className="mt-2 text-sm">{({ done: "Finished", run: "Running now", wait: "Waiting", fail: "Stopped here", idle: "Not reached yet" })[flow.state[node.id] ?? "idle"]}{(flow.attempts[node.id] ?? 0) > 1 ? ` · ${flow.attempts[node.id]} attempts` : ""}{flow.duration[node.id] ? ` · ${dur(flow.duration[node.id])}` : ""}</p>
             {(() => { const ids = new Set(execs.map((e) => e.id)); const runs = d.invocations.filter((i) => i.stageExecutionId !== null && ids.has(i.stageExecutionId)); return runs.length ? <div className="mt-3"><PeekButton runs={runs} variant="secondary" onPeek={(r) => openPeek(r)} /></div> : null; })()}
-            <Button variant="ghost" size="sm" className="mt-2" onClick={() => setSel(null)}>Show all steps</Button></div>
+            <Button variant="ghost" size="sm" className="mt-2" onClick={() => setSel(null)}>Show all steps</Button>{sel ? <p className="mt-1 text-xs text-muted-foreground">Showing {node.label} only.</p> : null}</div>
           <div className="grid gap-3 text-sm"><div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">What happens here</div><p>{node.what}</p></div><div><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">If it finds problems</div><p>{node.issues}</p></div></div>
         </CardContent></Card>
       ) : null}
 
       {peek && peekRuns.length ? <Peek jobId={j.id} runs={peekRuns} activeId={peek.id} onActive={(id) => setPeek({ ids: peek.ids, id })} onClose={() => setPeek(null)} wrap={wrap} onWrap={setWrapPref} ctx={{ key: j.key, branch: d.worktree?.branch }} /> : null}
 
-      <Tabs defaultValue="history">
-        <TabsList><TabsTrigger value="history">Stage history</TabsTrigger><TabsTrigger value="agents" id="agent-runs-tab">Agent runs</TabsTrigger><TabsTrigger value="decisions">Decisions</TabsTrigger><TabsTrigger value="more">Artifacts &amp; write-back</TabsTrigger></TabsList>
+      <Tabs defaultValue="session">
+        <TabsList><TabsTrigger value="session">Session</TabsTrigger><TabsTrigger value="history">Stage history</TabsTrigger><TabsTrigger value="agents" id="agent-runs-tab">Agent runs</TabsTrigger><TabsTrigger value="decisions">Decisions</TabsTrigger><TabsTrigger value="more">Artifacts &amp; write-back</TabsTrigger></TabsList>
+        <TabsContent value="session">
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+            <div className="min-w-0">
+              <Timeline detail={d} cap={cap} selected={sel} onSelect={setSel} onPeek={(runs) => openPeek(runs)} />
+            </div>
+            <Card><CardHeader><CardTitle className="text-xs font-semibold text-muted-foreground">Details</CardTitle></CardHeader><CardContent>
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3.5 gap-y-2 text-[12.5px]">
+                <dt className="text-dim">Workflow</dt><dd>{j.workflow}</dd>
+                <dt className="text-dim">Branch</dt><dd className="break-all font-mono text-xs">{d.worktree?.branch ?? "not created"}</dd>
+                <dt className="text-dim">Worktree</dt><dd>{d.worktree ? d.worktree.state : "not created"}</dd>
+                <dt className="text-dim">Mode</dt><dd>PR-only{j.autonomous ? ", autonomous" : ""}{j.dryRun ? ", dry run" : ""}</dd>
+                <dt className="text-dim">Started</dt><dd>{j.createdAt ? ago(j.createdAt) : "not started"}</dd>
+              </dl>
+            </CardContent></Card>
+          </div>
+        </TabsContent>
         <TabsContent value="history"><Card><CardContent>
           <div className="mb-3 flex flex-wrap items-center gap-2"><div className="relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter stage history" className="pl-8" value={fh} onChange={(e) => setFh(e.target.value)} placeholder="Filter by stage, outcome or error" /></div>{node ? <span className="text-xs text-muted-foreground">Showing {node.label} only.</span> : null}</div>
           <Table><TableHeader><TableRow>{["Stage", "#", "Outcome", "Took", "Detail"].map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>

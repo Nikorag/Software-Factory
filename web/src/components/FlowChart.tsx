@@ -17,16 +17,17 @@ function Icon({ kind, cx, cy }: { kind: NodeState; cx: number; cy: number }) {
 }
 
 const boxClass = (st: NodeState, fix: boolean, used: boolean) =>
-  cn("fill-card stroke-border", st === "done" && "stroke-ok/60", st === "run" && "fill-run/10 stroke-run", st === "fail" && "fill-destructive/10 stroke-destructive", st === "wait" && "stroke-wait [stroke-dasharray:5_3]",
-    fix && !used && "[stroke-dasharray:4_3]", fix && used && "fill-loop/10 stroke-loop [stroke-dasharray:none]");
+  cn("fill-[#141417] stroke-[#2A2A30]", st === "idle" && "fill-[#111113]", st === "done" && "stroke-[#2F6B45]", st === "run" && "fill-[#121A26] stroke-run [stroke-dasharray:5_3]",
+    st === "fail" && "fill-[#1F1214] stroke-destructive", st === "wait" && "fill-[#1F1A0E] stroke-wait [stroke-dasharray:5_3]",
+    fix && !used && st === "idle" && "[stroke-dasharray:4_3]", fix && used && "fill-[#211B10] stroke-[#B7862A] [stroke-dasharray:none]");
 
 export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: string | null; onSelect: (id: string) => void }) {
   const st = (id: string): NodeState => flow.state[id] ?? "idle";
   return (
     <div className="overflow-x-auto pb-1">
-      <svg viewBox="0 0 1180 640" role="img" aria-label="Pipeline flow chart" className="mx-auto block h-auto w-full min-w-[760px] max-w-[1180px]">
+      <svg viewBox="0 0 1180 640" role="img" aria-label="Pipeline flow chart" className="mx-auto block h-auto w-full min-w-[1088px] max-w-[1180px]">
         <defs>
-          {([["m-off", "fill-border"], ["m-ok", "fill-ok"], ["m-run", "fill-run"], ["m-loop", "fill-loop"]] as const).map(([id, c]) => (
+          {([["m-off", "fill-[#3F3F46]"], ["m-ok", "fill-ok"], ["m-run", "fill-run"], ["m-loop", "fill-loop"]] as const).map(([id, c]) => (
             <marker key={id} id={id} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" className={c} /></marker>
           ))}
         </defs>
@@ -38,12 +39,11 @@ export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: 
         ))}
         {EDGES.map((e) => {
           const a = st(e.from), b = st(e.to);
-          let cls = "stroke-border", marker = "m-off", extra = "";
+          let cls = "stroke-[#3F3F46]", marker = "m-off", extra = "[stroke-dasharray:5_5]";
           if (e.kind === "flow") {
             if (!flow.skipped.has(e.id) && a === "done" && b === "run") { cls = "stroke-run"; marker = "m-run"; extra = "anim [stroke-dasharray:6_5] animate-[flow_1s_linear_infinite]"; }
-            else if (!flow.skipped.has(e.id) && a === "done" && (b === "done" || b === "wait" || b === "fail")) { cls = "stroke-ok"; marker = "m-ok"; }
-          } else if (flow.loopsUsed.has(e.id)) { cls = "stroke-loop"; marker = "m-loop"; }
-          else extra = "[stroke-dasharray:5_4]";
+            else if (!flow.skipped.has(e.id) && a === "done" && (b === "done" || b === "wait" || b === "fail")) { cls = "stroke-ok"; marker = "m-ok"; extra = ""; }
+          } else if (flow.loopsUsed.has(e.id)) { cls = "stroke-loop"; marker = "m-loop"; extra = ""; }
           return <path key={e.id} d={e.d} fill="none" strokeWidth={e.kind === "loop" && flow.loopsUsed.has(e.id) ? 2.4 : 2} className={cn(cls, extra)} markerEnd={`url(#${marker})`} />;
         })}
         {EDGES.filter((e) => e.label && e.kind === "loop").map((e) => {
@@ -61,10 +61,10 @@ export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: 
               <text x={n.x + 12} y={n.y + 22} className={cn("text-[13px] font-semibold", s === "idle" ? "fill-muted-foreground" : "fill-foreground")} {...(n.label.length > 16 ? { textLength: W - 24, lengthAdjust: "spacingAndGlyphs" as const } : {})}>{n.label}</text>
               <text x={n.x + 12} y={n.y + 40} className={cn("text-[11px]", s === "run" || s === "wait" ? "fill-run" : "fill-muted-foreground", d ? "font-mono" : "")}>{subtitle(n, s, d)}</text>
               {/* The status badge sits on the bottom-right corner, half outside the box, so it can never overlap the title or the subtitle. */}
-              <circle cx={n.x + W - 3} cy={n.y + H - 1} r={11} className="fill-background" />
+              <circle cx={n.x + W - 3} cy={n.y + H - 1} r={11} className="fill-[#141417]" />
               <Icon kind={s} cx={n.x + W - 3} cy={n.y + H - 1} />
               {att > 1 || (n.fix && att >= 1) ? (
-                <g><rect x={n.x + W - 34} y={n.y - 15} width={30} height={18} rx={9} className="fill-card stroke-loop" strokeWidth={1.5} /><text x={n.x + W - 19} y={n.y - 2} textAnchor="middle" className="fill-loop text-[11px] font-semibold">×{att}</text></g>
+                <g><rect x={n.x + W - 34} y={n.y - 15} width={30} height={18} rx={9} className="fill-[#1F1A0E] stroke-loop" strokeWidth={1.5} /><text x={n.x + W - 19} y={n.y - 2} textAnchor="middle" className="fill-loop text-[11px] font-semibold">×{att}</text></g>
               ) : null}
             </g>
           );
@@ -87,7 +87,7 @@ export function FlowLegend() {
   const item = (cls: string, label: string) => <span className="inline-flex items-center gap-2"><svg width="34" height="10" aria-hidden="true"><line x1="0" y1="5" x2="34" y2="5" strokeWidth="2.4" className={cls} /></svg>{label}</span>;
   return (
     <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
-      {item("stroke-ok", "route taken")}{item("stroke-run [stroke-dasharray:6_5]", "running now")}{item("stroke-loop", "sent back for fixes")}{item("stroke-border [stroke-dasharray:5_4]", "possible route, not used")}
+      {item("stroke-ok", "route taken")}{item("stroke-run [stroke-dasharray:6_5]", "running now")}{item("stroke-loop", "sent back for fixes")}{item("stroke-[#52525B] [stroke-dasharray:5_4]", "possible route, not used")}
     </div>
   );
 }
