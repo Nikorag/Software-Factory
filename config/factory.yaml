@@ -9,3 +9,6 @@ mergeMode: pr-only               # the factory raises pull requests and NEVER me
 maxRemediationAttempts: 3
 maxConcurrentJobs: 1             # raise only after measuring memory headroom
 pollIntervalSeconds: 60
+hub:                             # report progress to a central Software Factory Hub. Off until you run `factory hub connect`
+  enabled: false
+  url: ""

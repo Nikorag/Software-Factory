@@ -17,3 +17,5 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      - run: pnpm --filter software-factory-hub typecheck
+      - run: pnpm --filter software-factory-hub test

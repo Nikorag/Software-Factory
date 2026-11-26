@@ -1,6 +1,8 @@
 packages:
   - web
+  - hub
 allowBuilds:
   esbuild: true
   better-sqlite3: true
   electron: true
+  msgpackr-extract: false
