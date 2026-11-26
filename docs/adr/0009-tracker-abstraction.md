@@ -11,3 +11,5 @@
 **Auth.** Jira uses an OAuth 2.0 (3LO) app the user creates. Tokens rotate, so refreshes are serialised and the new refresh token is persisted before use. Secrets live in a per-profile keychain service, never in config.
 
 **Consequences.** Jira-specific code is confined to `src/jira/`, the OAuth and mapping routes, and a few tracker-aware UI labels. A third tracker would implement the same interface.
+
+**Addendum: GitHub Issues.** The third tracker (`factory.tracker: github`, see `docs/github-issues.md`) is the "third tracker" this ADR anticipated. Repository = team, milestone = project, and because an issue is only open or closed, workflow statuses are prefixed labels (the factory creates them, like Linear; "Done" also closes the issue). It authenticates with the profile's `gh` login, so it needs no secret and no keychain entry; its code is confined to `src/github-issues/`, the mapping routes and the Settings component.

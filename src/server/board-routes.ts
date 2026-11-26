@@ -19,7 +19,7 @@ export function parseSearch(raw: string): { number?: number; teamKey?: string; t
   const q = raw.trim();
   if (!q) return null;
   if (/^#?\d{1,9}$/.test(q)) return { number: Number(q.replace("#", "")) };
-  const m = /^([A-Za-z][A-Za-z0-9]*)-(\d{1,9})$/.exec(q);
+  const m = /^([A-Za-z][A-Za-z0-9_-]*)-(\d{1,9})$/.exec(q); // GitHub keys are "repo-123" and repo names may contain hyphens
   if (m) return { teamKey: m[1]!.toUpperCase(), number: Number(m[2]) };
   return { title: q.slice(0, 100) };
 }
@@ -52,7 +52,7 @@ export function registerBoardRoutes(app: FastifyInstance, d: BoardDeps, requireT
       const seen = new Set<string>();
       // One query per team (a number or key is searched across the team, then mapped to a project), one per project for the open-ticket board.
       const asks = search
-        ? [...new Set(wanted.map((p) => p.linear!.teamKey))].filter((t) => !search.teamKey || t === search.teamKey).map((t) => ({ teamKey: t, number: search.number, title: search.title, limit: 25 }))
+        ? [...new Set(wanted.map((p) => p.linear!.teamKey))].filter((t) => !search.teamKey || t.toUpperCase() === search.teamKey || t.split("/").at(-1)!.replace(/[^A-Za-z0-9_-]/g, "-").toUpperCase() === search.teamKey).map((t) => ({ teamKey: t, number: search.number, title: search.title, limit: 25 }))
         : wanted.map((p) => ({ teamKey: p.linear!.teamKey, projectId: p.linear!.projectId, projectName: p.linear!.projectName, openOnly: true, limit: 100 }));
       for (const r of await Promise.all(asks.map((a) => client.boardIssues(a)))) for (const i of r) if (!seen.has(i.id)) { seen.add(i.id); issues.push(i); }
     } catch (e) { return reply.code(502).send({ error: `Linear: ${(e as Error).message}` }); }

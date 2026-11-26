@@ -2,10 +2,12 @@ import { ConfigError } from "../config/load.js";
 import type { LoadedConfig } from "../config/schema.js";
 import { ACCOUNT, JiraAuth, type SecretStore } from "../jira/auth.js";
 import { createJiraClient } from "../jira/client.js";
+import { createGithubIssuesClient } from "../github-issues/client.js";
+import type { GhExec } from "../github/client.js";
 import { createLinearClient, type LinearClient } from "../linear/client.js";
 import { resolveSecret, saveSecret } from "../service/secrets.js";
 
-export const trackerName = (c: Pick<LoadedConfig, "factory">) => (c.factory.tracker === "jira" ? "Jira" : "Linear");
+export const trackerName = (c: Pick<LoadedConfig, "factory">) => (c.factory.tracker === "jira" ? "Jira" : c.factory.tracker === "github" ? "GitHub Issues" : "Linear");
 
 /** The profile's secrets for Jira, in its own keychain service: the OAuth client secret and the rotating refresh token. */
 export const keychainStore = (service: string, envPrefix = "SOFTWARE_FACTORY_JIRA_"): SecretStore => ({
@@ -19,7 +21,11 @@ const cache = new Map<string, { sig: string; client: LinearClient }>();
  * The tracker client for this profile. Linear: its API key. Jira: the OAuth app. The Jira client is kept between calls so its short-lived
  * access token is reused; it is rebuilt when the app or site changes.
  */
-export function createTrackerClient(config: LoadedConfig, deps: { store?: SecretStore; fetch?: typeof fetch; apiBase?: string; authBase?: string } = {}): LinearClient {
+export function createTrackerClient(config: LoadedConfig, deps: { store?: SecretStore; fetch?: typeof fetch; apiBase?: string; authBase?: string; gh?: GhExec } = {}): LinearClient {
+  if (config.factory.tracker === "github") {
+    const g = config.githubIssues; // authentication is the profile's gh login, exactly as for pull requests
+    return createGithubIssuesClient({ account: config.factory.githubAccount, statusPrefix: g.statusPrefix, statuses: g.statuses, run: deps.gh });
+  }
   if (config.factory.tracker !== "jira") {
     const key = resolveSecret({ envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService });
     if (!key) throw new ConfigError(`${config.linear.apiKeyEnv} is not set and no keychain entry "${config.linear.keychainService}" was found`);
@@ -41,6 +47,7 @@ export function createTrackerClient(config: LoadedConfig, deps: { store?: Secret
 
 /** Is the tracker usable right now (a key exists / Jira is connected)? Cheap: no network. */
 export function trackerConfigured(config: LoadedConfig, store?: SecretStore): boolean {
+  if (config.factory.tracker === "github") return true; // gh holds the credentials; a missing login shows up as an error from the tracker check
   if (config.factory.tracker !== "jira") return Boolean(resolveSecret({ envName: config.linear.apiKeyEnv, keychainService: config.linear.keychainService }));
   const s = store ?? keychainStore(config.jira.keychainService);
   return Boolean(config.jira.clientId && config.jira.site && s.get(ACCOUNT.refreshToken) && s.get(ACCOUNT.clientSecret));

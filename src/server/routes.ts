@@ -19,6 +19,7 @@ import { onboardingOf, type CheckRecord } from "../repo/readiness.js";
 import type { RepoReport } from "../repo/inspect.js";
 import { registerBoardRoutes } from "./board-routes.js";
 import { registerBitbucketRoutes } from "./bitbucket-routes.js";
+import { registerGithubIssuesRoutes } from "./github-issues-routes.js";
 import { registerJiraRoutes } from "./jira-routes.js";
 import { registerProfileRoutes } from "./profile-routes.js";
 import { registerWorkflowRoutes } from "./workflow-routes.js";
@@ -39,6 +40,7 @@ export interface ApiDeps {
   profiles?: import("./profile-routes.js").ProfileDeps;
   bitbucket?: Omit<import("./bitbucket-routes.js").BitbucketRouteDeps, "config">;
   jira?: Omit<import("./jira-routes.js").JiraRouteDeps, "db" | "config">;
+  githubIssues?: { gh?: import("../github/client.js").GhExec };
   updates?: { status(): Promise<import("../service/versions.js").UpdateStatus>; refresh(): Promise<import("../service/versions.js").UpdateStatus> };
   settings?: Omit<import("./settings-routes.js").SettingsDeps, "db" | "config">;
   /** Begins a graceful shutdown of this service (how `software-factory shutdown` stops it without signalling a pid). */
@@ -285,6 +287,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   if (d.config) registerWorkflowRoutes(app, { db, config: d.config, ...(d.settings ? { linear: d.settings.linear } : {}) }, requireToken);
   if (d.settings && d.config) registerBoardRoutes(app, { db, config: d.config, linear: d.settings.linear }, requireToken);
   if (d.bitbucket && d.config) registerBitbucketRoutes(app, { ...d.bitbucket, config: d.config }, requireToken);
+  if (d.config) registerGithubIssuesRoutes(app, { config: d.config, gh: d.githubIssues?.gh }, requireToken);
   if (d.jira && d.config) registerJiraRoutes(app, { ...d.jira, db, config: d.config }, requireToken);
   if (d.profiles) registerProfileRoutes(app, d.profiles, requireToken);
   if (d.settings && d.config) registerSettingsRoutes(app, { ...d.settings, db, config: d.config }, requireToken);

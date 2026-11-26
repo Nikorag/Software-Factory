@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { isMap, isSeq, parseDocument, type Document, type YAMLMap } from "yaml";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir, loadConfig } from "./load.js";
-import { JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, ProjectInput, ProjectOverrides, type LoadedConfig } from "./schema.js";
+import { GithubIssuesConfig, JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, ProjectInput, ProjectOverrides, type LoadedConfig } from "./schema.js";
 
 const FILES = ["factory.yaml", "linear.yaml", "models.yaml", "workflows.yaml", "projects.yaml"];
 
@@ -154,14 +154,14 @@ const editYaml = (dir: string, file: string, edit: (doc: Document) => void): voi
   edit(doc);
   const scratch = mkdtempSync(join(tmpdir(), "factory-cfg-"));
   try {
-    for (const x of FILES.concat(["jira.yaml"])) if (existsSync(join(dir, x))) copyFileSync(join(dir, x), join(scratch, x));
+    for (const x of FILES.concat(["jira.yaml", "github-issues.yaml"])) if (existsSync(join(dir, x))) copyFileSync(join(dir, x), join(scratch, x));
     writeFileSync(join(scratch, file), doc.toString());
     loadConfig(scratch); // refuse anything that would leave the config unloadable
   } finally { rmSync(scratch, { recursive: true, force: true }); }
   writeFileSync(`${f}.tmp`, doc.toString()); renameSync(`${f}.tmp`, f);
 };
 
-export function updateTracker(kind: "linear" | "jira", dir = seedHomeConfig()): LoadedConfig {
+export function updateTracker(kind: "linear" | "jira" | "github", dir = seedHomeConfig()): LoadedConfig {
   editYaml(dir, "factory.yaml", (d) => { d.set("tracker", kind); });
   return loadConfig(dir);
 }
@@ -187,10 +187,27 @@ export function updateJiraConfig(patch: JiraPatch, dir = seedHomeConfig()): Load
   return loadConfig(dir);
 }
 
+export const GithubIssuesMapping = z.object({
+  statusPrefix: z.string().min(1).max(40).optional(),
+  statuses: GithubIssuesConfig.shape.statuses.optional(),
+  labels: GithubIssuesConfig.shape.labels.optional(),
+});
+/** Writes github-issues.yaml (comments preserved): the status-label prefix and the names of the factory's statuses and labels. */
+export function updateGithubIssuesConfig(patch: z.input<typeof GithubIssuesMapping>, dir = seedHomeConfig()): LoadedConfig {
+  const m = GithubIssuesMapping.parse(patch);
+  editYaml(dir, "github-issues.yaml", (d) => {
+    if (m.statusPrefix !== undefined) d.set("statusPrefix", m.statusPrefix);
+    if (m.statuses) d.set("statuses", d.createNode(m.statuses));
+    if (m.labels) d.set("labels", d.createNode(m.labels));
+  });
+  return loadConfig(dir);
+}
+
 /** Apply a new tracker setup to the config object the running service holds (in place: handlers captured these objects). */
 export function applyTracker(live: LoadedConfig, fresh: LoadedConfig): void {
   live.factory.tracker = fresh.factory.tracker;
   live.jira = fresh.jira;
+  live.githubIssues = fresh.githubIssues;
   Object.assign(live.linear.statuses, fresh.linear.statuses);
   Object.assign(live.linear.labels, fresh.linear.labels);
   live.linear.keychainService = fresh.linear.keychainService;

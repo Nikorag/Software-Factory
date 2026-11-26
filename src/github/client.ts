@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { ghEnv } from "../repo/gh.js";
 
 export interface PrInfo {
@@ -31,10 +30,10 @@ export class GitHubError extends Error {
 const PR_FIELDS = "number,url,title,state,isDraft,headRefName,headRefOid,baseRefName,mergedAt,mergeable,mergeStateStatus,reviewDecision";
 export type GhExec = (args: string[], o: { env: NodeJS.ProcessEnv; input?: string }) => Promise<string>;
 
-const defaultExec: GhExec = async (args, o) => {
-  const child = promisify(execFile)("gh", args, { env: o.env, timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
-  return (await child).stdout;
-};
+export const defaultExec: GhExec = (args, o) => new Promise((resolve, reject) => {
+  const child = execFile("gh", args, { env: o.env, timeout: 60_000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => (err ? reject(Object.assign(err, { stderr })) : resolve(stdout)));
+  child.stdin?.end(o.input ?? "");
+});
 
 const asPr = (j: Record<string, unknown>): PrInfo => ({
   number: Number(j.number), url: String(j.url), title: String(j.title ?? ""), state: j.state as PrInfo["state"], isDraft: Boolean(j.isDraft),
@@ -43,7 +42,7 @@ const asPr = (j: Record<string, unknown>): PrInfo => ({
 });
 
 /** Network/rate problems are retryable; auth and "not found" are not. */
-function classify(e: unknown): GitHubError {
+export function classify(e: unknown): GitHubError {
   const msg = `${(e as { stderr?: string }).stderr ?? ""} ${(e as Error).message}`.trim();
   // GitHub's own "Something went wrong while executing your query" (seen live on `pr create`) is a server-side fault: retry it.
   const transient = /timeout|timed out|ECONN|ETIMEDOUT|EAI_AGAIN|\b50[0234]\b|rate limit|secondary rate|could not resolve host|connection reset|something went wrong|internal server error|temporarily unavailable|try again/i.test(msg);

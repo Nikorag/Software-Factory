@@ -36,7 +36,7 @@ const Section = ({ title, hint, children }: { title: string; hint?: string; chil
 );
 
 /** The whole editor for one project (or a new one). Server-side validation (duplicate repos, shared Linear targets, bad ids) is shown verbatim. */
-export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRemoved, onDirty }: { project: Project | null; teams: TeamAudit[]; globals?: GlobalSettings | null; tracker?: "linear" | "jira"; onSaved: (id: string) => void; onRemoved?: () => void; onDirty?: (d: boolean) => void }) {
+export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRemoved, onDirty }: { project: Project | null; teams: TeamAudit[]; globals?: GlobalSettings | null; tracker?: "linear" | "jira" | "github"; onSaved: (id: string) => void; onRemoved?: () => void; onDirty?: (d: boolean) => void }) {
   const initial = useMemo(() => (project ? fromProject(project) : blank()), [project]);
   const [f, setF] = useState<Form>(initial);
   const [err, setErr] = useState<string | null>(null);
@@ -158,15 +158,15 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         )}
       </Section>
       <Separator />
-      <Section title={tracker === "jira" ? "Jira" : "Linear"} hint={tracker === "jira" ? "Tickets of this Jira project (and, if you choose one, this component) belong to this repository." : undefined}>
+      <Section title={tracker === "jira" ? "Jira" : tracker === "github" ? "GitHub Issues" : "Linear"} hint={tracker === "jira" ? "Tickets of this Jira project (and, if you choose one, this component) belong to this repository." : tracker === "github" ? "Issues of this GitHub repository (and, if you choose one, this milestone) belong to this project." : undefined}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="grid gap-1.5"><Label htmlFor="pe-team">{tracker === "jira" ? "Jira project" : "Team key"}</Label>
+          <div className="grid gap-1.5"><Label htmlFor="pe-team">{tracker === "jira" ? "Jira project" : tracker === "github" ? "Issues repository" : "Team key"}</Label>
             {teams.length ? <Select value={f.team || "__none"} onValueChange={(v) => { set("team", v === "__none" ? "" : v); set("lproject", ""); }}><SelectTrigger id="pe-team" aria-label="linear team"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="__none">{tracker === "jira" ? "(choose)" : "(none)"}</SelectItem>{teams.map((t) => <SelectItem key={t.key} value={t.key}>{t.key} · {t.name}</SelectItem>)}</SelectContent></Select>
-              : <Input id="pe-team" value={f.team} onChange={(e) => set("team", e.target.value.toUpperCase())} placeholder="ENG" />}</div>
-          <div className="grid gap-1.5"><Label htmlFor="pe-lp">{tracker === "jira" ? "Component (optional)" : "Project"}</Label>
+              <SelectContent><SelectItem value="__none">{tracker === "jira" || tracker === "github" ? "(choose)" : "(none)"}</SelectItem>{teams.map((t) => <SelectItem key={t.key} value={t.key}>{t.key} · {t.name}</SelectItem>)}</SelectContent></Select>
+              : <Input id="pe-team" value={f.team} onChange={(e) => set("team", tracker === "github" ? e.target.value.trim() : e.target.value.toUpperCase())} placeholder={tracker === "github" ? "owner/repo" : "ENG"} />}</div>
+          <div className="grid gap-1.5"><Label htmlFor="pe-lp">{tracker === "jira" ? "Component (optional)" : tracker === "github" ? "Milestone (optional)" : "Project"}</Label>
             {team?.projects.length ? <Select value={f.lproject || "__all"} onValueChange={(v) => set("lproject", v === "__all" ? "" : v)}><SelectTrigger id="pe-lp" aria-label="linear project"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="__all">{tracker === "jira" ? "(whole Jira project)" : "(whole team)"}</SelectItem>{team.projects.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent></Select>
+              <SelectContent><SelectItem value="__all">{tracker === "jira" ? "(whole Jira project)" : tracker === "github" ? "(whole repository)" : "(whole team)"}</SelectItem>{team.projects.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent></Select>
               : <Input id="pe-lp" value={f.lproject} onChange={(e) => set("lproject", e.target.value)} placeholder="optional" />}</div>
         </div>
       </Section>

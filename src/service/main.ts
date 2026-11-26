@@ -53,7 +53,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
 
   const usesLocal = Object.values(config.models.routes).some((r) => r.provider === "local");
   const health = new HealthChecker({
-    trackerName: config.factory.tracker,
+    trackerName: config.factory.tracker === "github" ? "github-issues" : config.factory.tracker,
     claudeAuth: async () => (await run("claude", ["auth", "status"], { timeout: 10_000 })).stdout,
     linearViewer: async () => ctx.linear().viewer(),
     ghAuth: async () => { const r = await run("gh", ["auth", "status"], { timeout: 10_000 }).catch((e) => e as { stdout?: string; stderr?: string }); return `${r.stdout ?? ""}${r.stderr ?? ""}`; },

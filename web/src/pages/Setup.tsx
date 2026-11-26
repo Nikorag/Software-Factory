@@ -33,7 +33,7 @@ export function Setup() {
           <CardContent className="grid gap-4"><Checks onChange={setToolsOk} /><div>{next(true, toolsOk ? "Continue" : "Continue anyway")}</div></CardContent></Card>
       ) : null}
       {step === 1 ? (
-        <Card><CardHeader><CardTitle>Connect your issue tracker</CardTitle><CardDescription>Tickets come from Linear or Jira (each profile picks one). With Linear the factory can create the few statuses and labels it needs; with Jira you map its statuses and labels to ones that already exist.</CardDescription></CardHeader>
+        <Card><CardHeader><CardTitle>Connect your issue tracker</CardTitle><CardDescription>Tickets come from Linear, Jira or GitHub Issues (each profile picks one). With Linear or GitHub the factory can create the few statuses and labels it needs; with Jira you map its statuses and labels to ones that already exist.</CardDescription></CardHeader>
           <CardContent className="grid gap-4"><TrackerSetup info={info} onChanged={() => void reloadInfo()} onKey={() => void reloadInfo()} onTeams={setTeams} /><div className="flex gap-2"><Button variant="outline" onClick={() => setStep(0)}>Back</Button>{next(Boolean(info?.tracker.connected ?? info?.linear.keyPresent))}</div></CardContent></Card>
       ) : null}
       {step === 2 ? (

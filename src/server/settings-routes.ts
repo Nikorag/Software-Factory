@@ -44,6 +44,7 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
 
   app.post<{ Body: { key?: unknown } }>("/api/setup/linear-key", { preHandler: requireToken }, async (req, reply) => {
     if (d.config.factory.tracker === "jira") return reply.code(400).send({ error: "this profile uses Jira: connect it with OAuth in Settings → Tracker" });
+    if (d.config.factory.tracker === "github") return reply.code(400).send({ error: "this profile uses GitHub Issues: it signs in with the gh login, not a Linear key" });
     const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
     if (!/^lin_api_[A-Za-z0-9]{20,}$/.test(key)) return reply.code(400).send({ error: "that does not look like a Linear personal API key (it starts with lin_api_)" });
     try {
@@ -57,10 +58,17 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
     try {
       const client = d.linear();
       const teams = await client.teams();
-      const out: { key: string; name: string; projects: string[]; audit: TeamAudit }[] = [];
+      const out: { key: string; name: string; projects: string[]; audit: TeamAudit; audited: boolean }[] = [];
       const jira = d.config.factory.tracker === "jira";
       // Jira: "teams" are Jira projects and "projects" their components. Nothing is created in Jira, so there is no audit: see the mapping instead.
-      for (const t of teams) out.push({ key: t.key, name: t.name, projects: (await client.projects(t.id)).map((p) => p.name), audit: jira ? { team: { key: t.key, name: t.name }, statuses: [], labels: [], existingStatuses: [], existingLabels: [], ok: true } : await auditTeam(client, d.config.linear, t) });
+      // GitHub: "teams" are repositories (there can be hundreds), so only the ones a project is linked to are read and audited: the rest just fill the picker.
+      const github = d.config.factory.tracker === "github";
+      const linked = new Set(d.config.projects.projects.flatMap((p) => (p.linear ? [p.linear.teamKey] : [])));
+      const none = (t: { key: string; name: string }): TeamAudit => ({ team: { key: t.key, name: t.name }, statuses: [], labels: [], existingStatuses: [], existingLabels: [], ok: true });
+      for (const t of teams) {
+        if (github && !linked.has(t.key)) { out.push({ key: t.key, name: t.name, projects: [], audit: none(t), audited: false }); continue; }
+        out.push({ key: t.key, name: t.name, projects: (await client.projects(t.id)).map((p) => p.name), audit: jira ? none(t) : await auditTeam(client, d.config.linear, t), audited: !jira });
+      }
       return { teams: out };
     } catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
   });

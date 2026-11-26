@@ -85,8 +85,8 @@ export function reviewerIndependence(config: LoadedConfig): CheckResult[] {
 
 /** Read-only: asks Linear who the key belongs to. Reports the account name, never the key. */
 export async function checkLinear(config: LoadedConfig, clientOverride?: LinearClient): Promise<CheckResult> {
-  if (config.factory.tracker === "jira") {
-    const name = "jira";
+  if (config.factory.tracker === "jira" || config.factory.tracker === "github") {
+    const name = config.factory.tracker === "github" ? "github-issues" : "jira";
     try {
       if (!clientOverride && !trackerConfigured(config)) return { name, status: "warn", detail: "not connected: set up the OAuth app and connect in Settings → Tracker" };
       const me = await (clientOverride ?? createTrackerClient(config)).viewer();
