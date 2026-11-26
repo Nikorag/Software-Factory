@@ -34,6 +34,18 @@ You label a ticket in Linear. Software Factory picks it up and does the work an 
 
 It runs locally: your code, your Claude subscription, your GitHub and Linear accounts. There is no hosted service and no API key to manage.
 
+## Screenshots
+
+The dashboard, showing a demo factory (made-up tickets, simulated stages).
+
+<p align="center">
+  <img src="docs/assets/screenshot-overview.png" alt="Overview: jobs by state, machine health, queued and finished jobs with per-stage progress, and a project rail with the jobs that need you" width="860" />
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshot-job.png" alt="A finished job's live flow chart: every stage ticked, with the fix loops that were not needed shown dashed" width="860" />
+</p>
+
 ## Features
 
 - **Live pipeline flow chart** for every job, showing the running step, the fix loops that were actually taken, timings and attempts.
