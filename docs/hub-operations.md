@@ -49,7 +49,7 @@ All via environment variables: non-sensitive in the ConfigMap, sensitive in a Se
 | `FACTORY_TOKEN_PEPPER` 🔒 | ✔ | | ≥32 chars; HMAC key for factory token hashes. Rotating it invalidates all factory tokens |
 | `SESSION_TTL_SECONDS` | | 1209600 | |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_RP_NAME` / `WEBAUTHN_ORIGIN` | ✔ | | RP ID `factory.nikorag.co.uk`; changing it orphans existing passkeys |
-| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` 🔒 / `VAPID_SUBJECT` | ✔ | | generate: `node dist/cli.js vapid-generate`; subject `mailto:` or `https:` |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` 🔒 / `VAPID_SUBJECT` | | | optional until Web Push exists; all three or none. generate: `node dist/cli.js vapid-generate`; subject `mailto:` or `https:` |
 | `COMMAND_DEFAULT_TTL_SECONDS` / `COMMAND_LEASE_SECONDS` / `COMMAND_MAX_DELIVERY_ATTEMPTS` | | 3600 / 60 / 5 | |
 | `POLL_MAX_WAIT_SECONDS` / `RATE_LIMIT_PER_MINUTE` | | 25 / 300 | rate limit is per client IP, via Redis, fails open |
 | `RECONCILE_INTERVAL_MS` / `OUTBOX_INTERVAL_MS` | | 15000 / 1000 | |
@@ -96,9 +96,9 @@ The WebAuthn relying-party ID must stay `factory.nikorag.co.uk` and the origin m
 No manifests are shipped; declare these resources with the `kubernetes` provider (or `kubectl`/`helm` provider if you prefer). Use the same names everywhere.
 
 **1. Config (`kubernetes_config_map`)**: non-sensitive env vars from the table above, at minimum:
-`NODE_ENV=production`, `PORT=8080`, `PUBLIC_URL=https://factory.nikorag.co.uk`, `WEBAUTHN_RP_ID=factory.nikorag.co.uk`, `WEBAUTHN_ORIGIN=https://factory.nikorag.co.uk`, `VAPID_SUBJECT=mailto:…`, and optionally `LOG_LEVEL`, `DATABASE_POOL_MAX`, `DATABASE_SSL`, `REDIS_KEY_PREFIX`.
+`NODE_ENV=production`, `PORT=8080`, `PUBLIC_URL=https://factory.nikorag.co.uk`, `WEBAUTHN_RP_ID=factory.nikorag.co.uk`, `WEBAUTHN_ORIGIN=https://factory.nikorag.co.uk`, and optionally `LOG_LEVEL`, `DATABASE_POOL_MAX`, `DATABASE_SSL`, `REDIS_KEY_PREFIX`.
 
-**2. Secret (`kubernetes_secret`)**, keys exactly: `DATABASE_URL`, `REDIS_URL`, `SETUP_TOKEN`, `SESSION_SECRET`, `FACTORY_TOKEN_PEPPER`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (plus `REDIS_PASSWORD` / `REDIS_TLS_CA` / `DATABASE_SSL_CA` if used). Source the values from your secret store or Terraform variables marked `sensitive = true`; generate with `openssl rand -base64 48` (setup token/session/pepper) and `node dist/cli.js vapid-generate` (VAPID). Mind that values passed through Terraform land in its state: use an encrypted remote backend. Keep the pepper/session secrets stable across applies (use `lifecycle { ignore_changes }` or `random_password` resources), as rotating them signs everyone out / invalidates factory tokens.
+**2. Secret (`kubernetes_secret`)**, keys exactly: `DATABASE_URL`, `REDIS_URL`, `SETUP_TOKEN`, `SESSION_SECRET`, `FACTORY_TOKEN_PEPPER` (plus `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`, optional until Web Push exists, and `REDIS_PASSWORD` / `REDIS_TLS_CA` / `DATABASE_SSL_CA` if used). Source the values from your secret store or Terraform variables marked `sensitive = true`; generate with `openssl rand -base64 48` (setup token/session/pepper) and `node dist/cli.js vapid-generate` (VAPID, if used). Mind that values passed through Terraform land in its state: use an encrypted remote backend. Keep the pepper/session secrets stable across applies (use `lifecycle { ignore_changes }` or `random_password` resources), as rotating them signs everyone out / invalidates factory tokens.
 
 **3. Migration Job (`kubernetes_job_v1`)**, run on every release *before* the Deployment is updated:
 - image `…/software-factory-hub:<version>`, args `["dist/cli.js", "migrate"]`, `env_from` the ConfigMap and Secret.
