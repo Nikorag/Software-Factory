@@ -20,6 +20,7 @@ import type { RepoReport } from "../repo/inspect.js";
 import { registerBoardRoutes } from "./board-routes.js";
 import { registerBitbucketRoutes } from "./bitbucket-routes.js";
 import { registerGithubIssuesRoutes } from "./github-issues-routes.js";
+import { registerTrackersRoutes } from "./trackers-routes.js";
 import { registerJiraRoutes } from "./jira-routes.js";
 import { registerProfileRoutes } from "./profile-routes.js";
 import { registerWorkflowRoutes } from "./workflow-routes.js";
@@ -195,7 +196,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
         const report = row?.validationJson ? (JSON.parse(row.validationJson) as { ok?: boolean; findings?: { severity: string; code: string; message: string }[]; branchProtection?: { status: string } }) : null;
         return {
           id: p.id, name: p.name, enabled: p.enabled, autonomy: p.autonomy, repository: p.repository, managed: p.managed, defaultBranch: p.defaultBranch, githubAccount: p.github.account ?? null, host: p.host, bitbucketRepo: p.bitbucket.repo ?? null, bitbucketCredential: p.bitbucket.credential, overrides: p.overrides ?? null,
-          linear: p.linear ?? null, githubRepo: p.github.repo ?? null, commands: p.commands,
+          tracker: p.tracker ?? null, linear: p.linear ?? null, githubRepo: p.github.repo ?? null, commands: p.commands,
           onboarding: onboardingOf(p, row?.validationJson ? (JSON.parse(row.validationJson) as RepoReport) : null, row?.checkJson ? (JSON.parse(row.checkJson) as CheckRecord) : null),
           validation: report ? { ok: report.ok ?? false, at: ms(row?.lastValidatedAt), protection: report.branchProtection?.status ?? "unknown", findings: (report.findings ?? []).filter((f) => f.severity !== "info").map((f) => `${f.severity}: ${f.message}`) } : null,
           activeJobs: db.select().from(jobs).where(and(eq(jobs.projectId, p.id), inArray(jobs.status, ["queued", "running", "waiting"]))).all().length,
@@ -287,6 +288,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   if (d.config) registerWorkflowRoutes(app, { db, config: d.config, ...(d.settings ? { linear: d.settings.linear } : {}) }, requireToken);
   if (d.settings && d.config) registerBoardRoutes(app, { db, config: d.config, linear: d.settings.linear }, requireToken);
   if (d.bitbucket && d.config) registerBitbucketRoutes(app, { ...d.bitbucket, config: d.config }, requireToken);
+  if (d.config) registerTrackersRoutes(app, { db, config: d.config }, requireToken);
   if (d.config) registerGithubIssuesRoutes(app, { config: d.config, gh: d.githubIssues?.gh }, requireToken);
   if (d.jira && d.config) registerJiraRoutes(app, { ...d.jira, db, config: d.config }, requireToken);
   if (d.profiles) registerProfileRoutes(app, d.profiles, requireToken);

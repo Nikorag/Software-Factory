@@ -34,7 +34,7 @@ export interface StageKitDeps {
   runner: AgentRunner;
   router: ModelRouter;
   worktrees: WorktreeManager;
-  linear: () => LinearClient; // lazy: a missing LINEAR_API_KEY becomes a blocked job, not a crash at startup
+  linear: (projectId?: string) => LinearClient; // the project's tracker connection. Lazy: a missing LINEAR_API_KEY becomes a blocked job, not a crash at startup
   project: (id: string) => ProjectConfig;
   fallback: "claude" | "block";
   logger: Logger;
@@ -76,7 +76,7 @@ export function createStageKit(d: StageKitDeps) {
     }
     let issue;
     try {
-      issue = await d.linear().getIssue(job.externalId);
+      issue = await d.linear(job.projectId).getIssue(job.externalId);
     } catch (e) {
       if (e instanceof ConfigError || (e instanceof Error && /not set/.test(e.message))) return { ok: false, stop: { kind: "blocked", reason: e.message } };
       if (e instanceof LinearApiError && !e.retryable) return { ok: false, stop: { kind: "blocked", reason: `cannot read the Linear issue: ${e.message}` } };

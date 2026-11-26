@@ -14,7 +14,7 @@ import { runSimulation } from "./core/simulation.js";
 import { syncProjects, validateProjects } from "./repo/registry.js";
 import { ensureClone } from "./repo/clone.js";
 import type { LinearClient } from "./linear/client.js";
-import { createTrackerClient } from "./tracker/index.js";
+import { createTrackerClient, trackerSet } from "./tracker/index.js";
 import { discoverIssues } from "./linear/discovery.js";
 import { auditTeam, SUGGESTED_STATUS_TYPE } from "./linear/check.js";
 import { applySetup, planSetup } from "./linear/setup.js";
@@ -203,7 +203,7 @@ program
     const { config, handle } = openFactoryDb();
     syncProjects(handle.db, config.projects.projects);
     const logger = createLogger({ level: "warn" });
-    const r = await discoverIssues({ db: handle.db, client: linearClient(config), linear: config.linear, projects: config.projects.projects, logger, dryRun: opts.dryRun || config.factory.dryRun, workflows: config.workflows });
+    const r = await discoverIssues({ db: handle.db, trackers: trackerSet(config), linear: config.linear, projects: config.projects.projects, logger, dryRun: opts.dryRun || config.factory.dryRun, workflows: config.workflows });
     for (const e of r.enqueued) console.log(`+ ${e.key} -> ${e.projectId} (${e.workflow}${e.autonomous ? ", autonomous" : ""})`);
     for (const s of r.skipped) console.log(`- ${s.key}: ${s.reasons.join("; ")}`);
     for (const e of r.errors) console.log(`! ${e.projectId}: ${e.error}`);
@@ -216,7 +216,7 @@ program
   .action(async () => {
     const { config, handle } = openFactoryDb();
     if (config.factory.dryRun) { console.log("dry-run: not sending"); handle.close(); return; }
-    console.log(await flushOutbox({ db: handle.db, client: linearClient(config), linear: config.linear, logger: createLogger({ level: "warn" }) }));
+    console.log(await flushOutbox({ db: handle.db, trackers: trackerSet(config), projectOf: (id) => config.projects.projects.find((p) => p.id === id), linear: config.linear, logger: createLogger({ level: "warn" }) }));
     handle.close();
   });
 

@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { LoadedConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import type { LinearClient } from "../linear/client.js";
+import { trackerIdOf } from "../config/schema.js";
+import { trackerIdsInUse, trackerName } from "../tracker/index.js";
 import { buildDefaultDefinition } from "../workflows/default.js";
 import { COMPLETE, FACTORY_HANDLERS, FAILURE_ACTIONS, FAILURE_KINDS, GATE_TYPES, STAGE_TYPES, WorkflowMeta } from "../workflows/definition.js";
 import { SYSTEM_LIMITS } from "../workflows/limits.js";
@@ -16,7 +18,7 @@ import { PROMPT_VARIABLES } from "../workflows/template.js";
 import { validateDefinition } from "../workflows/validate.js";
 const zod = z;
 
-export interface WorkflowRouteDeps { db: FactoryDb; config: LoadedConfig; linear?: () => LinearClient }
+export interface WorkflowRouteDeps { db: FactoryDb; config: LoadedConfig; /** The client of a tracker connection (default: the profile's default). */ linear?: (trackerId?: string) => LinearClient }
 
 const fail = (reply: FastifyReply, e: unknown) => {
   if (e instanceof WorkflowError) return reply.code(e.code === "not_found" ? 404 : e.code === "invalid" ? 400 : e.code === "protected" ? 403 : 409).send({ error: e.message, code: e.code, issues: e.issues, usage: e.usage ?? null });
@@ -108,10 +110,18 @@ export function registerWorkflowRoutes(app: FastifyInstance, d: WorkflowRouteDep
   app.get("/api/workflows/labels", async (_req, reply) => {
     if (!d.linear) return { labels: [], assigned: [] };
     try {
-      const client = d.linear();
-      const teams = await client.teams();
+      // Labels of every tracker connection in use (projects can live in different ones). A connection that cannot be read is reported, not fatal, unless none can.
       const seen = new Map<string, { id: string; name: string; teams: string[] }>();
-      for (const t of teams) for (const l of await client.labels(t.id)) { const e = seen.get(l.id) ?? { id: l.id, name: l.name, teams: [] }; e.teams.push(t.key); seen.set(l.id, e); }
+      const ids = trackerIdsInUse(d.config), problems: string[] = [];
+      for (const tid of ids) {
+        try {
+          const client = d.linear(tid);
+          const prefix = ids.length > 1 ? `${trackerName(d.config, tid)}: ` : "";
+          const teams = (await client.teams()).filter((t) => ids.length === 1 || d.config.projects.projects.some((p) => p.linear?.teamKey === t.key && trackerIdOf(d.config, p) === tid)); // with several connections, only the teams projects are bound to
+          for (const t of teams) for (const l of await client.labels(t.id)) { const e = seen.get(l.id) ?? { id: l.id, name: l.name, teams: [] }; e.teams.push(`${prefix}${t.key}`); seen.set(l.id, e); }
+        } catch (e) { problems.push(`${trackerName(d.config, tid)}: ${(e as Error).message}`); }
+      }
+      if (problems.length === ids.length && problems.length) throw new Error(problems.join("; "));
       const assigned = listAssignments(db).filter((a) => a.scope === "label");
       return { labels: [...seen.values()].sort((a, b) => a.name.localeCompare(b.name)), assigned: assigned.map((a) => ({ id: a.targetId, name: a.targetName, workflowId: a.workflowId, priority: a.priority, foundInTracker: seen.has(a.targetId) })) };
     } catch (e) { return reply.code(502).send({ error: `cannot read labels from the tracker: ${(e as Error).message}` }); }

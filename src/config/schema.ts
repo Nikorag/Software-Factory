@@ -14,8 +14,8 @@ export const FactoryConfig = z.object({
   logLevel: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
   // The gh login this profile uses unless a project names its own. Lets e.g. a "home" and a "work" profile use different GitHub accounts.
   githubAccount: z.string().regex(/^[A-Za-z0-9-]{1,39}$/).optional(),
-  // Which issue tracker this profile uses (Linear, Jira or GitHub Issues). The factory never needs two: a "home" profile can be on Linear and a "work" profile on Jira.
-  tracker: z.enum(["linear", "jira", "github"]).default("linear"),
+  // The profile's DEFAULT issue tracker connection: what a project uses unless it names its own (`tracker:` on the project). Profiles and projects can mix freely.
+  tracker: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default("linear"), // the id of a tracker connection (the built-in ones are "linear", "jira" and "github"; more are named in trackers.yaml)
   // automatic: tickets labelled factory:enabled in the pickup status are picked up on their own. manual: nothing starts until you start it from the Board.
   pickupMode: z.enum(["automatic", "manual"]).default("automatic"),
   dryRun: z.boolean().default(false),
@@ -96,6 +96,8 @@ export const ProjectConfig = z.object({
   specKit: z.boolean().default(true),
   autonomy: AutonomyLevel.default("supervised"),
   // Bind to a Linear team, optionally narrowed to one Linear project (by name or id). One repo per Linear project.
+  // Which tracker connection the project's tickets live in (an id from Settings → Trackers); omitted = the profile's default.
+  tracker: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).optional(),
   linear: z.object({ teamKey: z.string(), projectName: z.string().optional(), projectId: z.string().optional() }).optional(),
   // Where this repository is hosted. Each project chooses: a "home" project can be on GitHub and a "work" project on Bitbucket.
   host: z.enum(["github", "bitbucket"]).default("github"),
@@ -199,6 +201,8 @@ export type JiraConfig = z.infer<typeof JiraConfig>;
  * and "done" also closes the issue. Authentication is the `gh` login the profile already uses (factory.githubAccount): nothing secret lives here.
  */
 export const GithubIssuesConfig = z.object({
+  // The gh login that reads and writes these issues; omitted = the profile's default GitHub account. Lets two GitHub connections use two accounts.
+  account: z.string().regex(/^[A-Za-z0-9-]{1,39}$/).optional(),
   statusPrefix: z.string().min(1).max(40).default("status: "),
   statuses: LinearConfig.shape.statuses,
   labels: LinearConfig.shape.labels,
@@ -228,15 +232,43 @@ export function effectiveTrackerNames(jira: JiraConfig): LinearConfig {
   });
 }
 
+export const TrackerId = z.string().regex(/^[a-z0-9][a-z0-9-]*$/, "a tracker id is lowercase letters, numbers and hyphens");
+export const TrackerKind = z.enum(["linear", "jira", "github"]);
+export type TrackerKind = z.infer<typeof TrackerKind>;
+/** The three built-in connections come from linear.yaml, jira.yaml and github-issues.yaml; their ids are reserved. */
+export const BUILTIN_TRACKER_IDS: readonly string[] = ["linear", "jira", "github"];
+
+const Label = z.string().trim().min(1).max(60).optional();
+/**
+ * One tracker connection: an instance of Linear, Jira or GitHub Issues with its own credentials and its own status/label names.
+ * Several of the same kind can exist (two Jiras, three Linear workspaces). Secrets are never here, only where to find them.
+ */
+export const TrackerConnection = z.discriminatedUnion("kind", [
+  LinearConfig.extend({ kind: z.literal("linear"), label: Label }),
+  JiraConfig.extend({ kind: z.literal("jira"), label: Label }),
+  GithubIssuesConfig.extend({ kind: z.literal("github"), label: Label }),
+]);
+export type TrackerConnection = z.infer<typeof TrackerConnection>;
+export const TrackersFile = z.object({ connections: z.record(TrackerId, TrackerConnection).default({}) });
+
+/** What the rest of the factory reads from any connection: the status and label names (and, for Linear, where its key is). */
+export function connectionNames(c: TrackerConnection): LinearConfig {
+  return c.kind === "jira" ? effectiveTrackerNames(c) : c.kind === "github" ? githubTrackerNames(c) : LinearConfig.parse(c);
+}
+export const KIND_NAME: Record<TrackerKind, string> = { linear: "Linear", jira: "Jira", github: "GitHub Issues" };
+export const connectionLabel = (id: string, c: { kind: TrackerKind; label?: string | undefined }) => c.label ?? (BUILTIN_TRACKER_IDS.includes(id) ? KIND_NAME[c.kind] : `${KIND_NAME[c.kind]} (${id})`);
+
 /** For a GitHub profile: the configured names, in the shape the rest of the factory reads. */
 export function githubTrackerNames(g: GithubIssuesConfig): LinearConfig {
   return LinearConfig.parse({ statuses: g.statuses, labels: g.labels });
 }
 
 export const LoadedConfig = z.object({
-  linear: LinearConfig, // for a Jira or GitHub profile: the mapped names (see JiraConfig, GithubIssuesConfig)
+  linear: LinearConfig, // the names of the profile's DEFAULT tracker connection (see `connections` for the rest)
   jira: JiraConfig,
   githubIssues: GithubIssuesConfig,
+  /** Every tracker connection by id: the built-in three plus those in trackers.yaml. `factory.tracker` and each project's `tracker` name one. */
+  connections: z.record(z.string(), TrackerConnection),
   bitbucket: BitbucketConfig,
   factory: FactoryConfig,
   models: ModelsConfig,
@@ -250,3 +282,6 @@ export type LoadedConfig = z.infer<typeof LoadedConfig>;
 /** How tickets of a project get started: its own override, else the profile's setting. */
 export const pickupModeOf = (project: { overrides?: { pickupMode?: "automatic" | "manual" } | undefined }, factory: { pickupMode: "automatic" | "manual" }): "automatic" | "manual" =>
   project.overrides?.pickupMode ?? factory.pickupMode;
+
+/** The id of the tracker connection a project uses: its own, else the profile's default. */
+export const trackerIdOf = (config: { factory: { tracker: string } }, project?: { tracker?: string | undefined } | null): string => project?.tracker ?? config.factory.tracker;

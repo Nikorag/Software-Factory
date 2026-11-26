@@ -551,7 +551,7 @@ describe("settings and setup", () => {
     expect(progress.queryByRole("button", { name: /Start/ })).toBeNull();
     expect(progress.getByText("implement")).toBeInTheDocument();                             // and what it is doing now
     await userEvent.click(backlog.getByRole("button", { name: "Start" }));
-    await waitFor(() => expect(calls.find((c) => c.url === "/api/board/start")?.body).toBe(JSON.stringify({ issueId: "i1" })));
+    await waitFor(() => expect(calls.find((c) => c.url === "/api/board/start")?.body).toBe(JSON.stringify({ issueId: "i1", projectId: "a" })));
     expect(await screen.findByText("Started ENG-418. It is queued and will begin shortly.")).toBeInTheDocument();
     expect(calls.find((c) => c.url === "/api/board/start")!.headers).toMatchObject({ "X-Factory-UI": "1" });
   });
@@ -641,6 +641,42 @@ describe("settings and setup", () => {
     expect(calls.some((c) => c.url === "/api/settings/tracker")).toBe(false);                      // nothing happens until confirmed
     await userEvent.click(screen.getByRole("button", { name: "Switch" }));
     await waitFor(() => expect(JSON.parse(calls.find((c) => c.url === "/api/settings/tracker")!.body!)).toEqual({ tracker: "jira" }));
+  });
+  const entry = (id: string, kind: string, label: string, o: object = {}) => ({ id, kind, label, builtin: ["linear", "jira", "github"].includes(id), isDefault: id === "linear", connected: false, projects: [], ...o });
+  const trackerList = { default: "linear", trackers: [entry("linear", "linear", "Linear", { connected: true, projects: ["my-app"] }), entry("jira", "jira", "Jira"), entry("github", "github", "GitHub Issues"), entry("work-jira", "jira", "Work Jira")] };
+  it("sets up one of several tracker connections: each Jira has its own app, so its calls say which one", async () => {
+    routes = { ...jiraRoutes(), "/api/setup": setupInfo, "/api/trackers": trackerList, "/api/jira/status?tracker=work-jira": { ...jiraStatus, id: "work-jira", clientId: null, secretSet: false, connected: false, site: null } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    const pick = await screen.findByRole("combobox", { name: "Tracker connection to set up" });
+    expect(screen.getByRole("radio", { name: "Work Jira" })).toBeInTheDocument();                  // every connection can be the profile's default
+    await userEvent.selectOptions(pick, "work-jira");
+    expect(await screen.findByText(/Your Atlassian OAuth app/)).toBeInTheDocument();
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/jira/status?tracker=work-jira")).toBe(true));
+    expect(calls.some((c) => c.url === "/api/jira/status")).toBe(false);                           // the built-in Jira was not asked
+  });
+  it("adds a tracker connection: a named second Jira (or Linear, or GitHub) with its own id", async () => {
+    routes = { ...jiraRoutes(), "/api/setup": setupInfo, "/api/trackers": trackerList };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    await userEvent.click(await screen.findByRole("button", { name: /Add another tracker connection/ }));
+    const form = within(screen.getByRole("group", { name: "Add a tracker connection" }));
+    await userEvent.type(form.getByLabelText("Name"), "Client Jira");
+    await userEvent.click(form.getByRole("button", { name: "Add connection" }));
+    await waitFor(() => expect(JSON.parse(calls.find((c) => c.method === "POST" && c.url === "/api/trackers")!.body!)).toEqual({ id: "client-jira", kind: "jira", label: "Client Jira" }));
+  });
+  it("a project can name its own tracker connection, and then picks its team from that connection", async () => {
+    routes = { ...jiraRoutes(), "/api/projects": { projects: [proj] }, "/api/setup": setupInfo, "/api/trackers": trackerList, "/api/settings/projects/my-app": { ok: true },
+      "/api/setup/linear?tracker=work-jira": { teams: [{ key: "WEB", name: "Web", projects: ["Core"], audit: { ok: true, statuses: [], labels: [] } }] } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("combobox", { name: "tracker connection" }));
+    await userEvent.click(await screen.findByRole("option", { name: "Work Jira" }));
+    expect(await screen.findByText("Jira project")).toBeInTheDocument();                           // the words change with the connection's kind
+    await userEvent.click(await screen.findByRole("combobox", { name: "linear team" }));
+    await userEvent.click(await screen.findByRole("option", { name: "WEB · Web" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT" && c.url === "/api/settings/projects/my-app")).toBeTruthy());
+    expect(JSON.parse(calls.find((c) => c.method === "PUT" && c.url === "/api/settings/projects/my-app")!.body!)).toMatchObject({ tracker: "work-jira", linear: { teamKey: "WEB" } });
   });
   const bbCreds = { credentials: [{ name: "work", kind: "access-token", email: null, hasToken: true, usedBy: ["my-app"] }, { name: "me", kind: "api-token", email: "me@x.com", hasToken: false, usedBy: [] }] };
   it("manages Bitbucket credentials: lists them with the projects that use them, never shows a token, and saves a new one", async () => {

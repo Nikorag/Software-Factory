@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
-import { BitbucketConfig, effectiveTrackerNames, FactoryConfig, githubTrackerNames, GithubIssuesConfig, JiraConfig, LinearConfig, ModelsConfig, ProjectsConfig, ProjectsFile, WorkflowsConfig, type LoadedConfig } from "./schema.js";
+import { BitbucketConfig, BUILTIN_TRACKER_IDS, connectionNames, FactoryConfig, GithubIssuesConfig, JiraConfig, LinearConfig, ModelsConfig, ProjectsConfig, ProjectsFile, TrackersFile, WorkflowsConfig, type LoadedConfig, type TrackerConnection } from "./schema.js";
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -82,7 +82,22 @@ export function loadConfig(configDir = defaultConfigDir()): LoadedConfig {
   const jira = readYaml(dir, "jira.yaml", JiraConfig, false);
   const bitbucket = readYaml(dir, "bitbucket.yaml", BitbucketConfig, false);
   const githubIssues = readYaml(dir, "github-issues.yaml", GithubIssuesConfig, false);
-  const linear = factory.tracker === "jira" ? effectiveTrackerNames(jira) : factory.tracker === "github" ? githubTrackerNames(githubIssues) : readYaml(dir, "linear.yaml", LinearConfig, false);
+  const linearFile = readYaml(dir, "linear.yaml", LinearConfig, false);
+  // The built-in connections are the three legacy files; any others are named in trackers.yaml. A profile may use any of them, per project.
+  const extra = readYaml(dir, "trackers.yaml", TrackersFile, false).connections;
+  for (const id of Object.keys(extra)) if (BUILTIN_TRACKER_IDS.includes(id)) throw new ConfigError(`trackers.yaml: "${id}" is a built-in tracker (set up in ${id === "linear" ? "linear.yaml" : id === "jira" ? "jira.yaml" : "github-issues.yaml"}); give the new connection another id`);
+  const connections: Record<string, TrackerConnection> = { linear: { kind: "linear", ...linearFile }, jira: { kind: "jira", ...jira }, github: { kind: "github", ...githubIssues }, ...extra };
+  const credentialOwner = new Map<string, string>();
+  for (const [id, c] of Object.entries(connections)) {
+    if (c.kind === "github") continue; // gh holds those credentials
+    const where = c.kind === "linear" ? `${c.keychainService} / ${c.apiKeyEnv}` : c.keychainService;
+    const key = `${c.kind}:${where}`;
+    if (credentialOwner.has(key)) throw new ConfigError(`trackers.yaml: "${id}" and "${credentialOwner.get(key)}" would share the same credentials (${where}); each ${c.kind} connection needs its own keychain service${c.kind === "linear" ? " and key variable" : ""}`);
+    credentialOwner.set(key, id);
+  }
+  if (!connections[factory.tracker]) throw new ConfigError(`factory.yaml: tracker "${factory.tracker}" is not a tracker connection (have: ${Object.keys(connections).join(", ")})`);
+  for (const p of projects.projects) if (p.tracker && !connections[p.tracker]) throw new ConfigError(`projects.yaml: "${p.id}" uses tracker "${p.tracker}", which is not a tracker connection (have: ${Object.keys(connections).join(", ")})`);
+  const linear = connectionNames(connections[factory.tracker]!);
 
   const ids = new Set<string>();
   const bindings = new Map<string, string>();
@@ -96,10 +111,10 @@ export function loadConfig(configDir = defaultConfigDir()): LoadedConfig {
     repos.set(repo, p.id);
     if (p.linear) {
       // Each tracker project (or team-wide fallback) maps to exactly one repo.
-      const key = `${p.linear.teamKey}/${(p.linear.projectId ?? p.linear.projectName ?? "*").toLowerCase()}`;
+      const key = `${p.tracker ?? factory.tracker}:${p.linear.teamKey}/${(p.linear.projectId ?? p.linear.projectName ?? "*").toLowerCase()}`;
       if (bindings.has(key)) throw new ConfigError(`projects.yaml: "${p.id}" and "${bindings.get(key)}" are bound to the same Linear target (${key}); each Linear project must map to a different repository`);
       bindings.set(key, p.id);
     }
   }
-  return { linear, jira, githubIssues, bitbucket, factory: { ...factory, dataDir: expandHome(factory.dataDir) }, models, projects, workflows, configDir: dir };
+  return { linear, jira, githubIssues, connections, bitbucket, factory: { ...factory, dataDir: expandHome(factory.dataDir) }, models, projects, workflows, configDir: dir };
 }

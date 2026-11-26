@@ -12,7 +12,7 @@ import { evaluateEligibility } from "./eligibility.js";
  * re-checked against the live ticket when work actually starts: if a human removed `factory:enabled`, added
  * `factory:blocked` or moved the ticket, the factory stops rather than act on stale intent.
  */
-export function createIntakeHandlers(d: { db: FactoryDb; linear: () => LinearClient; linearConfig: LinearConfig; project: (id: string) => ProjectConfig }): HandlerRegistry {
+export function createIntakeHandlers(d: { db: FactoryDb; linear: (projectId?: string) => LinearClient; linearConfig: LinearConfig; /** The names of the project's own tracker connection, when projects use different ones. */ linearNames?: (projectId: string) => LinearConfig; project: (id: string) => ProjectConfig }): HandlerRegistry {
   return {
     // Nothing to do: the job exists because discovery accepted the issue (and recorded why).
     DISCOVERED: async () => ({ kind: "ok" }),
@@ -20,7 +20,7 @@ export function createIntakeHandlers(d: { db: FactoryDb; linear: () => LinearCli
     ELIGIBILITY_CHECK: async ({ job }) => {
       let issue;
       try {
-        issue = await d.linear().getIssue(job.externalId);
+        issue = await d.linear(job.projectId).getIssue(job.externalId);
       } catch (e) {
         if (e instanceof ConfigError) return { kind: "blocked", reason: e.message };
         if (e instanceof LinearApiError && !e.retryable) return { kind: "blocked", reason: `cannot read the Linear issue: ${e.message}` };
@@ -28,7 +28,7 @@ export function createIntakeHandlers(d: { db: FactoryDb; linear: () => LinearCli
       }
       const project = d.project(job.projectId);
       // Prior jobs are ignored here: this job *is* the one allowed to process the issue.
-      const v = evaluateEligibility(issue, project, d.linearConfig, { projectRunnable: isRunnable(d.db, project.id), manual: job.manual });
+      const v = evaluateEligibility(issue, project, d.linearNames?.(job.projectId) ?? d.linearConfig, { projectRunnable: isRunnable(d.db, project.id), manual: job.manual });
       d.db.insert(decisions).values({ jobId: job.id, kind: "eligibility", decision: v.eligible ? "eligible" : "no longer eligible", rationale: v.reasons.join("; ") || null, actor: "factory" }).run();
       if (!v.eligible) {
         return { kind: "blocked", reason: `This ticket is no longer eligible for the factory: ${v.reasons.join("; ")}. Fix that in Linear, then retry the job.` };

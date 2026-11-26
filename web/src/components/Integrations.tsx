@@ -9,6 +9,7 @@ import { api, send } from "@/lib/api";
 import { ago } from "@/lib/format";
 import type { HealthReport, SetupInfo, TeamAudit } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
+import { withTracker } from "@/lib/trackers";
 
 /** What to do when a dependency is not ready, keyed by the health probe's name. */
 const HELP: Record<string, string> = {
@@ -40,24 +41,27 @@ export function Checks({ onChange }: { onChange?: (ok: boolean) => void }) {
 }
 
 /** Linear: paste a key (validated before it is stored in the macOS keychain), then see each team and create the statuses/labels the factory needs. */
-export function LinearSetup({ info, onKey, onTeams }: { info: SetupInfo | null; onKey?: () => void; onTeams?: (t: TeamAudit[]) => void }) {
+export function LinearSetup({ info, onKey, onTeams, trackerId, keyPresent }: { info: SetupInfo | null; onKey?: () => void; onTeams?: (t: TeamAudit[]) => void; trackerId?: string; keyPresent?: boolean }) {
+  const defaultId = info?.tracker?.id ?? info?.tracker?.kind ?? "linear";
+  const q = (p: string) => withTracker(p, trackerId, defaultId); // another Linear connection than the profile's default
+  const hasKey = keyPresent ?? info?.linear.keyPresent;
   const [key, setKey] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const { data, error, reload } = usePoll(async () => { const r = await api<{ teams: TeamAudit[] }>("/api/setup/linear"); onTeams?.(r.teams); return r; }, 60000, [info?.linear.keyPresent]);
+  const { data, error, reload } = usePoll(async () => { const r = await api<{ teams: TeamAudit[] }>(q("/api/setup/linear")); onTeams?.(r.teams); return r; }, 60000, [hasKey, trackerId]);
   const save = async () => {
-    const r = await send<{ name: string }>("POST", "/api/setup/linear-key", { key });
+    const r = await send<{ name: string }>("POST", "/api/setup/linear-key", { key, ...(trackerId && trackerId !== defaultId ? { tracker: trackerId } : {}) });
     if (r.ok) { setKey(""); setMsg({ ok: true, text: `Connected to Linear as ${r.data.name}. The key is stored in your keychain.` }); onKey?.(); void reload(); } else setMsg({ ok: false, text: r.error });
   };
-  const create = async (team: string) => { const r = await send<{ created: string[]; failed: { action: string; error: string }[] }>("POST", `/api/setup/linear/${team}/create`); setMsg(r.ok ? { ok: r.data.failed.length === 0, text: `Created: ${r.data.created.join(", ") || "nothing"}${r.data.failed.length ? `. Failed: ${r.data.failed.map((f) => f.error).join("; ")}` : ""}` } : { ok: false, text: r.error }); void reload(); };
+  const create = async (team: string) => { const r = await send<{ created: string[]; failed: { action: string; error: string }[] }>("POST", q(`/api/setup/linear/${encodeURIComponent(team)}/create`)); setMsg(r.ok ? { ok: r.data.failed.length === 0, text: `Created: ${r.data.created.join(", ") || "nothing"}${r.data.failed.length ? `. Failed: ${r.data.failed.map((f) => f.error).join("; ")}` : ""}` } : { ok: false, text: r.error }); void reload(); };
   return (
     <div className="grid gap-3">
       <div className="grid gap-1.5">
-        <Label htmlFor="lin-key">Linear personal API key {info?.linear.keyPresent ? "(one is already set: paste to replace it)" : ""}</Label>
+        <Label htmlFor="lin-key">Linear personal API key {hasKey ? "(one is already set: paste to replace it)" : ""}</Label>
         <div className="flex gap-2"><Input id="lin-key" type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} placeholder="lin_api_…" /><Button disabled={!key} onClick={() => void save()}>Verify &amp; save</Button></div>
         <p className="text-xs text-muted-foreground">Create one at Linear → Settings → Account → Security &amp; access → Personal API keys. It is checked against Linear, then stored in your macOS keychain, never in a file.</p>
       </div>
       {msg ? <Alert variant={msg.ok ? "default" : "destructive"}><AlertDescription>{msg.text}</AlertDescription></Alert> : null}
-      {error && info?.linear.keyPresent ? <Alert variant="destructive"><AlertDescription>Could not read Linear: {error}</AlertDescription></Alert> : null}
+      {error && hasKey ? <Alert variant="destructive"><AlertDescription>Could not read Linear: {error}</AlertDescription></Alert> : null}
       {(data?.teams ?? []).map((t) => {
         const missing = [...t.audit.statuses, ...t.audit.labels];
         return (

@@ -68,7 +68,7 @@ export function Board() {
   const start = async (t: BoardItem) => {
     if (busy) return;
     setBusy(t.id); setMsg(null);
-    const r = await send<{ jobId: string }>("POST", "/api/board/start", { issueId: t.id });
+    const r = await send<{ jobId: string }>("POST", "/api/board/start", { issueId: t.id, projectId: t.projectId });
     setBusy(null);
     setMsg(r.ok ? { ok: true, text: `Started ${t.key}. It is queued and will begin shortly.` } : { ok: false, text: r.error });
     void reload();

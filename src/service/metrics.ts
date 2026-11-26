@@ -66,6 +66,8 @@ export interface HealthDeps {
   trackerName?: string; // "linear" (default) or "jira": what the tracker probe is called
   claudeAuth?: () => Promise<string>; // output of `claude auth status`
   linearViewer?: () => Promise<{ name: string }>;
+  /** One probe per tracker connection in use (projects can live in different ones), evaluated on each check. Replaces `linearViewer`. */
+  trackers?: () => { name: string; viewer: () => Promise<{ name: string }> }[];
   ghAuth?: () => Promise<string>;
   specifyInstalled?: () => boolean;
   sandboxAvailable?: () => boolean;
@@ -118,7 +120,8 @@ export class HealthChecker {
       const j = JSON.parse(await d.claudeAuth!()) as { loggedIn?: boolean; authMethod?: string };
       return j.loggedIn ? { status: "ok", detail: `logged in (${j.authMethod ?? "unknown"} subscription login)` } : { status: "fail", detail: "not logged in: run `claude` and /login" };
     }, refresh));
-    if (d.linearViewer) out.push(this.probe(d.trackerName ?? "linear", async () => ({ status: "ok", detail: `authenticated as ${(await d.linearViewer!()).name}` }), refresh));
+    for (const t of d.trackers?.() ?? []) out.push(this.probe(t.name, async () => ({ status: "ok", detail: `authenticated as ${(await t.viewer()).name}` }), refresh));
+    if (!d.trackers && d.linearViewer) out.push(this.probe(d.trackerName ?? "linear", async () => ({ status: "ok", detail: `authenticated as ${(await d.linearViewer!()).name}` }), refresh));
     if (d.ghAuth) out.push(this.probe("github", async () => (/Logged in/.test(await d.ghAuth!()) ? { status: "ok", detail: "gh is authenticated" } : { status: "fail", detail: "gh is not logged in" }), refresh));
     if (d.sandboxAvailable) out.push(this.probe("sandbox", async () => (d.sandboxAvailable!() ? { status: "ok", detail: "sandbox-exec available: project code runs confined" } : { status: "fail", detail: "sandbox-exec missing: project commands will be refused" }), refresh));
     if (d.specifyInstalled) out.push(this.probe("spec kit", async () => (d.specifyInstalled!() ? { status: "ok", detail: "specify installed" } : { status: "warn", detail: "specify not found (needed to onboard projects)" }), refresh));

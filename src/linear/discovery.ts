@@ -8,6 +8,7 @@ import { isRunnable, onboardingFor } from "../repo/registry.js";
 import type { LinearClient, LinearIssue } from "./client.js";
 import { enqueueOutbox } from "./outbox.js";
 import { evaluateEligibility } from "./eligibility.js";
+import type { TrackerSet } from "../tracker/index.js";
 import { resolveWorkflow } from "../workflows/resolver.js";
 import { WorkflowsConfig } from "../config/schema.js";
 
@@ -24,7 +25,9 @@ const specificity = (p: ProjectConfig) => (p.linear?.projectId || p.linear?.proj
  * itself (status writes go through the outbox once a job starts). Safe to run repeatedly and concurrently.
  */
 export async function discoverIssues(deps: {
-  db: FactoryDb; client: LinearClient; linear: LinearConfig; projects: ProjectConfig[]; logger: Logger; dryRun?: boolean;
+  db: FactoryDb; client?: LinearClient; linear: LinearConfig; projects: ProjectConfig[]; logger: Logger; dryRun?: boolean;
+  /** When projects live in different tracker connections: which client and names each one uses. Without it, `client` and `linear` serve every project. */
+  trackers?: TrackerSet;
   /** The profile's default pickup mode: projects in manual mode are never polled. */
   pickupMode?: "automatic" | "manual";
   /** Skip tickets of projects whose onboarding is not complete (the service turns this on). */
@@ -37,22 +40,25 @@ export async function discoverIssues(deps: {
   const bound = deps.projects.filter((p) => p.enabled && p.linear && pickupModeOf(p, { pickupMode: deps.pickupMode ?? "automatic" }) === "automatic"); // manual projects are started from the Board
 
   // Collect candidates per project; an issue may match several project bindings.
-  const matches = new Map<string, { issue: LinearIssue; projects: ProjectConfig[] }>();
-  if (bound.length && (!linear.statuses.readyForSpecification || !linear.labels.enabled)) {
-    // Jira: nothing is guessed. Until the pickup status and the opt-in label are mapped there is nothing to search for.
-    for (const p of bound) report.errors.push({ projectId: p.id, error: "the tracker mapping is incomplete: map the \"Ready for specification\" status and the \"enabled\" label in Settings → Tracker (or use manual mode)" });
-    return report;
-  }
+  const matches = new Map<string, { issue: LinearIssue; projects: ProjectConfig[]; names: LinearConfig }>();
   for (const p of bound) {
     try {
-      const issues = await client.listIssues({
+      const tid = deps.trackers?.idOf(p) ?? "";
+      const names = deps.trackers ? deps.trackers.names(tid) : linear;
+      if (!names.statuses.readyForSpecification || !names.labels.enabled) {
+        // Jira: nothing is guessed. Until the pickup status and the opt-in label are mapped there is nothing to search for.
+        report.errors.push({ projectId: p.id, error: "the tracker mapping is incomplete: map the \"Ready for specification\" status and the \"enabled\" label in Settings → Trackers (or use manual mode)" });
+        continue;
+      }
+      const issues = await (deps.trackers ? deps.trackers.client(tid) : client!).listIssues({
         teamKey: p.linear!.teamKey, projectId: p.linear!.projectId, projectName: p.linear!.projectName,
-        stateName: linear.statuses.readyForSpecification, labelName: linear.labels.enabled,
+        stateName: names.statuses.readyForSpecification, labelName: names.labels.enabled,
       });
       for (const issue of issues) {
-        const m = matches.get(issue.id) ?? { issue, projects: [] };
+        const k = `${tid}|${issue.id}`; // the same id in two connections is two different tickets
+        const m = matches.get(k) ?? { issue, projects: [], names };
         m.projects.push(p);
-        matches.set(issue.id, m);
+        matches.set(k, m);
       }
     } catch (e) {
       report.errors.push({ projectId: p.id, error: (e as Error).message });
@@ -60,7 +66,7 @@ export async function discoverIssues(deps: {
     }
   }
 
-  for (const { issue, projects } of matches.values()) {
+  for (const { issue, projects, names } of matches.values()) {
     // Most specific binding wins (team+project beats team-only); a tie is ambiguous and is not guessed at.
     const top = Math.max(...projects.map(specificity));
     const best = projects.filter((p) => specificity(p) === top);
@@ -70,7 +76,7 @@ export async function discoverIssues(deps: {
     }
     const project = best[0]!;
     const prior = db.select().from(jobs).where(and(eq(jobs.projectId, project.id), eq(jobs.externalId, issue.id))).orderBy(desc(jobs.createdAt)).limit(1).get();
-    const verdict = evaluateEligibility(issue, project, linear, { projectRunnable: isRunnable(db, project.id), existingJobStatus: prior?.status });
+    const verdict = evaluateEligibility(issue, project, names, { projectRunnable: isRunnable(db, project.id), existingJobStatus: prior?.status });
     if (verdict.eligible && deps.requireOnboarding) {
       const ob = onboardingFor(db, project);
       if (ob.status !== "ready") {
