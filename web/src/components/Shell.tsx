@@ -12,7 +12,7 @@ import { usePoll } from "@/hooks/usePoll";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { cn } from "@/lib/utils";
 
-const NAV = [["/", "Overview"], ["/board", "Board"], ["/jobs", "Jobs"], ["/health", "Health"], ["/settings", "Settings"]] as const;
+const NAV = [["/", "Overview"], ["/board", "Board"], ["/jobs", "Jobs"], ["/workflows", "Workflows"], ["/health", "Health"], ["/settings", "Settings"]] as const;
 
 export function Shell() {
   const { data: o, error, updatedAt, reload } = usePoll((signal) => api<Overview>("/api/overview", signal), 3000);

@@ -6,7 +6,7 @@ import type { Logger } from "pino";
 import type { LoadedConfig } from "../config/schema.js";
 import { STAGES } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
-import { agentInvocations, artifacts, decisions, jobs, linearOutbox, projects, stageExecutions, worktrees } from "../db/schema.js";
+import { agentInvocations, artifacts, decisions, jobs, linearOutbox, projects, stageExecutions, workflows, worktrees } from "../db/schema.js";
 import * as control from "../core/control.js";
 import type { Engine } from "../core/engine.js";
 import { answerJob, archiveJob, cancelJob, deleteJob, getJob, JobError, retryJob } from "../core/jobs.js";
@@ -21,6 +21,9 @@ import { registerBoardRoutes } from "./board-routes.js";
 import { registerBitbucketRoutes } from "./bitbucket-routes.js";
 import { registerJiraRoutes } from "./jira-routes.js";
 import { registerProfileRoutes } from "./profile-routes.js";
+import { registerWorkflowRoutes } from "./workflow-routes.js";
+import { validateDefinition } from "../workflows/validate.js";
+import { buildDefaultDefinition } from "../workflows/default.js";
 
 export interface ApiDeps {
   db: FactoryDb;
@@ -44,7 +47,7 @@ export interface ApiDeps {
 
 const ms = (d: Date | null | undefined) => (d ? d.getTime() : null);
 const jobRow = (j: typeof jobs.$inferSelect) => ({
-  id: j.id, key: j.externalKey, project: j.projectId, workflow: j.workflow, stage: j.stage, status: j.status, heldFromStage: j.heldFromStage,
+  id: j.id, key: j.externalKey, project: j.projectId, workflow: j.workflow, workflowId: j.workflowId, workflowVersion: j.workflowVersion, stage: j.stage, status: j.status, heldFromStage: j.heldFromStage,
   remediationAttempts: j.remediationAttempts, stageAttempts: j.stageAttempts, autonomous: j.autonomous, dryRun: j.dryRun, prUrl: j.prUrl,
   lastError: j.lastError, notBefore: ms(j.notBefore), createdAt: ms(j.createdAt), updatedAt: ms(j.updatedAt), archivedAt: ms(j.archivedAt),
 });
@@ -138,12 +141,19 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     const id = job.id;
     const execs = db.select().from(stageExecutions).where(eq(stageExecutions.jobId, id)).orderBy(asc(stageExecutions.id)).all();
     const outcomeOf = new Map(execs.map((e) => [e.id, e.outcome]));
+    // The workflow this job runs is its own frozen snapshot (never the library's current copy). Jobs from before workflows existed show the built-in one.
+    const snap = job.workflowSnapshotJson ? validateDefinition(JSON.parse(job.workflowSnapshotJson)) : undefined;
+    const definition = snap?.ok ? snap.definition : snap ? JSON.parse(job.workflowSnapshotJson!) : d.config ? buildDefaultDefinition(d.config.workflows, job.workflow) : null;
     return {
       job: jobRow(job),
+      workflow: {
+        id: job.workflowId ?? "default", version: job.workflowVersion ?? null, name: job.workflowId ? db.select({ n: workflows.name }).from(workflows).where(eq(workflows.id, job.workflowId)).get()?.n ?? job.workflowId : "Default Workflow",
+        definition, resolution: job.workflowResolutionJson ? JSON.parse(job.workflowResolutionJson) : null, valid: snap ? snap.ok : true,
+      },
       remediationCap: d.engine?.remediationCap(job) ?? d.config?.projects.projects.find((p) => p.id === job.projectId)?.overrides?.maxRemediationAttempts ?? d.config?.factory.maxRemediationAttempts ?? 3,
-      stageOrder: STAGES,
+      stageOrder: [...((definition?.stages as { id: string }[] | undefined)?.map((x) => x.id) ?? STAGES.filter((x) => x !== "COMPLETED")), "COMPLETED"],
       executions: execs
-        .map((e) => ({ id: e.id, stage: e.stage, attempt: e.attempt, outcome: e.outcome, error: clip(e.error), output: clip(e.outputJson, 1500), startedAt: ms(e.startedAt), finishedAt: ms(e.finishedAt) })),
+        .map((e) => ({ id: e.id, stage: e.stage, attempt: e.attempt, outcome: e.outcome, error: clip(e.error), output: clip(e.outputJson, 1500), gate: e.gateJson ? JSON.parse(e.gateJson) : null, route: e.routeJson ? JSON.parse(e.routeJson) : null, startedAt: ms(e.startedAt), finishedAt: ms(e.finishedAt) })),
       decisions: db.select().from(decisions).where(eq(decisions.jobId, id)).orderBy(asc(decisions.id)).all()
         .map((x) => ({ id: x.id, kind: x.kind, decision: clip(x.decision, 500), rationale: clip(x.rationale, 1500), actor: x.actor, at: ms(x.createdAt) })),
       invocations: db.select().from(agentInvocations).where(eq(agentInvocations.jobId, id)).orderBy(asc(agentInvocations.id)).all()
@@ -272,6 +282,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     try { return { ok: true, job: jobRow(retryJob(db, req.params.id, actor)) }; }
     catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
   });
+  if (d.config) registerWorkflowRoutes(app, { db, config: d.config, ...(d.settings ? { linear: d.settings.linear } : {}) }, requireToken);
   if (d.settings && d.config) registerBoardRoutes(app, { db, config: d.config, linear: d.settings.linear }, requireToken);
   if (d.bitbucket && d.config) registerBitbucketRoutes(app, { ...d.bitbucket, config: d.config }, requireToken);
   if (d.jira && d.config) registerJiraRoutes(app, { ...d.jira, db, config: d.config }, requireToken);

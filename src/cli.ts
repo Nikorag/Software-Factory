@@ -203,7 +203,7 @@ program
     const { config, handle } = openFactoryDb();
     syncProjects(handle.db, config.projects.projects);
     const logger = createLogger({ level: "warn" });
-    const r = await discoverIssues({ db: handle.db, client: linearClient(config), linear: config.linear, projects: config.projects.projects, logger, dryRun: opts.dryRun || config.factory.dryRun });
+    const r = await discoverIssues({ db: handle.db, client: linearClient(config), linear: config.linear, projects: config.projects.projects, logger, dryRun: opts.dryRun || config.factory.dryRun, workflows: config.workflows });
     for (const e of r.enqueued) console.log(`+ ${e.key} -> ${e.projectId} (${e.workflow}${e.autonomous ? ", autonomous" : ""})`);
     for (const s of r.skipped) console.log(`- ${s.key}: ${s.reasons.join("; ")}`);
     for (const e of r.errors) console.log(`! ${e.projectId}: ${e.error}`);

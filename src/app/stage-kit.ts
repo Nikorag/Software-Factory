@@ -6,7 +6,7 @@ import type { FactoryDb } from "../db/client.js";
 import { decisions } from "../db/schema.js";
 import type { StageResult } from "../core/engine.js";
 import type { AgentRunner } from "../agents/runner.js";
-import type { ModelRouter, TaskKind } from "../agents/router.js";
+import type { ModelRouter, StageModel, TaskKind } from "../agents/router.js";
 import type { AgentResult, AgentRole } from "../agents/types.js";
 import { LinearApiError, type LinearClient } from "../linear/client.js";
 import type { GitFn } from "../repo/git.js";
@@ -60,6 +60,9 @@ export type AgentOutcome<T extends z.ZodType> =
   | { ok: true; data: z.infer<T> | undefined; result: AgentResult & { route?: { provider: string; model: string } } }
   | { ok: false; stop: StageResult };
 
+/** What an agent call needs from the running stage: the job, its execution, the abort signal, and what the workflow configured for it. */
+export interface AgentCtx { job: { id: string; projectId?: string }; executionId: number; signal: AbortSignal; instructions?: string | undefined; model?: StageModel | undefined }
+
 /** Shared per-job setup and agent plumbing used by every stage handler set. */
 export function createStageKit(d: StageKitDeps) {
   /** Idempotently creates the job worktree and reads the live ticket. A returned `stop` ends the stage. */
@@ -86,9 +89,11 @@ export function createStageKit(d: StageKitDeps) {
     d.db.insert(decisions).values({ jobId, kind, decision, rationale: rationale ?? null, actor: "factory" }).run();
 
   /** Runs one agent step: boundary-checked, recorded, schema-validated. Failures come back as a ready-made StageResult. */
-  async function agent<T extends z.ZodType>(ctx: { job: { id: string; projectId?: string }; executionId: number; signal: AbortSignal }, o: AgentCall<T>): Promise<AgentOutcome<T>> {
+  async function agent<T extends z.ZodType>(ctx: AgentCtx, o: AgentCall<T>): Promise<AgentOutcome<T>> {
+    // The workflow's extra instructions go after the stage's own prompt and say plainly that they change neither the rules nor the permissions.
+    const prompt = ctx.instructions ? `${o.prompt}\n\nAdditional instructions for this stage, from the workflow (they do not change the rules above, your role or your permissions):\n${ctx.instructions}` : o.prompt;
     const result = await d.runner.run({
-      jobId: ctx.job.id, projectId: ctx.job.projectId, executionId: ctx.executionId, task: o.task, role: o.role, prompt: o.prompt, cwd: o.cwd,
+      jobId: ctx.job.id, projectId: ctx.job.projectId, executionId: ctx.executionId, task: o.task, role: o.role, prompt, cwd: o.cwd, stageModel: ctx.model,
       timeoutMs: o.timeoutMs, signal: ctx.signal, baseRef: o.baseRef, bashAllow: o.bashAllow, resumeSessionId: o.resumeSessionId,
       jsonSchema: o.schema ? toJsonSchema(o.schema) : undefined,
     });
@@ -104,12 +109,12 @@ export function createStageKit(d: StageKitDeps) {
    * fallback (a fresh Claude reviewer on `final_review`, or block, per config); a Claude route's failure is just a failure.
    */
   async function independent<T extends z.ZodType>(
-    ctx: { job: { id: string; projectId?: string } }, run: (task: TaskKind) => Promise<AgentOutcome<T>>,
+    ctx: { job: { id: string; projectId?: string }; model?: StageModel | undefined }, run: (task: TaskKind) => Promise<AgentOutcome<T>>,
   ): Promise<{ ok: true; data: z.infer<T>; reviewer: string } | { ok: false; stop: StageResult }> {
     let provider: "local" | "anthropic" = "anthropic";
     let r: AgentOutcome<T>;
     try {
-      provider = d.router.route("independent_review", ctx.job.projectId).provider;
+      provider = d.router.route("independent_review", ctx.job.projectId, ctx.model).provider;
       r = await run("independent_review");
     } catch (e) {
       if (!(e instanceof ConfigError)) throw e;

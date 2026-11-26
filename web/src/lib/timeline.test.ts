@@ -71,7 +71,7 @@ describe("job timeline", () => {
   it("ends with where a held job is stopped and why", () => {
     id = 0;
     const t = buildTimeline(detail([ex("FINAL_VALIDATION", "failed", 0, 30, { error: "FR-004 has no test" })], [], [], job({ stage: "NEEDS_ATTENTION", status: "waiting", heldFromStage: "FINAL_VALIDATION", lastError: "remediation attempts exhausted (3): FR-004 has no test" })));
-    expect(t.at(-1)).toMatchObject({ title: "Needs your attention", tone: "wait", nodeId: "fval", summary: "remediation attempts exhausted (3): FR-004 has no test" });
+    expect(t.at(-1)).toMatchObject({ title: "Needs your attention", tone: "wait", nodeId: "FINAL_VALIDATION", summary: "remediation attempts exhausted (3): FR-004 has no test" });
   });
   it("summarises outputs sensibly, and says nothing rather than guess at output that was cut short", () => {
     expect(summarise({ passes: 2, files: 5, workflow: "feature" })).toBe("2 implementation passes · 5 files changed · feature workflow");

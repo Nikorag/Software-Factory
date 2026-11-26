@@ -6,7 +6,8 @@ import { agentInvocations, decisions } from "../db/schema.js";
 import { git as realGit, type GitFn } from "../repo/git.js";
 import { findProtectedChanges } from "./guard.js";
 import { ROLE_PROFILE, rolePrompt } from "./roles.js";
-import type { ModelRouter, Route, TaskKind } from "./router.js";
+import { ConfigError } from "../config/load.js";
+import type { ModelRouter, Route, StageModel, TaskKind } from "./router.js";
 import type { AgentResult, AgentRole } from "./types.js";
 
 export interface RunStep {
@@ -23,6 +24,8 @@ export interface RunStep {
   bashAllow?: string[];
   jsonSchema?: Record<string, unknown>;
   resumeSessionId?: string;
+  /** The workflow stage's model choice, applied by the router on top of the configured route. */
+  stageModel?: StageModel;
 }
 
 /**
@@ -36,7 +39,9 @@ export class AgentRunner {
     const { db, router } = this.d;
     const git = this.d.git ?? realGit;
     const profile = ROLE_PROFILE[step.role];
-    const route = router.route(step.task, step.projectId); // fail on bad config before recording anything
+    const route = router.route(step.task, step.projectId, step.stageModel); // fail on bad config before recording anything
+    // Tools (file edits, shell) exist only in Claude Code: whatever a workflow asks for, a tool-using role never runs on the local model.
+    if (profile !== "read-only" && route.provider === "local") throw new ConfigError(`the ${step.role} role needs file and shell tools, so it cannot use the local model`);
     const logFile = join(this.d.logDir, step.jobId ?? "_unattached", `${Date.now()}-${step.role}.log`);
     const row = step.jobId
       ? db.insert(agentInvocations).values({
@@ -52,7 +57,7 @@ export class AgentRunner {
       role: step.role, profile, prompt: step.prompt, cwd: step.cwd, timeoutMs: step.timeoutMs, signal: step.signal,
       systemPrompt: rolePrompt(step.role), protectedPaths: this.d.protectedPaths, bashAllow: step.bashAllow,
       jsonSchema: step.jsonSchema, resumeSessionId: step.resumeSessionId, persistSession: profile === "implementer", logFile,
-    }, step.projectId);
+    }, step.projectId, step.stageModel);
 
     const violations: string[] = [];
     if (profile !== "read-only" && step.baseRef) {
