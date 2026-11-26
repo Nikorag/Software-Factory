@@ -19,6 +19,9 @@ Enforced (tested, including live against the real CLI): per-role permission prof
 3. **Subscription limits** are shared with your interactive Claude Code use. A burst of jobs can exhaust them; the adapter reports `rate_limited` and the engine retries with backoff.
 4. The factory never merges unless GitHub itself enforces required checks (see `docs/integrations.md`); private repositories on a free GitHub plan cannot, so they stay supervised.
 
+## Dependency scanning
+Every push, pull request and a weekly schedule run [Syft](https://github.com/anchore/syft) to build an SBOM (CycloneDX, attached to the run as `sbom.cdx.json`) and [Grype](https://github.com/anchore/grype) to scan it for known vulnerabilities. High and Critical findings fail the `Security` workflow; results also appear in the repository's Security tab. This covers known CVEs in dependencies only: it is not an audit of this project's own code.
+
 ## Secrets
 Every commit on a job branch is scanned for credentials (private keys, AWS/GitHub/Linear/Anthropic/Slack/Stripe/Google keys, JWTs, quoted credential assignments), across the **whole branch history**, not just the final diff. A hit stops the job for a human and never goes to automated remediation: a later commit cannot remove a secret from history, and history is what gets pushed. The finding never echoes the secret.
 
