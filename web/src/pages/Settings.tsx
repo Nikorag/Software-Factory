@@ -11,9 +11,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checks } from "@/components/Integrations";
 import { TrackerSetup } from "@/components/TrackerSetup";
 import { UpdateCheck } from "@/components/UpdateCheck";
+import { HubSetup } from "@/components/HubSetup";
 import { BitbucketSetup } from "@/components/BitbucketSetup";
 import { ProjectEditor } from "@/components/ProjectEditor";
-import { api } from "@/lib/api";
+import { api, inHubMode } from "@/lib/api";
 import { WorkflowSettings } from "@/pages/WorkflowSettings";
 import { ProfilesSettings } from "@/pages/ProfilesSettings";
 import type { GlobalSettings } from "@/lib/tasks";
@@ -92,6 +93,7 @@ export function Settings() {
       </TabsContent>
       <TabsContent value="profiles"><ProfilesSettings /></TabsContent>
       <TabsContent value="system" className="grid gap-4"><Card><CardHeader><CardTitle className="text-sm">Updates</CardTitle></CardHeader><CardContent><UpdateCheck /></CardContent></Card>
+        {!inHubMode() && <Card><CardHeader><CardTitle className="text-sm">Hub</CardTitle></CardHeader><CardContent><HubSetup /></CardContent></Card>}
         <Card><CardContent className="grid gap-1 text-sm">
         <div>Your settings are stored in <span className="font-mono text-xs">{info?.configDir ?? info?.homeConfigDir}</span></div>
         <div className="text-muted-foreground">{info?.usingDefaults ? "Using the shipped defaults until you change a setting." : "These are your own files: you can also edit projects.yaml by hand."}</div>

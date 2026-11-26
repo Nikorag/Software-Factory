@@ -53,6 +53,9 @@ export const RULES: readonly Rule[] = [
   block("PUT", "/api/jira/app", SECRET), block("POST", "/api/jira/connect", SECRET), block("POST", "/api/jira/disconnect", SECRET), block("POST", "/api/jira/site", SECRET),
   block("GET", "/api/jira/oauth/callback", LOCAL),
 
+  // ---- the hub connection itself: a key, and whether the hub may operate this factory. Only ever from the machine. ----
+  block("GET", "/api/hub", LOCAL), block("POST", "/api/hub/connect", SECRET), block("POST", "/api/hub/disconnect", LOCAL), block("PUT", "/api/hub/remote-access", "a hub session must not grant itself control"),
+
   // ---- profiles are separate local installs ----
   block("POST", "/api/profiles", LOCAL), block("DELETE", "/api/profiles/:name", LOCAL),
 

@@ -15,6 +15,7 @@ import { syncProjects } from "../repo/registry.js";
 import { listGhAccounts, type GhAccount } from "../github/accounts.js";
 import { ACTIONS, type ActionKind, type ProjectActions } from "../service/actions.js";
 import type { TaskManager } from "../service/tasks.js";
+import { connectHub, disconnectHub, hubStatus, setRemoteAccess } from "../hub/commands.js";
 
 export interface SettingsDeps {
   db: FactoryDb;
@@ -36,6 +37,23 @@ const fail = (reply: FastifyReply, e: unknown) => reply.code(e instanceof Config
 
 export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, requireToken: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>): void {
   const apply = (fresh: LoadedConfig) => { applyProjects(d.config, fresh); syncProjects(d.db, d.config.projects.projects); };
+
+  // ---- hub: report to a central Software Factory Hub. Local only (blocked in remote-policy): it handles an API key. ----
+  const hubDirs = () => ({ configDir: writableDir(d.config), dataDir: d.config.factory.dataDir });
+  app.get("/api/hub", async () => hubStatus(hubDirs()));
+  app.post<{ Body: { url?: unknown; key?: unknown; remoteAccess?: unknown } }>("/api/hub/connect", { preHandler: requireToken }, async (req, reply) => {
+    const { url, key, remoteAccess } = req.body ?? {};
+    if (typeof url !== "string" || typeof key !== "string") return reply.code(400).send({ error: "url and key are required" });
+    try { await connectHub({ url, key, remoteAccess: remoteAccess === true }, hubDirs()); return hubStatus(hubDirs()); }
+    catch (e) { return reply.code(400).send({ error: (e as Error).message }); }
+  });
+  app.post("/api/hub/disconnect", { preHandler: requireToken }, async (_req, reply) => {
+    try { disconnectHub(hubDirs()); return hubStatus(hubDirs()); } catch (e) { return reply.code(409).send({ error: (e as Error).message }); }
+  });
+  app.put<{ Body: { on?: unknown } }>("/api/hub/remote-access", { preHandler: requireToken }, async (req, reply) => {
+    if (typeof req.body?.on !== "boolean") return reply.code(400).send({ error: "on must be true or false" });
+    try { setRemoteAccess(req.body.on, hubDirs()); return hubStatus(hubDirs()); } catch (e) { return reply.code(409).send({ error: (e as Error).message }); }
+  });
 
   // ---- setup wizard ----
   app.get("/api/setup", async () => ({

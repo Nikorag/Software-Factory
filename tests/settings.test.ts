@@ -219,3 +219,21 @@ describe("workflow settings (global) and per-project overrides", () => {
     expect((await send(s.app, "PUT", "/api/settings/global", UI, global({ maxConcurrentJobs: 50 }))).statusCode).toBe(400);
   });
 });
+
+describe("hub API (local only; never touches the network or keychain in these cases)", () => {
+  it("reports not connected, and refuses bad input before contacting anything", async () => {
+    const s = server();
+    const st = await send(s.app, "GET", "/api/hub", HOST);
+    expect(st.statusCode).toBe(200);
+    expect(st.json()).toMatchObject({ enabled: false, remoteAccess: false });
+    const bad = await send(s.app, "POST", "/api/hub/connect", UI, { url: "https://hub.example.com", key: "not-a-key" });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toMatch(/sfh_/);
+    expect((await send(s.app, "POST", "/api/hub/connect", UI, { url: "http://hub.example.com", key: "x" })).statusCode).toBe(400);
+    expect((await send(s.app, "PUT", "/api/hub/remote-access", UI, { on: true })).statusCode).toBe(409); // not connected yet
+  });
+  it("requires the UI header for changes", async () => {
+    const s = server();
+    expect((await send(s.app, "POST", "/api/hub/disconnect", HOST)).statusCode).toBeGreaterThanOrEqual(400);
+  });
+});

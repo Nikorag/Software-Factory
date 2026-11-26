@@ -28,7 +28,7 @@ export interface JobDetail {
 }
 export interface Project {
   host?: "github" | "bitbucket"; bitbucketRepo?: string | null; bitbucketCredential?: string;
-  id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; overrides: { maxImplementationPasses?: number; pickupMode?: "automatic" | "manual"; maxConcurrentJobs?: number; maxRemediationAttempts?: number; models?: Partial<import("./tasks").Routes> } | null;
+  id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; overrides: { maxImplementationPasses?: number; pickupMode?: "automatic" | "manual"; maxConcurrentJobs?: number; maxRemediationAttempts?: number; agentAccess?: "restricted" | "unrestricted"; models?: Partial<import("./tasks").Routes> } | null;
   tracker?: string | null; linear: { teamKey: string; projectName?: string } | null; commands: Record<string, string | undefined>;
   validation: { ok: boolean; protection: string; findings: string[] } | null; activeJobs: number;
   onboarding?: { status: "ready" | "in-progress" | "not-started"; steps: { id: string; label: string; ok: boolean; detail: string }[] };
