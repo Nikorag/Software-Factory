@@ -19,7 +19,14 @@ const DEFER_RULE = `Never get stuck on work only a person can do (manual or visu
 
 export interface Gaps { appended: number; summary: string }
 
-export function implementPrompt(o: { featureDir: string; wrapper: string; checks: string[]; pass: number; ticket?: string; gaps?: Gaps; previousFailures?: string[] }): string {
+/** Shown only when the project's agent access is unrestricted: the usual "check tool only" limits do not apply, and an old conversation's "I cannot run X" must not stick. */
+const unrestrictedNote = (wrapper: string, checks: string[]) =>
+  `You have unrestricted access in this worktree: run whatever commands you need, including the project's own tooling and build tools, and read how the project's scripts invoke them (for example tests/run.sh names the exact path of its tools). The factory's check tool (${checks.map((c) => `\`${wrapper} ${c}\``).join(", ")}) is still the authoritative result, so finish by running it. If earlier in this conversation you concluded that you cannot run something, that no longer holds: try it before deferring.`;
+
+/** When recorded expectations encode the old behaviour that the ticket deliberately changes, regenerating them is the fix. */
+const FIXTURE_NOTE = "If checks fail because recorded expectations (golden files, snapshots, fixtures, oracles) encode the OLD behaviour that this ticket deliberately changes, regenerating them with the project's own tooling is a fix, not weakening a test. Do that, commit the regenerated files, and say so in your summary. Only do it when the ticket or spec calls for the changed behaviour; if the new output looks wrong, treat it as a bug instead.";
+
+export function implementPrompt(o: { featureDir: string; wrapper: string; checks: string[]; pass: number; ticket?: string; gaps?: Gaps; previousFailures?: string[]; unrestricted?: boolean }): string {
   const again = o.pass > 1 && o.gaps
     ? `This is pass ${o.pass}. The completeness check found work remaining: ${o.gaps.summary}\n${o.gaps.appended > 0 ? `It appended ${o.gaps.appended} new task(s) to tasks.md: do those.` : "It appended no new tasks, so close the gaps above directly. If a gap is something you cannot do here, do not try again: defer it (see below) and say why."}`
     : "";
@@ -29,7 +36,7 @@ export function implementPrompt(o: { featureDir: string; wrapper: string; checks
       again,
       o.ticket ?? "",
       failuresText(o.previousFailures),
-      `Verify your work ONLY with the factory's check tool, one check per command: ${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}. It runs the project's own command inside a sandbox with no network. Do not run npm, pnpm, yarn, node, python or any other command to execute code: they are refused. You cannot install dependencies; if one is missing, say so in your summary instead of working around it.`,
+      o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : `Verify your work ONLY with the factory's check tool, one check per command: ${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}. It runs the project's own command inside a sandbox with no network. Do not run npm, pnpm, yarn, node, python or any other command to execute code: they are refused. You cannot install dependencies; if one is missing, say so in your summary instead of working around it.`,
       "Write or update tests for every behaviour you change, and never delete, skip or weaken an existing test to make a check pass.",
       "Commit coherent changes as you go with `git add` and `git commit`. You may tick finished tasks in tasks.md. Do not touch CI workflows, secrets, or the .claude and .specify directories.",
       `Tasks already tagged \`[HUMAN]\` are for a person: skip them. ${DEFER_RULE}`,
@@ -74,11 +81,12 @@ export const claudeReviewPrompt = (o: { ticket: string; spec: string; stat: stri
   "For EACH earlier finding give a verdict in `earlier`: valid or not, with evidence. Then report any further blocker/major problems in `findings`. Judge on evidence; do not rubber-stamp and do not invent problems. Never block on something only a person can verify; that is listed on the pull request.",
 ].filter(Boolean).join("\n\n");
 
-export const implRemediationPrompt = (o: { featureDir: string; wrapper: string; checks: string[]; findings: unknown[]; ticket?: string; history?: string; previousFailures?: string[] }) => [
+export const implRemediationPrompt = (o: { featureDir: string; wrapper: string; checks: string[]; findings: unknown[]; ticket?: string; history?: string; previousFailures?: string[]; unrestricted?: boolean }) => [
   "Fix the findings below in this worktree. Judge each on its merits: fix the valid ones, and reject any that are wrong with concrete evidence. Never delete, skip or weaken a test to make a check pass.",
   o.ticket ?? "",
   failuresText(o.previousFailures),
-  `Verify with the factory's check tool only (${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}); other code-running commands are refused. Commit your fixes with \`git add\` and \`git commit\`.`,
+  o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : `Verify with the factory's check tool only (${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}); other code-running commands are refused. Commit your fixes with \`git add\` and \`git commit\`.`,
+  FIXTURE_NOTE,
   `Findings:\n${JSON.stringify(o.findings, null, 2)}`,
   o.history ?? "",
   `If a finding can only be resolved by a person, do not reject it: defer it. ${DEFER_RULE} For a finding about open tasks in ${o.featureDir}/tasks.md, defer the task ids. These can never be deferred and must be fixed: failing project checks (check:*), weakened or deleted tests, protected paths, uncommitted changes and conflict markers.`,

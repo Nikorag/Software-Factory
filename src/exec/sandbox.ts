@@ -56,6 +56,9 @@ export function buildProfile(o: SandboxOptions): string {
     // Credential stores stay unreadable even if a toolchain entry above would have covered them.
     `(deny file-read-data ${sub([".ssh", ".aws", ".gnupg", ".claude", ".config/gh", ".software-factory", "Library/Keychains"].flatMap((r) => spellings(join(home, r))))})`,
     `(allow file-read-data ${sub(wt)})`, // the worktree is always readable even if it lives under .software-factory
+    // A linked worktree's repository (its shared .git) is readable even when it lives under ~/.software-factory, which the rule above
+    // denies: without this `git show HEAD:file` fails inside tests with "not a git repository". Only that one .git directory, not its parent.
+    ...(o.gitCommonDir ? [`(allow file-read-data ${sub(spellings(o.gitCommonDir))})`] : []),
   ].filter(Boolean).join("\n");
 }
 

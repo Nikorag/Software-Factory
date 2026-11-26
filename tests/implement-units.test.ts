@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { addedLines, changedFiles, codeDiff } from "../src/implement/diff.js";
 import { buildReport, isSecuritySensitive } from "../src/implement/handlers.js";
-import { extractCriteria, implementPrompt } from "../src/implement/prompts.js";
+import { extractCriteria, implementPrompt, implRemediationPrompt } from "../src/implement/prompts.js";
 import { historyText, HUMAN_ONLY_REASON, isDeferrable, openTasks, sameFinding } from "../src/implement/history.js";
 import { humanItems } from "../src/delivery/handlers.js";
 import { scanForSecrets } from "../src/implement/secrets.js";
@@ -153,5 +153,20 @@ describe("human deferral and fix-cycle memory (pure helpers)", () => {
     expect(none).toContain("migration missing"); expect(none).toMatch(/appended no new tasks/); expect(none).not.toMatch(/appended \d+ new task/);
     expect(implementPrompt({ ...base, gaps: { appended: 2, summary: "edge cases" } })).toMatch(/appended 2 new task\(s\) to tasks\.md: do those/);
     expect(implementPrompt({ ...base, pass: 1 })).not.toMatch(/This is pass/);
+  });
+});
+
+describe("prompts follow the project's agent access", () => {
+  const r = { featureDir: "specs/x", wrapper: "/w/exec", checks: ["test"], findings: [{ id: "check:test" }] };
+  it("restricted: only the check tool; unrestricted: free to run tools, and told old 'cannot run' conclusions no longer hold", () => {
+    expect(implRemediationPrompt(r)).toMatch(/check tool only/);
+    expect(implRemediationPrompt(r)).not.toMatch(/unrestricted access/);
+    const u = implRemediationPrompt({ ...r, unrestricted: true });
+    expect(u).toMatch(/unrestricted access/);
+    expect(u).toMatch(/no longer holds/);
+    expect(u).not.toMatch(/other code-running commands are refused/);
+  });
+  it("tells the agent that regenerating fixtures for a deliberate change is a fix, in both modes", () => {
+    for (const unrestricted of [false, true]) expect(implRemediationPrompt({ ...r, unrestricted })).toMatch(/regenerating them with the project's own tooling is a fix/);
   });
 });

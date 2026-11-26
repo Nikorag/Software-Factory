@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -90,6 +91,23 @@ sb("sandboxed project commands (real sandbox-exec)", () => {
     expect(r.ok).toBe(true);
     const tcp = await run(w, `node -e "require('net').createServer().listen(0,'127.0.0.1',()=>{console.log('TCP-LISTEN-OK');process.exit(0)}).on('error',e=>{console.log('TCP-BLOCKED '+e.code);process.exit(3)})"`);
     expect(tcp.tail).toContain("TCP-BLOCKED");
+  });
+  it("git works inside a linked worktree whose repository lives under ~/.software-factory (a credential-store directory)", async () => {
+    const w = world();
+    const repo = join(w.home, ".software-factory", "projects", "app");
+    mkdirSync(repo, { recursive: true });
+    const g = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...a], { cwd, encoding: "utf8" });
+    g(repo, "init", "-q", "-b", "main"); writeFileSync(join(repo, "f.txt"), "FROM-HEAD"); g(repo, "add", "."); g(repo, "commit", "-q", "-m", "init");
+    const wt = join(w.home, ".software-factory", "workspaces", "app", "_check"); mkdirSync(join(wt, ".."), { recursive: true });
+    g(repo, "worktree", "add", "-q", "--detach", wt);
+    const common = realpathSync(join(repo, ".git"));
+    const r = await run(w, "git show HEAD:f.txt", { worktree: wt, sandbox: { home: w.home, gitCommonDir: common } });
+    expect(r.tail).toContain("FROM-HEAD");
+    expect(r.ok).toBe(true);
+    // ...but the rest of ~/.software-factory (other projects, the database) stays unreadable.
+    mkdirSync(join(w.home, ".software-factory", "database"), { recursive: true }); writeFileSync(join(w.home, ".software-factory", "database", "factory.sqlite"), "DB-CANARY");
+    const leak = await run(w, `cat ${w.home}/.software-factory/database/factory.sqlite`, { worktree: wt, sandbox: { home: w.home, gitCommonDir: common } });
+    expect(leak.tail).not.toContain("DB-CANARY");
   });
   it("allows network only for install", async () => {
     const w = world();

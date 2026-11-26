@@ -23,6 +23,8 @@ export interface ImplDeps extends StageKitDeps {
   dataDir: string;
   /** How many implement-and-converge rounds a project allows (live: read each stage). */
   maxPasses?: (projectId: string) => number;
+  /** The project's agent access (live): decides whether prompts describe the check-tool-only limits. */
+  agentAccess?: (projectId: string) => "restricted" | "unrestricted";
   settings: { protectedPaths: string[]; commandTimeoutSeconds: number; sandbox: { required: boolean; readAllow?: string[]; writeAllow?: string[] } };
   runCommand?: typeof runProjectCommand; // injectable for tests
 }
@@ -192,7 +194,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       const before = await head(p.cwd);
       const r = await implementer(ctx, {
         task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: ImplementResult, bashAllow: [wrapper], resumeSessionId: session,
-        prompt: implementPrompt({ featureDir: p.featureDir, wrapper, checks, pass, gaps, ticket: p.ticket, previousFailures: pass === 1 ? failures : undefined }),
+        prompt: implementPrompt({ featureDir: p.featureDir, wrapper, checks, pass, gaps, ticket: p.ticket, previousFailures: pass === 1 ? failures : undefined, unrestricted: d.agentAccess?.(project.id) === "unrestricted" }),
       }, p.cwd, p.info.base);
       if (!r.ok) return r.stop;
       session = r.result.sessionId ?? session;
@@ -340,7 +342,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     const before = await head(p.cwd);
     const r = await implementer(ctx, {
       task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 40 * MIN, schema: ImplRemediation, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id),
-      prompt: implRemediationPrompt({ featureDir: p.featureDir, wrapper, checks, findings, ticket: p.ticket, history: await reviewHistory(ctx.job.id, p.cwd), previousFailures: previousFailures(d.db, ctx.job.id, "REMEDIATION") }),
+      prompt: implRemediationPrompt({ unrestricted: d.agentAccess?.(project.id) === "unrestricted", featureDir: p.featureDir, wrapper, checks, findings, ticket: p.ticket, history: await reviewHistory(ctx.job.id, p.cwd), previousFailures: previousFailures(d.db, ctx.job.id, "REMEDIATION") }),
     }, p.cwd, p.info.base);
     if (!r.ok) return r.stop;
     const byId = (id: string) => findings.find((f) => f.id === id) ?? { id, severity: "minor", issue: id };
