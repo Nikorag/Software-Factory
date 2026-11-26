@@ -1,3 +1,5 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Maximize2, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { EDGES, H, NODES, W, type Flow, type NodeState } from "@/lib/pipeline";
 
@@ -21,11 +23,83 @@ const boxClass = (st: NodeState, fix: boolean, used: boolean) =>
     st === "fail" && "fill-[#1F1214] stroke-destructive", st === "wait" && "fill-[#1F1A0E] stroke-wait [stroke-dasharray:5_3]",
     fix && !used && st === "idle" && "[stroke-dasharray:4_3]", fix && used && "fill-[#211B10] stroke-[#B7862A] [stroke-dasharray:none]");
 
+const MAX_ZOOM = 3;
+type View = { s: number; x: number; y: number };
+
+/** The chart lives in its own canvas: drag to pan in any direction, pinch (or ctrl/⌘-wheel, or the buttons) to zoom. The page itself keeps scrolling everywhere else. */
+function usePanZoom() {
+  const box = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: W_FULL, h: 0 });
+  const [view, setView] = useState<View | null>(null); // null = fitted to width
+  const fit = Math.min(1, size.w / W_FULL);
+  const height = Math.round(Math.min(H_FULL, Math.max(H_FULL * fit, 340)));
+  useEffect(() => {
+    const el = box.current; if (!el) return;
+    const measure = () => setSize({ w: el.clientWidth || W_FULL, h: el.clientHeight });
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure); ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const clamp = useCallback((v: View): View => {
+    const s = Math.min(MAX_ZOOM, Math.max(fit, v.s)), cw = W_FULL * s, ch = H_FULL * s;
+    const axis = (pos: number, content: number, port: number) => (content <= port ? (port - content) / 2 : Math.min(0, Math.max(port - content, pos)));
+    return { s, x: axis(v.x, cw, size.w), y: axis(v.y, ch, height) };
+  }, [fit, size.w, height]);
+  const cur = clamp(view ?? { s: fit, x: 0, y: 0 });
+  const zoomAt = useCallback((factor: number, px: number, py: number) => setView((prev) => {
+    const c = clamp(prev ?? { s: fit, x: 0, y: 0 }), s = Math.min(MAX_ZOOM, Math.max(fit, c.s * factor)), k = s / c.s;
+    return clamp({ s, x: px - (px - c.x) * k, y: py - (py - c.y) * k });
+  }), [clamp, fit]);
+
+  const pts = useRef(new Map<number, { x: number; y: number }>());
+  const gesture = useRef<{ moved: boolean; dist: number; ox: number; oy: number } | null>(null);
+  const local = (e: { clientX: number; clientY: number }) => { const r = box.current!.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const handlers = {
+    onPointerDown: (e: React.PointerEvent) => {
+      pts.current.set(e.pointerId, local(e));
+      gesture.current = { moved: pts.current.size > 1, dist: 0, ox: e.clientX, oy: e.clientY };
+      if (pts.current.size === 2) { const [a, b] = [...pts.current.values()]; gesture.current.dist = Math.hypot(a!.x - b!.x, a!.y - b!.y); }
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      const g = gesture.current, prev = pts.current.get(e.pointerId); if (!g || !prev) return;
+      const now = local(e);
+      if (!g.moved && Math.hypot(e.clientX - g.ox, e.clientY - g.oy) < 6) return; // still a tap
+      if (!g.moved) { g.moved = true; try { box.current!.setPointerCapture(e.pointerId); } catch { /* not capturable */ } }
+      if (pts.current.size >= 2) {
+        pts.current.set(e.pointerId, now);
+        const [a, b] = [...pts.current.values()], d = Math.hypot(a!.x - b!.x, a!.y - b!.y);
+        if (g.dist > 0) zoomAt(d / g.dist, (a!.x + b!.x) / 2, (a!.y + b!.y) / 2);
+        g.dist = d;
+      } else {
+        pts.current.set(e.pointerId, now);
+        setView((v) => { const c = clamp(v ?? { s: fit, x: 0, y: 0 }); return clamp({ ...c, x: c.x + now.x - prev.x, y: c.y + now.y - prev.y }); });
+      }
+    },
+    onPointerUp: (e: React.PointerEvent) => { pts.current.delete(e.pointerId); if (pts.current.size === 0) setTimeout(() => { gesture.current = null; }, 0); else if (gesture.current) gesture.current.dist = 0; },
+    onPointerCancel: (e: React.PointerEvent) => { pts.current.delete(e.pointerId); if (pts.current.size === 0) gesture.current = null; },
+    // A drag or pinch must not also select the node it ended on.
+    onClickCapture: (e: React.MouseEvent) => { if (gesture.current?.moved) { e.stopPropagation(); e.preventDefault(); } },
+  };
+  useEffect(() => {
+    const el = box.current; if (!el) return;
+    const wheel = (e: WheelEvent) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); const p = local(e); zoomAt(Math.exp(-e.deltaY * 0.01), p.x, p.y); };
+    el.addEventListener("wheel", wheel, { passive: false });
+    return () => el.removeEventListener("wheel", wheel);
+  }, [zoomAt]);
+  return { box, handlers, view: cur, height, zoomAt, reset: () => setView(null), center: { x: size.w / 2, y: height / 2 }, zoomed: cur.s > fit + 0.001 };
+}
+const W_FULL = 1180, H_FULL = 640;
+
 export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: string | null; onSelect: (id: string) => void }) {
   const st = (id: string): NodeState => flow.state[id] ?? "idle";
+  const pz = usePanZoom();
+  const btn = "flex size-8 items-center justify-center rounded-md border border-input bg-background/90 text-muted-foreground hover:text-foreground";
   return (
-    <div className="overflow-x-auto pb-1">
-      <svg viewBox="0 0 1180 640" role="img" aria-label="Pipeline flow chart" className="mx-auto block h-auto w-full min-w-[1088px] max-w-[1180px]">
+    <div className="relative">
+      <div ref={pz.box} data-testid="flow-canvas" style={{ height: pz.height }} className="relative touch-none select-none overflow-hidden overscroll-contain rounded-lg" {...pz.handlers}>
+        <div style={{ width: W_FULL, height: H_FULL, transform: `translate(${pz.view.x}px, ${pz.view.y}px) scale(${pz.view.s})`, transformOrigin: "0 0" }}>
+      <svg viewBox="0 0 1180 640" width={W_FULL} height={H_FULL} role="img" aria-label="Pipeline flow chart" className="block">
         <defs>
           {([["m-off", "fill-[#3F3F46]"], ["m-ok", "fill-ok"], ["m-run", "fill-run"], ["m-loop", "fill-loop"]] as const).map(([id, c]) => (
             <marker key={id} id={id} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" className={c} /></marker>
@@ -70,6 +144,13 @@ export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: 
           );
         })}
       </svg>
+        </div>
+      </div>
+      <div className="absolute bottom-2 right-2 flex gap-1.5">
+        <button type="button" className={btn} aria-label="Zoom out" onClick={() => pz.zoomAt(1 / 1.4, pz.center.x, pz.center.y)}><Minus className="size-4" /></button>
+        <button type="button" className={btn} aria-label="Zoom in" onClick={() => pz.zoomAt(1.4, pz.center.x, pz.center.y)}><Plus className="size-4" /></button>
+        {pz.zoomed ? <button type="button" className={btn} aria-label="Fit chart to screen" onClick={pz.reset}><Maximize2 className="size-4" /></button> : null}
+      </div>
     </div>
   );
 }

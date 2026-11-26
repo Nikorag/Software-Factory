@@ -22,7 +22,7 @@ export function Peek({ jobId, runs, activeId, onActive, onClose, wrap, onWrap, c
   const move = (by: number) => { const i = runs.findIndex((r) => r.id === active.id); const n = runs[(i + by + runs.length) % runs.length]; if (n) onActive(n.id); };
 
   const tabStrip = runs.length > 1 ? (
-  <div ref={tabs} role="tablist" aria-label="Agent sessions" className={cn("flex shrink-0 overflow-x-auto border-b text-xs", TERM.line)}
+  <div ref={tabs} role="tablist" aria-label="Agent sessions" className={cn("flex max-h-24 shrink-0 flex-wrap overflow-y-auto border-b text-xs", TERM.line)}
     onKeyDown={(e) => { if (e.key === "ArrowRight") { e.preventDefault(); move(1); } else if (e.key === "ArrowLeft") { e.preventDefault(); move(-1); } }}>
     {runs.map((r, i) => (
       <button key={r.id} type="button" role="tab" aria-selected={r.id === active.id} tabIndex={r.id === active.id ? 0 : -1} onClick={() => onActive(r.id)}
