@@ -20,12 +20,12 @@ import { startAction, TaskOutput } from "./TaskRunner";
 
 const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-export interface Form { passes: string; host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; access: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; tracker: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
-const blank = (): Form => ({ passes: "", host: "github", bbRepo: "", bbCred: "default", pickup: "", access: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", tracker: "", team: "", lproject: "", enabled: true, commands: {} });
+export interface Form { passes: string; host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; access: string; loopback: boolean; specKit: boolean; bashAllow: string; lprojectId: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; tracker: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
+const blank = (): Form => ({ passes: "", host: "github", bbRepo: "", bbCred: "default", pickup: "", access: "", loopback: false, specKit: true, bashAllow: "", lprojectId: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", tracker: "", team: "", lproject: "", enabled: true, commands: {} });
 const fromProject = (p: Project): Form => ({
   host: p.host ?? "github", bbRepo: p.bitbucketRepo ?? "", bbCred: p.bitbucketCredential ?? "default",
   passes: p.overrides?.maxImplementationPasses?.toString() ?? "",
-  pickup: p.overrides?.pickupMode ?? "", access: p.overrides?.agentAccess ?? "", conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
+  pickup: p.overrides?.pickupMode ?? "", access: p.overrides?.agentAccess ?? "", loopback: p.allowLoopback ?? false, specKit: p.specKit ?? true, bashAllow: (p.agentBashAllow ?? []).join("\n"), lprojectId: p.linear?.projectId ?? "", conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
   id: p.id, name: p.name, source: p.managed ? "github" : "path", repo: p.githubRepo ?? "", path: p.managed ? "" : p.repository, account: p.githubAccount ?? "", branch: p.defaultBranch, autonomy: p.autonomy,
   tracker: p.tracker ?? "", team: p.linear?.teamKey ?? "", lproject: p.linear?.projectName ?? "", enabled: p.enabled, commands: Object.fromEntries(CMDS.map((k) => [k, p.commands[k] ?? ""])),
 });
@@ -72,8 +72,9 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
       ...(f.host === "bitbucket"
         ? { bitbucket: { repo: f.bbRepo.trim() || undefined, credential: f.bbCred }, ...(f.source === "path" ? { repository: f.path.trim() } : {}) }
         : f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
+      allowLoopback: f.loopback, specKit: f.specKit, agentBashAllow: f.bashAllow.split("\n").map((l) => l.trim()).filter(Boolean),
       overrides: { maxImplementationPasses: f.passes ? Number(f.passes) : undefined, pickupMode: f.pickup || undefined, agentAccess: (f.access || undefined) as "restricted" | "unrestricted" | undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models },
-      ...(f.team ? { linear: { teamKey: f.team, projectName: f.lproject || undefined } } : {}),
+      ...(f.team ? { linear: { teamKey: f.team, projectName: f.lproject || undefined, projectId: f.lprojectId.trim() || undefined } } : {}),
     });
     setBusy(false);
     if (r.ok) { setSaved(true); onSaved(id); } else setErr(r.error);
@@ -184,11 +185,19 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
             {team?.projects.length ? <Select value={f.lproject || "__all"} onValueChange={(v) => set("lproject", v === "__all" ? "" : v)}><SelectTrigger id="pe-lp" aria-label="linear project"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="__all">{words.whole}</SelectItem>{team.projects.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent></Select>
               : <Input id="pe-lp" value={f.lproject} onChange={(e) => set("lproject", e.target.value)} placeholder="optional" />}</div>
+          <div className="grid gap-1.5"><Label htmlFor="pe-lpid">Tracker project id</Label><Input id="pe-lpid" className="font-mono text-xs" value={f.lprojectId} onChange={(e) => set("lprojectId", e.target.value)} placeholder="optional: use instead of the name" /></div>
         </div>
       </Section>
       <Separator />
       <Section title="Commands" hint="Run by the factory in a throwaway worktree, sandboxed. A test command is required before it will implement anything: use the project's own CI as the guide, then press “Run checks” to prove they work.">
         <div className="grid gap-3 sm:grid-cols-2">{CMDS.map((k) => <div key={k} className="grid gap-1.5"><Label htmlFor={`pe-c-${k}`} className="capitalize">{k}</Label><Input id={`pe-c-${k}`} className="font-mono text-xs" value={f.commands[k] ?? ""} onChange={(e) => set("commands", { ...f.commands, [k]: e.target.value })} placeholder={k === "test" ? "npm test" : ""} /></div>)}</div>
+        <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={f.loopback} onChange={(e) => set("loopback", e.target.checked)} />
+          <span>Allow local network in tests<span className="block text-xs text-muted-foreground">Lets test, lint and build commands use TCP on this machine only (e.g. tests that start an in-process database or mock server). Nothing outside this machine is reachable. Off by default.</span></span></label>
+        <div className="grid gap-1.5"><Label htmlFor="pe-bash">Extra commands the agent may run</Label>
+          <textarea id="pe-bash" rows={3} className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs" placeholder={"GOLDEN_OUT=/tmp/golden godot --headless"} value={f.bashAllow} onChange={(e) => set("bashAllow", e.target.value)} />
+          <span className="text-xs text-muted-foreground">One command prefix per line. Only applies while agent access is restricted.</span></div>
+        <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={f.specKit} onChange={(e) => set("specKit", e.target.checked)} />
+          <span>Use the SpecKit specification workflow<span className="block text-xs text-muted-foreground">On by default. Off skips spec generation for this project.</span></span></label>
         {noTest ? <p className="text-sm text-loop">No test command: the factory will not implement changes here yet.</p> : null}
       </Section>
 

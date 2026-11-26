@@ -237,3 +237,26 @@ describe("hub API (local only; never touches the network or keychain in these ca
     expect((await send(s.app, "POST", "/api/hub/disconnect", HOST)).statusCode).toBeGreaterThanOrEqual(400);
   });
 });
+
+describe("saving a project from the form keeps fields the form does not edit", () => {
+  it("keeps agentBashAllow and allowLoopback set by hand", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    upsertProject(app1, dir);
+    const file = join(dir, "projects.yaml");
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^ {4}commands:/m, "    allowLoopback: true\n    agentBashAllow:\n      - godot --headless\n    commands:"));
+    const c = upsertProject({ ...app1, name: "Renamed" }, dir);
+    expect(c.projects.projects[0]!).toMatchObject({ name: "Renamed", allowLoopback: true, agentBashAllow: ["godot --headless"] });
+  });
+});
+
+describe("advanced factory settings", () => {
+  it("writes the safety keys into factory.yaml, keeps comments, and refuses a bad value", async () => {
+    const { updateAdvancedSettings, advancedSettingsOf } = await import("../src/config/store.js");
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    const before = advancedSettingsOf(loadConfig(dir));
+    const next = { ...before, agentAccess: "unrestricted" as const, dryRun: true, sandboxRequired: false, logRetentionDays: 7, protectedPaths: [".env", ".git/**"] };
+    const c = updateAdvancedSettings(next, dir);
+    expect(advancedSettingsOf(c)).toMatchObject({ agentAccess: "unrestricted", dryRun: true, sandboxRequired: false, logRetentionDays: 7, protectedPaths: [".env", ".git/**"] });
+    expect(() => updateAdvancedSettings({ ...next, commandTimeoutSeconds: 1 }, dir)).toThrow();
+  });
+});

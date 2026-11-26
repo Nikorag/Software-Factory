@@ -72,6 +72,15 @@ sb("sandboxed project commands (real sandbox-exec)", () => {
     expect(r.tail).toContain("NET-BLOCKED");
     expect(r.ok).toBe(false);
   });
+  it("with loopback enabled, a test can listen and connect on 127.0.0.1, but still cannot reach anything external", async () => {
+    const w = world();
+    const local = `node -e "const net=require('net');const s=net.createServer(c=>c.end('PONG')).listen(0,'127.0.0.1',()=>{net.connect(s.address().port,'127.0.0.1').on('data',d=>{console.log(String(d));s.close();process.exit(0)})}).on('error',e=>{console.log('TCP-BLOCKED '+e.code);process.exit(3)})"`;
+    const r = await run(w, local, { sandbox: { home: w.home, loopback: true } });
+    expect(r.tail).toContain("PONG");
+    expect(r.ok).toBe(true);
+    const ext = await run(w, `node -e "const s=require('net').connect(80,'93.184.216.34');s.setTimeout(3000,()=>{console.log('NET-TIMEOUT');process.exit(3)});s.on('connect',()=>{console.log('NET-OK');process.exit(0)}).on('error',e=>{console.log('NET-BLOCKED '+e.code);process.exit(3)})"`, { sandbox: { home: w.home, loopback: true } });
+    expect(ext.tail).not.toContain("NET-OK");
+  });
   it("lets a tool use a Unix-domain socket in the temp dir (tsx needs one) while TCP, even loopback, stays blocked", async () => {
     const w = world();
     const sock = `/tmp/factory-sbx-${process.pid}-${Date.now()}.sock`;

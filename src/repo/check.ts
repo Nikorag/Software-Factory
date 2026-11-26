@@ -40,7 +40,7 @@ export async function checkProject(
       if (!command) continue;
       const r = await run({
         kind, command, worktree: wt, timeoutMs: d.timeoutMs, profileDir: join(d.dataDir, "jobs", `_check-${project.id}`, "profiles"),
-        logFile: join(d.dataDir, "logs", "check", project.id, `${kind}.log`), sandbox: { ...d.sandbox, gitCommonDir },
+        logFile: join(d.dataDir, "logs", "check", project.id, `${kind}.log`), sandbox: { ...d.sandbox, gitCommonDir, loopback: project.allowLoopback },
       });
       results.push(r);
       d.onResult?.(r);

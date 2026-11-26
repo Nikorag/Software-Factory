@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 export interface SandboxOptions {
   worktree: string;
   network: boolean;
+  loopback?: boolean; // allow TCP to and from this machine only (127.0.0.1 / ::1), nothing external. Ignored when `network` is already on.
   home?: string;
   readAllow?: string[]; // extra dirs under $HOME that tools need (toolchains, caches)
   writeAllow?: string[]; // extra writable dirs (package-manager caches for installs)
@@ -40,6 +41,9 @@ export function buildProfile(o: SandboxOptions): string {
     "(version 1)",
     "(allow default)",
     o.network ? "" : "(deny network*)",
+    // Opt-in per project: tests that start a local server or database (PGlite, a mock API) need loopback TCP. Local services on this
+    // machine become reachable from the test, but nothing outside it.
+    ...(!o.network && o.loopback ? ['(allow network-bind (local ip "localhost:*"))', '(allow network-inbound (local ip "localhost:*"))', '(allow network-outbound (remote ip "localhost:*"))'] : []),
     // Local Unix-domain sockets inside temp dirs stay usable (tsx, vite and similar tools talk to themselves over one). This is
     // not network access: TCP, including loopback, remains denied (tests/exec.test.ts). SBPL's unix-socket filter takes ONE
     // path, so there is one rule per directory (found by iterating against the real sandbox-exec).

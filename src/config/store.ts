@@ -29,11 +29,14 @@ export const ProjectSettings = z.object({
   enabled: z.boolean().default(true),
   autonomy: ProjectInput.shape.autonomy,
   tracker: TrackerId.optional(),
-  linear: z.object({ teamKey: z.string().min(1), projectName: z.string().optional() }).optional(),
+  linear: z.object({ teamKey: z.string().min(1), projectName: z.string().optional(), projectId: z.string().optional() }).optional(),
   host: z.enum(["github", "bitbucket"]).default("github"),
   github: z.object({ account: z.string().optional(), repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional() }).default({}),
   bitbucket: z.object({ repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional(), credential: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).optional() }).default({}),
   overrides: ProjectOverrides.optional(),
+  specKit: z.boolean().optional(), // run the SpecKit specification workflow for this project (default true)
+  allowLoopback: z.boolean().optional(), // sandbox: let test/lint/build commands use TCP on this machine only
+  agentBashAllow: z.array(z.string().max(200)).max(50).optional(), // extra shell prefixes for the restricted implementer (edited in projects.yaml)
   commands: z.object({ install: z.string().max(500).optional(), build: z.string().max(500).optional(), test: z.string().max(500).optional(), lint: z.string().max(500).optional(), typecheck: z.string().max(500).optional() }).default({}),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettings>;
@@ -78,7 +81,11 @@ export function upsertProject(input: unknown, dir = seedHomeConfig()): LoadedCon
   const doc = readDoc(dir);
   const list = doc.get("projects", true) as { items: { toJSON(): { id?: string } }[]; set: (i: number, v: unknown) => void; add: (v: unknown) => void };
   if (isSeq(list)) list.flow = false; // an empty `projects: []` is flow style: a project list should read as a normal block list
-  const node = doc.createNode(clean({ ...p, linear: p.linear && clean(p.linear), host: p.host === "bitbucket" ? "bitbucket" : undefined, github: clean(p.github), bitbucket: clean(p.bitbucket), commands: clean(p.commands), overrides: deepClean(p.overrides) }));
+  const at = list.items.findIndex((x) => x.toJSON().id === p.id);
+  // Fields the form does not edit survive a save: an absent value keeps what the file already has.
+  const before = at >= 0 ? (list.items[at]!.toJSON() as { allowLoopback?: boolean; agentBashAllow?: string[] }) : {};
+  const keep = { allowLoopback: p.allowLoopback ?? before.allowLoopback, agentBashAllow: p.agentBashAllow ?? before.agentBashAllow };
+  const node = doc.createNode(clean({ ...p, specKit: p.specKit === false ? false : undefined, allowLoopback: keep.allowLoopback || undefined, agentBashAllow: keep.agentBashAllow, linear: p.linear && clean(p.linear), host: p.host === "bitbucket" ? "bitbucket" : undefined, github: clean(p.github), bitbucket: clean(p.bitbucket), commands: clean(p.commands), overrides: deepClean(p.overrides) }));
   (node as YAMLMap).flow = false;
   const i = list.items.findIndex((x) => x.toJSON().id === p.id);
   if (i >= 0) list.set(i, node); else list.add(node);
@@ -288,4 +295,41 @@ export function removeBitbucketCredential(name: string, dir = seedHomeConfig()):
 export function applyBitbucket(live: LoadedConfig, fresh: LoadedConfig): void {
   live.bitbucket.credentials = fresh.bitbucket.credentials;
   live.bitbucket.keychainService = fresh.bitbucket.keychainService;
+}
+
+// ---- advanced factory settings: safety and housekeeping keys of factory.yaml. Local only (never reachable from a hub session). ----
+export const AdvancedSettings = z.object({
+  agentAccess: z.enum(["restricted", "unrestricted"]),
+  dryRun: z.boolean(),
+  sandboxRequired: z.boolean(),
+  commandTimeoutSeconds: z.number().int().min(10).max(86_400),
+  pollIntervalSeconds: z.number().int().min(10).max(86_400),
+  logRetentionDays: z.number().int().min(0).max(3650),
+  logLevel: z.enum(["trace", "debug", "info", "warn", "error"]),
+  protectedPaths: z.array(z.string().min(1).max(200)).max(200),
+});
+export type AdvancedSettings = z.infer<typeof AdvancedSettings>;
+
+export const advancedSettingsOf = (c: LoadedConfig): AdvancedSettings => ({
+  agentAccess: c.factory.agentAccess, dryRun: c.factory.dryRun, sandboxRequired: c.factory.sandbox.required, commandTimeoutSeconds: c.factory.commandTimeoutSeconds,
+  pollIntervalSeconds: c.factory.pollIntervalSeconds, logRetentionDays: c.factory.logRetentionDays, logLevel: c.factory.logLevel, protectedPaths: c.factory.protectedPaths,
+});
+
+/** Writes these keys into factory.yaml (comments kept) only if the whole config still loads. They take effect when the factory restarts. */
+export function updateAdvancedSettings(input: unknown, dir = seedHomeConfig()): LoadedConfig {
+  const a = AdvancedSettings.parse(input);
+  const file = join(dir, "factory.yaml");
+  const doc = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "{}\n");
+  if (!isMap(doc.contents)) doc.contents = doc.createNode({}) as never;
+  doc.set("agentAccess", a.agentAccess); doc.set("dryRun", a.dryRun); doc.setIn(["sandbox", "required"], a.sandboxRequired);
+  doc.set("commandTimeoutSeconds", a.commandTimeoutSeconds); doc.set("pollIntervalSeconds", a.pollIntervalSeconds);
+  doc.set("logRetentionDays", a.logRetentionDays); doc.set("logLevel", a.logLevel); doc.set("protectedPaths", doc.createNode(a.protectedPaths));
+  const scratch = mkdtempSync(join(tmpdir(), "factory-cfg-"));
+  try {
+    for (const f of FILES) if (existsSync(join(dir, f))) copyFileSync(join(dir, f), join(scratch, f));
+    writeFileSync(join(scratch, "factory.yaml"), doc.toString());
+    loadConfig(scratch);
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
+  writeFileSync(`${file}.tmp`, doc.toString()); renameSync(`${file}.tmp`, file);
+  return loadConfig(dir);
 }

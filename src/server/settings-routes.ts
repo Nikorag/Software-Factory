@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir } from "../config/load.js";
-import { applyGlobal, applyProjects, globalSettingsOf, ProjectSettings, removeProject, seedHomeConfig, updateGlobalSettings, upsertProject } from "../config/store.js";
+import { advancedSettingsOf, updateAdvancedSettings, applyGlobal, applyProjects, globalSettingsOf, ProjectSettings, removeProject, seedHomeConfig, updateGlobalSettings, upsertProject } from "../config/store.js";
 import { trackerIdOf, type LoadedConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { jobs } from "../db/schema.js";
@@ -53,6 +53,12 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
   app.put<{ Body: { on?: unknown } }>("/api/hub/remote-access", { preHandler: requireToken }, async (req, reply) => {
     if (typeof req.body?.on !== "boolean") return reply.code(400).send({ error: "on must be true or false" });
     try { setRemoteAccess(req.body.on, hubDirs()); return hubStatus(hubDirs()); } catch (e) { return reply.code(409).send({ error: (e as Error).message }); }
+  });
+
+  // ---- advanced factory settings (sandbox, protected paths, agent access...). Local only; applied when the factory restarts. ----
+  app.get("/api/settings/advanced", async () => advancedSettingsOf(d.config));
+  app.put<{ Body: unknown }>("/api/settings/advanced", { preHandler: requireToken }, async (req, reply) => {
+    try { updateAdvancedSettings(req.body, writableDir(d.config)); return { ok: true, restartRequired: true }; } catch (e) { return fail(reply, e); }
   });
 
   // ---- setup wizard ----

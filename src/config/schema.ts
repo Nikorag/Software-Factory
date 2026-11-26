@@ -134,6 +134,8 @@ export const ProjectConfig = z.object({
   overrides: ProjectOverrides.optional(),
   // Extra shell command prefixes the (restricted) implementer may run, e.g. "GOLDEN_OUT=/tmp/golden godot --headless". Ignored when unrestricted.
   agentBashAllow: z.array(z.string()).default([]),
+  // Let this project's test/lint/build commands use TCP on this machine only (e.g. tests that start PGlite or a mock server). Off by default.
+  allowLoopback: z.boolean().default(false),
   commands: z
     .object({ install: z.string().optional(), build: z.string().optional(), test: z.string().optional(), lint: z.string().optional(), typecheck: z.string().optional() })
     .default({}),

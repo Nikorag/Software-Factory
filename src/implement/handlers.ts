@@ -55,7 +55,7 @@ export function createImplementationHandlers(d: ImplDeps) {
   }
 
   /** Runs the project's configured checks in order inside the sandbox. A failed build stops the rest. */
-  async function runChecks(ctx: { job: { id: string }; signal: AbortSignal }, wt: string, commands: Partial<Record<CommandKind, string>>, kinds: CommandKind[] = CHECK_ORDER): Promise<CommandResult[]> {
+  async function runChecks(ctx: { job: { id: string }; signal: AbortSignal }, wt: string, commands: Partial<Record<CommandKind, string>>, kinds: CommandKind[] = CHECK_ORDER, loopback = false): Promise<CommandResult[]> {
     const results: CommandResult[] = [];
     const gitCommonDir = await commonDir(wt);
     for (const kind of kinds) {
@@ -64,7 +64,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       const r = await exec({
         kind, command, worktree: wt, timeoutMs: d.settings.commandTimeoutSeconds * 1000, signal: ctx.signal,
         logFile: join(d.dataDir, "logs", "commands", ctx.job.id, `${Date.now()}-${kind}.log`), profileDir: join(jobDir(ctx.job.id), "profiles"),
-        sandbox: { ...d.settings.sandbox, gitCommonDir },
+        sandbox: { ...d.settings.sandbox, gitCommonDir, loopback },
       });
       results.push(r);
       if (!r.ok && kind === "build") break;
@@ -138,11 +138,11 @@ export function createImplementationHandlers(d: ImplDeps) {
     return agent(ctx, { ...call, resumeSessionId: undefined, prompt: `${summary}\n\n${call.prompt}` });
   }
 
-  async function wrapperFor(jobId: string, wt: string, commands: Partial<Record<CommandKind, string>>): Promise<{ path: string; checks: string[] }> {
+  async function wrapperFor(jobId: string, wt: string, commands: Partial<Record<CommandKind, string>>, loopback = false): Promise<{ path: string; checks: string[] }> {
     const checks = CHECK_ORDER.filter((k) => commands[k]);
     const path = writeExecWrapper(jobDir(jobId), {
       worktree: wt, profileDir: join(jobDir(jobId), "profiles"), timeoutMs: d.settings.commandTimeoutSeconds * 1000,
-      commands: Object.fromEntries(checks.map((k) => [k, commands[k]!])), sandbox: { ...d.settings.sandbox, gitCommonDir: await commonDir(wt) },
+      commands: Object.fromEntries(checks.map((k) => [k, commands[k]!])), sandbox: { ...d.settings.sandbox, gitCommonDir: await commonDir(wt), loopback },
     });
     return { path, checks };
   }
@@ -159,11 +159,11 @@ export function createImplementationHandlers(d: ImplDeps) {
     if (bad.length) return { kind: "blocked", reason: `The specification no longer validates: ${bad.map((c) => c.id).join(", ")}` };
     try {
       if (project.commands.install) {
-        const [inst] = await runChecks(ctx, p.cwd, { install: project.commands.install }, ["install"]);
+        const [inst] = await runChecks(ctx, p.cwd, { install: project.commands.install }, ["install"], project.allowLoopback);
         if (inst && !inst.ok) return { kind: "blocked", reason: `Dependency install failed (\`${inst.command}\`):\n${inst.tail.slice(-1500)}` };
       }
       // Baseline: the checks must pass on the untouched default branch, or failures could not be attributed to the change.
-      const baseline = await runChecks(ctx, p.cwd, project.commands);
+      const baseline = await runChecks(ctx, p.cwd, project.commands, CHECK_ORDER, project.allowLoopback);
       if (failed(baseline).length) {
         return { kind: "blocked", reason: `The project's own checks already fail on ${project.defaultBranch}, before any change (${failed(baseline).map((r) => r.kind).join(", ")}). Fix them first, then retry:\n${failed(baseline)[0]!.tail.slice(-1500)}` };
       }
@@ -183,7 +183,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     const early = await secretStop(p.cwd, p.info.base);
     if (early) return early;
     const project = d.project(ctx.job.projectId);
-    const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands);
+    const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands, project.allowLoopback);
     let session = latestImplementerSession(ctx.job.id); // a retry continues the earlier conversation
     let gaps: { appended: number; summary: string } | undefined;
     const failures = previousFailures(d.db, ctx.job.id, "IMPLEMENTATION");
@@ -239,7 +239,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     const prev = await sameCodeRun({ db: d.db, jobId: ctx.job.id, stage: "AUTOMATED_TESTING", cwd: p.cwd, git });
     if (prev && !prev.remediated && Array.isArray(prev.results)) return { kind: "ok", output: { results: prev.results, head: at, reused: true } };
     let results: CommandResult[];
-    try { results = await runChecks(ctx, p.cwd, project.commands); } catch (e) { const s = sandboxStop(e); if (s) return s; throw e; }
+    try { results = await runChecks(ctx, p.cwd, project.commands, CHECK_ORDER, project.allowLoopback); } catch (e) { const s = sandboxStop(e); if (s) return s; throw e; }
     const bad = failed(results);
     if (bad.length === 0) return { kind: "ok", output: { results: brief(results), head: at } };
     const findings = [];
@@ -336,7 +336,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     const early = await secretStop(p.cwd, p.info.base); // no agent run can fix a secret already in history
     if (early) return early;
     const project = d.project(ctx.job.projectId);
-    const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands);
+    const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands, project.allowLoopback);
     const before = await head(p.cwd);
     const r = await implementer(ctx, {
       task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 40 * MIN, schema: ImplRemediation, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id),
@@ -374,7 +374,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     const at = await head(p.cwd);
 
     let results: CommandResult[];
-    try { results = await runChecks(ctx, p.cwd, project.commands); } catch (e) { const s = sandboxStop(e); if (s) return s; throw e; }
+    try { results = await runChecks(ctx, p.cwd, project.commands, CHECK_ORDER, project.allowLoopback); } catch (e) { const s = sandboxStop(e); if (s) return s; throw e; }
     for (const r of failed(results)) gate(`check-${r.kind}`, `${r.kind} fails: ${r.tail.slice(-800)}`, r.command);
 
     if ((await git(p.cwd, ["status", "--porcelain"])).length) gate("clean-tree", "the worktree has uncommitted changes");

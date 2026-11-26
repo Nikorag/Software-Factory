@@ -56,6 +56,9 @@ export const RULES: readonly Rule[] = [
   // ---- the hub connection itself: a key, and whether the hub may operate this factory. Only ever from the machine. ----
   block("GET", "/api/hub", LOCAL), block("POST", "/api/hub/connect", SECRET), block("POST", "/api/hub/disconnect", LOCAL), block("PUT", "/api/hub/remote-access", "a hub session must not grant itself control"),
 
+  // ---- safety settings (sandbox, protected paths, agent access): never from a hub session ----
+  block("GET", "/api/settings/advanced", LOCAL), block("PUT", "/api/settings/advanced", "changes the sandbox, protected paths and agent access: decide on the machine"),
+
   // ---- profiles are separate local installs ----
   block("POST", "/api/profiles", LOCAL), block("DELETE", "/api/profiles/:name", LOCAL),
 

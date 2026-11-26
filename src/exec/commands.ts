@@ -34,7 +34,7 @@ export interface RunCommandOptions {
   signal?: AbortSignal;
   logFile?: string;
   profileDir: string; // where the sandbox profile file is written (outside the worktree)
-  sandbox?: { required?: boolean; readAllow?: string[]; writeAllow?: string[]; gitCommonDir?: string; home?: string };
+  sandbox?: { required?: boolean; readAllow?: string[]; writeAllow?: string[]; gitCommonDir?: string; home?: string; loopback?: boolean };
   tailChars?: number;
 }
 
@@ -52,7 +52,7 @@ export async function runProjectCommand(o: RunCommandOptions, deps: { run?: type
   if (!useSandbox && required) throw new SandboxUnavailable();
   const isInstall = o.kind === "install";
   const opts: SandboxOptions = {
-    worktree: o.worktree, network: isInstall, home: o.sandbox?.home, readAllow: o.sandbox?.readAllow, gitCommonDir: o.sandbox?.gitCommonDir,
+    worktree: o.worktree, network: isInstall, loopback: o.sandbox?.loopback, home: o.sandbox?.home, readAllow: o.sandbox?.readAllow, gitCommonDir: o.sandbox?.gitCommonDir,
     writeAllow: isInstall ? (o.sandbox?.writeAllow ?? DEFAULT_WRITE_ALLOW) : undefined, // only installs may touch package-manager caches
   };
   const prefix = useSandbox ? sandboxPrefix(opts, join(o.profileDir, `sandbox-${o.kind}.sb`)) : [];

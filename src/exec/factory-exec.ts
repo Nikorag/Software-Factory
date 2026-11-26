@@ -14,7 +14,7 @@ export interface ExecSpec {
   profileDir: string;
   commands: Partial<Record<Exclude<CommandKind, "install">, string>>;
   timeoutMs: number;
-  sandbox?: { required?: boolean; readAllow?: string[]; gitCommonDir?: string };
+  sandbox?: { required?: boolean; readAllow?: string[]; gitCommonDir?: string; loopback?: boolean };
 }
 
 export async function main(argv: string[]): Promise<number> {
