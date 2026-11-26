@@ -61,7 +61,7 @@ export function Timeline({ detail, cap, selected, onSelect, onWatch }: { detail:
                       {e.nodeId ? <button type="button" onClick={() => onSelect(e.nodeId!)} className={cn("text-left font-medium hover:underline", isSel && "underline")}>{e.title}</button> : <span className="font-medium">{e.title}</span>}
                       {e.run > 1 && !e.cycle ? <span className="rounded bg-muted px-1.5 text-[11px] text-muted-foreground">run {e.run}</span> : null}
                       <span className="flex-1" />
-                      <span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground" title={ago(e.at)}><Clock className="size-3" />{e.at ? clock(e.at) : "…"}{e.end && e.end > e.at ? ` · took ${dur(e.end - e.at)}` : ""}</span>
+                      <span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground" title={ago(e.at)}><Clock className="size-3" />{e.at ? clock(e.at) : "…"}{e.checks ? ` · last checked ${e.lastCheckAt ? clock(e.lastCheckAt) : "…"}` : e.end && e.end > e.at ? ` · took ${dur(e.end - e.at)}` : ""}</span>
                     </div>
                     {e.summary ? <p className={cn("mt-0.5 text-sm", e.tone === "fail" ? "text-destructive" : e.tone === "loop" ? "text-foreground" : "text-muted-foreground")}>{e.summary}</p> : null}
                     {e.detail ? <p className="mt-0.5 text-xs text-muted-foreground">{e.detail}</p> : null}

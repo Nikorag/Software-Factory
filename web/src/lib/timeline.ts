@@ -12,6 +12,8 @@ export interface TimelineEntry {
   cycle?: number;
   stage?: string; nodeId?: string;
   summary?: string; detail?: string;
+  /** A step that was waiting (CI, your merge) is polled again and again; those polls are one entry. How many checks it covers, and when the last one was. */
+  checks?: number; lastCheckAt?: number | null;
   events: TimelineEvent[]; runs: Invocation[];
 }
 
@@ -73,7 +75,16 @@ export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
   const retries = d.decisions.filter((x) => x.kind === "job.retry").map((x) => x.at ?? 0).sort((a, b) => a - b);
   let cycle = 0, lastReset = -1;
   const entries: TimelineEntry[] = [];
+  // A step that is waiting (for CI, for your merge) is re-checked every few minutes and each check is its own execution. They are one
+  // event in the story: group a step's consecutive waiting checks together with the execution that finally ends the wait.
+  const groups: Execution[][] = [];
   for (const e of [...d.executions].sort((a, b) => a.id - b.id)) {
+    const g = groups.at(-1);
+    if (g && g[0]!.stage === e.stage && g.every((x) => x.outcome === "waiting")) g.push(e); else groups.push([e]);
+  }
+  for (const group of groups) {
+    const e = group.at(-1)!;
+    const waits = group.filter((x) => x.outcome === "waiting").length;
     const node = nodeOfStage(e.stage);
     const run = (seen.get(e.stage) ?? 0) + 1;
     seen.set(e.stage, run);
@@ -86,18 +97,20 @@ export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
     let tone: Tone = "ok", summary: string | undefined;
     switch (e.outcome) {
       case "started": tone = "run"; summary = "running now"; break;
-      case "waiting": tone = "wait"; summary = "waiting"; break;
+      case "waiting": { tone = "wait"; const why = out && typeof out.reason === "string" ? clip(out.reason, 160) : "waiting"; summary = `${why} · checked ${plural(waits, "time")}`; break; }
       case "failed": tone = "fail"; summary = e.error ? clip(e.error.split("\n")[0]!, 240) : "failed"; break;
       case "timed_out": tone = "fail"; summary = `timed out${e.error ? `: ${clip(e.error, 160)}` : ""}`; break;
       case "cancelled": tone = "info"; summary = e.error ? clip(e.error, 160) : "cancelled"; break;
       default:
         if (remediate) { tone = "loop"; summary = `Sent back for fixes: ${clip(remediate, 220)}`; } else summary = summarise(out ?? null);
     }
+    if (waits && e.outcome !== "waiting") summary = summary ? `${summary} (after waiting, ${plural(waits, "check")})` : `after waiting, ${plural(waits, "check")}`;
     entries.push({
-      key: `e${e.id}`, at: e.startedAt ?? 0, end: e.finishedAt, tone, run, stage: e.stage, nodeId: node?.id,
+      key: `e${e.id}`, at: group[0]!.startedAt ?? 0, end: e.finishedAt, tone, run, stage: e.stage, nodeId: node?.id,
+      ...(e.outcome === "waiting" ? { checks: waits, lastCheckAt: e.finishedAt ?? e.startedAt } : {}),
       title: fix ? `${node?.label ?? e.stage}${cycle ? ` · cycle ${cycle} of ${cap}` : ""}` : (node?.label ?? e.stage),
       cycle: fix && cycle ? cycle : undefined, summary: stageText(summary), detail: e.error && e.outcome !== "failed" ? e.error : undefined,
-      events: [], runs: d.invocations.filter((i) => i.stageExecutionId === e.id),
+      events: [], runs: d.invocations.filter((i) => group.some((x) => x.id === i.stageExecutionId)),
     });
   }
   // decisions belong to the step that was running when they were made; the rest stand on their own
