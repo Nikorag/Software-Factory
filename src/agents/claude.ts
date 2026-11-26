@@ -1,5 +1,6 @@
 import { pathRoots, toolPolicy } from "./permissions.js";
 import { agentEnv } from "./env.js";
+import { parseRateLimitInfo, type ClaudeLimits } from "./usage.js";
 import { runProcess, type RunOptions, type RunResult } from "./process.js";
 import type { Agent, AgentFailure, AgentRequest, AgentResult } from "./types.js";
 
@@ -59,14 +60,19 @@ export function classifyFailure(raw: RawResult | undefined, stderr: string, exit
 /** Pure: turn the CLI's stdout/stderr/exit into an AgentResult. */
 export function parseClaudeOutput(run: Pick<RunResult, "stdout" | "stderr" | "exitCode" | "durationMs">): AgentResult {
   let raw: RawResult | undefined;
+  let limits: ClaudeLimits | undefined;
   // stream-json: one event per line and the last `result` event carries the outcome. A single JSON document is still understood.
   for (const line of run.stdout.split("\n")) {
     if (!line.startsWith("{")) continue;
-    try { const o = JSON.parse(line) as RawResult; if (o.type === "result") raw = o; } catch { /* a partial or non-JSON line */ }
+    try {
+      const o = JSON.parse(line) as RawResult & { rate_limit_info?: unknown };
+      if (o.type === "result") raw = o;
+      else if (o.type === "rate_limit_event") limits = parseRateLimitInfo(o.rate_limit_info) ?? limits; // the last reading wins
+    } catch { /* a partial or non-JSON line */ }
   }
   if (!raw) { try { raw = JSON.parse(run.stdout) as RawResult; } catch { /* handled below */ } }
   const denials = (raw?.permission_denials ?? []).map((d) => ({ tool: d.tool_name ?? "?", input: JSON.stringify(d.tool_input ?? {}).slice(0, 300) }));
-  const base = { denials, exitCode: run.exitCode, durationMs: run.durationMs };
+  const base = { denials, exitCode: run.exitCode, durationMs: run.durationMs, ...(limits ? { limits } : {}) };
   if (!raw || raw.type !== "result") {
     return { ...base, ok: false, text: run.stdout.slice(-2000), failure: classifyFailure(undefined, run.stderr, run.exitCode), error: `unparseable Claude Code output (exit ${run.exitCode}): ${run.stderr.slice(0, 500)}` };
   }

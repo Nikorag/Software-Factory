@@ -4,6 +4,7 @@ import { ClaudeCodeAgent } from "../agents/claude.js";
 import { LocalModelClient } from "../agents/local.js";
 import { ModelRouter } from "../agents/router.js";
 import { AgentRunner } from "../agents/runner.js";
+import { usageFile } from "../agents/usage.js";
 import { ConfigError } from "../config/load.js";
 import type { LoadedConfig, ProjectConfig } from "../config/schema.js";
 import { openDb, type DbHandle } from "../db/client.js";
@@ -55,7 +56,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     anthropic: new ClaudeCodeAgent({ bin: opts.claudeBin }),
     local: new LocalModelClient({ baseUrl: config.models.local.baseUrl }),
   }, (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.models);
-  const runner = new AgentRunner({ db: handle.db, router, logDir: join(dataDir, "logs", "agents"), protectedPaths: config.factory.protectedPaths,
+  const runner = new AgentRunner({ db: handle.db, router, logDir: join(dataDir, "logs", "agents"), protectedPaths: config.factory.protectedPaths, usageFile: usageFile(dataDir),
     access: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess,
     projectBashAllow: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAllow ?? [],
   });

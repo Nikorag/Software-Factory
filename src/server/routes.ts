@@ -1,7 +1,7 @@
 import { realpathSync, statSync, openSync, readSync, closeSync, unlinkSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { LoadedConfig } from "../config/schema.js";
 import { STAGES } from "../config/schema.js";
@@ -14,6 +14,7 @@ import { WorktreeError } from "../repo/worktrees.js";
 import type { Scheduler } from "../service/scheduler.js";
 import { cachedSystemInfo, counts, type HealthChecker } from "../service/metrics.js";
 import { readConversation } from "../agents/transcript.js";
+import { readLimits, usageFile, windowIsCurrent } from "../agents/usage.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
 import { onboardingOf, type CheckRecord } from "../repo/readiness.js";
 import type { RepoReport } from "../repo/inspect.js";
@@ -99,6 +100,21 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   const actor = "dashboard";
   const systemInfo = cachedSystemInfo(); // polled every few seconds: do not spawn memory_pressure on every request
 
+  /** Latest Claude plan-limit reading (from Claude Code's own stream) and the list-price estimate of recent runs. Never a charge: subscription auth is not billed per token. */
+  const claudeUsage = () => {
+    const l = d.dataDir ? readLimits(usageFile(d.dataDir)) : null, now = Date.now();
+    const rows = db.select({ at: agentInvocations.startedAt, u: agentInvocations.usageJson }).from(agentInvocations).where(gte(agentInvocations.startedAt, new Date(now - 7 * 86_400_000))).all();
+    let day = 0, week = 0;
+    for (const r of rows) {
+      let c = 0; try { c = Number((JSON.parse(r.u ?? "{}") as { estimatedListCostUsd?: number }).estimatedListCostUsd) || 0; } catch { /* no usage recorded */ }
+      week += c; if (r.at.getTime() >= now - 86_400_000) day += c;
+    }
+    return {
+      limits: l ? { ...l, fiveHour: windowIsCurrent(l.fiveHour, now) ? l.fiveHour : null, sevenDay: windowIsCurrent(l.sevenDay, now) ? l.sevenDay : null } : null,
+      estimatedListCostUsd: { last24h: Math.round(day * 100) / 100, last7d: Math.round(week * 100) / 100 },
+    };
+  };
+
   app.get("/api/overview", async () => {
     const all = db.select().from(jobs).where(isNull(jobs.archivedAt)).orderBy(desc(jobs.updatedAt)).limit(300).all();
     return {
@@ -114,6 +130,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
       projectCount: d.config?.projects.projects.length,
       mergeMode: d.config?.factory.mergeMode ?? "pr-only",
       dryRun: d.config?.factory.dryRun ?? false,
+      claudeUsage: claudeUsage(),
     };
   });
 

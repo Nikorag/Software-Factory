@@ -35,6 +35,7 @@ export interface AgentResult {
   costUsd?: number;
   usage?: Record<string, unknown>;
   numTurns?: number;
+  limits?: import("./usage.js").ClaudeLimits; // the plan-limit reading Claude Code reported during this run, if any
   denials: { tool: string; input: string }[]; // actions the permission system refused
   exitCode: number | null;
   durationMs: number;

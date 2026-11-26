@@ -5,6 +5,7 @@ import type { FactoryDb } from "../db/client.js";
 import { agentInvocations, decisions } from "../db/schema.js";
 import { git as realGit, type GitFn } from "../repo/git.js";
 import { findProtectedChanges } from "./guard.js";
+import { writeLimits } from "./usage.js";
 import { ROLE_PROFILE, rolePrompt } from "./roles.js";
 import type { ModelRouter, Route, TaskKind } from "./router.js";
 import type { AgentResult, AgentRole } from "./types.js";
@@ -32,6 +33,7 @@ export interface RunStep {
 export class AgentRunner {
   constructor(private readonly d: {
     db: FactoryDb; router: ModelRouter; logDir: string; protectedPaths: string[]; git?: GitFn;
+    usageFile?: string; // where the latest Claude plan-limit reading is kept
     access?: (projectId?: string) => "restricted" | "unrestricted"; // per project; default restricted
     projectBashAllow?: (projectId?: string) => string[]; // per project extra shell prefixes for the restricted implementer
   }) {}
@@ -62,6 +64,7 @@ export class AgentRunner {
       jsonSchema: step.jsonSchema, resumeSessionId: step.resumeSessionId, persistSession: profile === "implementer", logFile,
     }, step.projectId);
 
+    if (result.limits && this.d.usageFile) writeLimits(this.d.usageFile, result.limits);
     const violations: string[] = [];
     if (profile !== "read-only" && step.baseRef) {
       violations.push(...(await findProtectedChanges(step.cwd, step.baseRef, this.d.protectedPaths, git)).map((f) => `protected path changed: ${f}`));

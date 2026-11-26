@@ -91,6 +91,19 @@ describe("absolute path anchoring (survives a Bash `cd`)", () => {
   });
 });
 
+describe("plan limits from the stream", () => {
+  const evt = { type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", unifiedWindows: { five_hour: { utilization: 0.27, resetsAt: 1795651800, status: "allowed" }, seven_day: { utilization: 0.76, resetsAt: 1795914000, status: "allowed_warning" } } } };
+  const result = { type: "result", subtype: "success", is_error: false, result: "ok" };
+  it("keeps the last rate_limit_event reading, in 0..1 and epoch ms", () => {
+    const r = parseClaudeOutput({ stdout: [JSON.stringify(evt), JSON.stringify(result)].join("\n"), stderr: "", exitCode: 0, durationMs: 1 });
+    expect(r.limits?.fiveHour).toMatchObject({ utilization: 0.27, resetsAt: 1795651800000 });
+    expect(r.limits?.sevenDay?.utilization).toBe(0.76);
+  });
+  it("has no limits when the stream carries none", () => {
+    expect(parseClaudeOutput({ stdout: JSON.stringify(result), stderr: "", exitCode: 0, durationMs: 1 }).limits).toBeUndefined();
+  });
+});
+
 describe("buildClaudeArgs", () => {
   it("never uses --bare or permission bypass, and keeps the prompt off the command line", () => {
     const a = buildClaudeArgs(req());

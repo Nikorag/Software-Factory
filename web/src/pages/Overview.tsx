@@ -2,6 +2,7 @@ import { Link, useOutletContext } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { JobsTable } from "@/components/JobsTable";
+import { ClaudeUsagePanel } from "@/components/ClaudeUsage";
 import { ago, gb } from "@/lib/format";
 import type { Overview as O } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ export function Overview() {
           <Kpi label="memory free" v={sys.memory.freePercent == null ? gb(sys.memory.availableBytes) : `${sys.memory.freePercent}%`} tone={sys.memory.pressure === "critical" ? "text-destructive" : sys.memory.pressure === "warn" ? "text-loop" : ""} />
           <Kpi label="disk free" v={sys.disk ? gb(sys.disk.freeBytes) : "?"} /><Kpi label="load" v={sys.load[0]!.toFixed(1)} />
         </CardContent></Card>
+        <Card><CardHeader><CardTitle className="text-sm">Claude usage</CardTitle></CardHeader><CardContent><ClaudeUsagePanel usage={o.claudeUsage} /></CardContent></Card>
         <Card><CardHeader><CardTitle className="text-sm">Scheduler</CardTitle></CardHeader><CardContent className="space-y-1 text-sm">
           {sch ? <>
             <div>Linear poll: {sch.lastDiscovery ? <span className={sch.lastDiscovery.ok ? "text-ok" : "text-destructive"}>{sch.lastDiscovery.ok ? "ok" : "error"} {ago(sch.lastDiscovery.at)}</span> : "not yet"}{sch.lastDiscovery ? ` · ${sch.lastDiscovery.enqueued} new` : ""}{sch.lastDiscovery?.skipped ? <span title="Tickets ignored this poll: usually a project that is not onboarded yet (see Settings → Projects), or a ticket that is not labelled for the factory."> · {sch.lastDiscovery.skipped} skipped</span> : null}</div>

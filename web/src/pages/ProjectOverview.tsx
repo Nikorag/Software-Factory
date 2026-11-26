@@ -55,7 +55,7 @@ export function ProjectOverview() {
             <div className="truncate text-[12.5px] text-muted-foreground">{[p?.githubRepo ?? p?.bitbucketRepo ?? p?.repository, pickup ? `${pickup === "manual" ? "Manual" : "Automatic"} pickup` : null, p?.overrides?.maxConcurrentJobs ? `up to ${p.overrides.maxConcurrentJobs} at once` : null].filter(Boolean).join(" · ")}</div>
           </div>
         </div>
-        <Button variant="outline" size="sm" asChild><Link to="/settings?tab=projects">Project settings</Link></Button>
+        <Button variant="outline" size="sm" asChild><Link to={`/settings?tab=projects&project=${encodeURIComponent(projectId)}`}>Project settings</Link></Button>
         <Button size="sm" asChild><Link to="/board">Start a ticket</Link></Button>
       </div>
       <ConnectionBanner error={error} updatedAt={updatedAt} what="board" />
