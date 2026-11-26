@@ -1,100 +1,119 @@
+import { BUILTIN_HELP } from "./builtin-stages";
+import { executionOrder } from "./graph";
 import type { Execution, Invocation, Job } from "./types";
+import { COMPLETE, type GateRecord, type RouteRecord, type StageDef, type WorkflowDef } from "./workflows";
 
-/** The real 20-stage pipeline laid out in three bands. Labels are friendly; `stage` is the engine's id. Taken from the approved flow mockup. */
-export const W = 148, H = 52;
-const X = (i: number) => 24 + i * 192;
-const BY = [72, 312, 552] as const;
-export interface PNode { id: string; label: string; sub: string; x: number; y: number; stage: string; fix?: boolean; what: string; issues: string }
-const n = (id: string, label: string, sub: string, x: number, y: number, stage: string, what: string, issues: string, fix = false): PNode => ({ id, label, sub, x, y, stage, fix, what, issues });
-
-export const NODES: PNode[] = [
-  n("disc", "Discovered", "Linear ticket", X(0), BY[0], "DISCOVERED", "The job exists because discovery accepted the Linear ticket.", "Nothing to go wrong here."),
-  n("elig", "Eligibility check", "re-reads the ticket", X(1), BY[0], "ELIGIBILITY_CHECK", "Re-reads the live ticket: still labelled factory:enabled, not blocked, still in Ready for specification.", "If someone removed the label since discovery, the job stops (Blocked) instead of acting on stale intent."),
-  n("req", "Requirements", "asks if unclear", X(2), BY[0], "REQUIREMENTS_ANALYSIS", "Claude reads the ticket and the code. It asks a person only when what is wanted is unclear. Design choices are decided later and recorded.", "Unclear requirements stop the job (Blocked) with the exact questions, posted to Linear."),
-  n("gen", "Generate spec", "Spec Kit", X(3), BY[0], "SPECIFICATION_GENERATION", "Spec Kit writes the specification, clarifications, plan and tasks. The factory commits after each step.", "A step that writes nothing is re-run once before the stage retries."),
-  n("srev", "Spec review", "Haiku, independent", X(4), BY[0], "SPECIFICATION_REVIEW", "A different, cheaper model (Haiku) reviews the specification independently and read-only.", "Blocking findings go to Fix spec."),
-  n("sval", "Spec validation", "checks + analyze", X(5), BY[0], "SPECIFICATION_VALIDATION", "Deterministic checks (requirements, scenarios, tasks, no open questions), then Spec Kit analyze.", "Blocking findings go to Fix spec. Open questions for a human stop the job."),
-  n("sfix", "Fix spec", "Claude", 888, 176, "SPECIFICATION_REMEDIATION", "Claude fixes the valid findings and must reject invalid ones with evidence, which is recorded.", "Goes back to Spec validation. Uses one of the 3 fix cycles.", true),
-  n("prep", "Prepare", "install, baseline", X(0), BY[1], "IMPLEMENTATION_PREPARATION", "Installs dependencies (the only step with network), then runs the project's own checks on the untouched main branch.", "Checks already failing on main stop the job: failures could not be blamed on the change."),
-  n("impl", "Implement", "sandboxed", X(1), BY[1], "IMPLEMENTATION", "Claude implements the tasks in an isolated worktree, verifying only through the sandboxed check tool. Spec Kit converge confirms nothing was missed, up to 3 passes.", "A committed secret or a touched protected file goes straight to you."),
-  n("test", "Run checks", "test, lint, types", X(2), BY[1], "AUTOMATED_TESTING", "The factory runs build, typecheck, lint and tests itself, in a sandbox with no network.", "Any failure goes to Fix findings with the log (condensed by Haiku if it is long)."),
-  n("hrev", "Independent review", "Haiku + security", X(3), BY[1], "LOCAL_MODEL_REVIEW", "Haiku reviews the diff against the spec. Security-sensitive changes also get a Claude security review.", "Blocking findings go to Fix findings. A critical security finding goes straight to you."),
-  n("crev", "Claude review", "Claude", X(4), BY[1], "CLAUDE_REVIEW", "Claude reviews the change and gives a verdict, with evidence, on each of Haiku's findings.", "Blocking findings go to Fix findings."),
-  n("fval", "Final validation", "gates, criteria", X(5), BY[1], "FINAL_VALIDATION", "Gates no reviewer can waive: all checks re-run, no skipped or deleted tests, no secrets in history, tasks ticked. Then every requirement must be shown in code and in a test.", "Anything unmet goes to Fix findings."),
-  n("fix", "Fix findings", "same session", 696, 416, "REMEDIATION", "The same Claude session resumes with the findings, fixes the valid ones and rejects the rest with reasons. Then the flow re-enters at Run checks.", "After 3 fix cycles in total the job stops for you (Needs attention).", true),
-  n("pr", "Open PR", "push + evidence", X(0), BY[2], "PULL_REQUEST_CREATION", "Pushes the branch (never forced) and opens the pull request with the evidence report as its body. Linked in Linear.", "Someone else pushed to the branch, or a PR was closed: stops for you."),
-  n("ci", "CI", "GitHub Actions", X(1), BY[2], "CI_VALIDATION", "Waits for your GitHub checks. Pending is just waiting and uses no retries.", "A failing GitHub Actions check goes to Fix findings with its log. A failing external check (for example Vercel) is reported to you, not looped on."),
-  n("mr", "Merge readiness", "mergeable?", X(2), BY[2], "MERGE_VALIDATION", "Reports mergeability, review state and branch protection to Linear.", "Merge conflicts stop the job: the factory never rewrites history."),
-  n("hm", "Awaiting your merge", "you merge it", X(3), BY[2], "MERGING", "The factory does not merge. It checks every 10 minutes until you merge or close the PR.", "Closed without merging: the job fails with that reason. After 14 days it asks for attention."),
-  n("done", "Complete", "Linear → Done", X(4), BY[2], "LINEAR_COMPLETION", "Comments in Linear, removes the finished worktree, and the issue moves to Done.", "Nothing further."),
-];
-export const NODE = Object.fromEntries(NODES.map((x) => [x.id, x])) as Record<string, PNode>;
-const BY_STAGE = Object.fromEntries(NODES.map((x) => [x.stage, x.id])) as Record<string, string>;
-export const nodeOfStage = (stage: string): PNode | undefined => NODE[BY_STAGE[stage] ?? ""];
-
-export interface PEdge { id: string; from: string; to: string; kind: "flow" | "loop"; d: string; label?: { t: string; x: number; y: number; a: "start" | "middle" | "end" } }
-const line = (a: string, b: string) => `M${NODE[a]!.x + W},${NODE[a]!.y + H / 2} H${NODE[b]!.x}`;
-const flow = (a: string, b: string): PEdge => ({ id: `${a}>${b}`, from: a, to: b, kind: "flow", d: line(a, b) });
-const loop = (from: string, to: string, d: string, label?: PEdge["label"]): PEdge => ({ id: `${from}>${to}`, from, to, kind: "loop", d, label });
-export const EDGES: PEdge[] = [
-  ...([["disc", "elig"], ["elig", "req"], ["req", "gen"], ["gen", "srev"], ["srev", "sval"], ["prep", "impl"], ["impl", "test"], ["test", "hrev"], ["hrev", "crev"], ["crev", "fval"], ["pr", "ci"], ["ci", "mr"], ["mr", "hm"], ["hm", "done"]] as const).map(([a, b]) => flow(a, b)),
-  { id: "sval>prep", from: "sval", to: "prep", kind: "flow", d: "M1132,98 H1164 V262 H8 V338 H24" },
-  { id: "fval>pr", from: "fval", to: "pr", kind: "flow", d: "M1132,338 H1164 V534 H8 V578 H24" },
-  loop("srev", "sfix", "M866,124 V150 H920 V176", { t: "findings", x: 858, y: 144, a: "end" }),
-  loop("sval", "sfix", "M1090,124 V202 H1036", { t: "findings", x: 1100, y: 168, a: "start" }),
-  loop("sfix", "sval", "M1004,176 V124", { t: "fixed", x: 1012, y: 150, a: "start" }),
-  loop("test", "fix", "M482,364 V442 H696", { t: "checks failed", x: 590, y: 458, a: "middle" }),
-  loop("hrev", "fix", "M674,364 V390 H722 V416"),
-  loop("crev", "fix", "M866,364 V390 H818 V416", { t: "review findings", x: 770, y: 384, a: "middle" }),
-  loop("fval", "fix", "M1058,364 V442 H844", { t: "criterion unmet", x: 950, y: 436, a: "middle" }),
-  loop("fix", "test", "M696,424 H440 V364", { t: "re-verify everything", x: 568, y: 416, a: "middle" }),
-  loop("ci", "fix", "M290,552 V516 H770 V468", { t: "CI failed", x: 530, y: 509, a: "middle" }),
-];
-
-export type NodeState = "idle" | "done" | "run" | "wait" | "fail";
-export interface Flow {
-  state: Record<string, NodeState>; attempts: Record<string, number>; duration: Record<string, number>;
-  loopsUsed: Set<string>; skipped: Set<string>; active: string | null; elapsedMs: number; agentMs: number;
-}
+export const HELD_STAGES = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION"];
+/** Where the stage's own text comes from: the workflow definition (name, description), with built-in help only as extra detail. */
+export const stageNames = (def: WorkflowDef | null | undefined): Record<string, string> => Object.fromEntries((def?.stages ?? []).map((s) => [s.id, s.name]));
 
 /**
- * Derives the whole chart from what the factory already stores (stage executions and the job row), so loops, counts and timings
- * are the real ones and there is no separate state to drift. A fix route is "used" when a fix stage actually ran after that stage.
+ * A definition to draw when the API did not send one (an old server, or a job with nothing recorded): the stages seen in the job's
+ * own history, in the order they first ran, plus the stage it is at now. Never a hardcoded pipeline.
  */
-export function deriveFlow(job: Job, executions: Execution[], invocations: Invocation[], now = Date.now()): Flow {
-  const held = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION"].includes(job.stage);
-  const at = held ? job.heldFromStage : job.stage;
-  const state: Record<string, NodeState> = {}, attempts: Record<string, number> = {}, duration: Record<string, number> = {};
-  const loopsUsed = new Set<string>(), skipped = new Set<string>();
-  let prev: string | null = null;
-  for (const e of executions) {
-    const id = BY_STAGE[e.stage];
-    if (!id) continue;
-    if (e.outcome === "waiting") continue; // a re-check while waiting (CI, your merge) is not another attempt, and does not take time
-    attempts[id] = (attempts[id] ?? 0) + 1;
-    if (e.finishedAt && e.startedAt) duration[id] = (duration[id] ?? 0) + (e.finishedAt - e.startedAt);
-    if (e.outcome === "succeeded") state[id] = "done";
-    if (NODE[id]!.fix && prev) { loopsUsed.add(`${prev}>${id}`); if (id === "fix") loopsUsed.add("fix>test"); else loopsUsed.add("sfix>sval"); if (id === "sfix" && prev === "srev") skipped.add("srev>sval"); }
-    prev = id;
-  }
-  const activeId = at ? BY_STAGE[at] ?? null : null;
-  if (activeId) {
-    if (held) state[activeId] = job.stage === "PAUSED" ? "wait" : "fail";
-    else if (job.status === "running") state[activeId] = "run";
-    else state[activeId] = "wait";
-  }
-  if (job.stage === "COMPLETED") state["done"] = "done";
-  const first = executions.find((e) => e.startedAt)?.startedAt ?? job.createdAt ?? now;
-  const end = job.status === "done" || job.status === "failed" || job.status === "cancelled" ? (job.updatedAt ?? now) : now;
-  return { state, attempts, duration, loopsUsed, skipped, active: activeId, elapsedMs: Math.max(0, end - first), agentMs: invocations.reduce((s, i) => s + (i.durationMs ?? 0), 0) };
+export function fallbackDefinition(stageOrder: string[], executions: Execution[], job: Job): WorkflowDef {
+  const ids = [...new Set([...stageOrder, ...executions.map((e) => e.stage), ...(job.stage && !HELD_STAGES.includes(job.stage) ? [job.stage] : []), ...(job.heldFromStage ? [job.heldFromStage] : [])])].filter((i) => i !== COMPLETE);
+  const stage = (id: string): StageDef => ({ id, name: BUILTIN_HELP[id]?.name ?? id.replaceAll("_", " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase()), description: BUILTIN_HELP[id]?.what ?? "", type: "factory", handler: id, enabled: true, required: true, timeoutSeconds: 900, retry: { max: 0, backoff: true }, successGate: { type: "result_ok" }, onFailure: [], requires: [], outputs: [], config: {} });
+  return { schemaVersion: 1, stages: ids.map(stage), limits: {} };
 }
 
-/** Compact per-stage progress for list rows: one square per main-line step, derived from the job's current stage alone. */
-export const STRIP = ["disc", "elig", "req", "gen", "srev", "sval", "prep", "impl", "test", "hrev", "crev", "fval", "pr", "ci", "mr", "hm", "done"];
-export function stripStates(job: Job): NodeState[] {
-  const held = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION"].includes(job.stage);
+export type NodeState = "idle" | "done" | "run" | "wait" | "fail" | "blocked" | "skipped";
+export interface RouteEntry { exec: Execution; route: RouteRecord }
+export interface NodeFlow {
+  state: NodeState; attempts: number; durationMs: number; retries: number; lastExec: Execution | null;
+  /** The models that really ran for this stage (from the agent runs), in first-used order. */
+  models: string[]; gate: GateRecord | null; routes: RouteEntry[]; skippedReason: string | null;
+}
+export interface Flow {
+  nodes: Record<string, NodeFlow>;
+  /** Edge ids (`from>to`) the job really took: success edges, branches and failure routes alike. */
+  taken: Set<string>;
+  /** Of the taken edges, the ones that sent the job back (a `goto` failure route). */
+  loopsUsed: Set<string>;
+  /** Fix cycles per budget phase, from the routes the engine recorded. */
+  cycles: Record<string, { used: number; of: number }>;
+  active: string | null; elapsedMs: number; agentMs: number; executionCount: number;
+}
+
+export const emptyNode = (): NodeFlow => ({ state: "idle", attempts: 0, durationMs: 0, retries: 0, lastExec: null, models: [], gate: null, routes: [], skippedReason: null });
+const SKIPPED = /"skipped"\s*:\s*true/;
+/** A succeeded execution whose output says it was skipped (a runIf that did not hold, a dry run): clipped output is not valid JSON, so look at the text. */
+export const wasSkipped = (e: Execution): boolean => e.outcome === "succeeded" && !!e.output && SKIPPED.test(e.output);
+const skipReason = (e: Execution): string | null => { try { const v = JSON.parse(e.output ?? "") as { reason?: unknown }; return typeof v.reason === "string" ? v.reason : null; } catch { return e.route?.reason ?? null; } };
+
+/**
+ * Derives everything the chart shows from what the factory already stores (the job's workflow snapshot, its stage executions and agent
+ * runs), so counts, loops and timings are the real ones and there is no separate state to drift. `def` may be null (nothing recorded).
+ */
+export function deriveFlow(job: Job, def: WorkflowDef | null, executions: Execution[], invocations: Invocation[], now = Date.now()): Flow {
+  const known = new Set((def?.stages ?? []).map((s) => s.id));
+  const nodes: Record<string, NodeFlow> = {};
+  const node = (id: string) => (nodes[id] ??= emptyNode());
+  const taken = new Set<string>(), loopsUsed = new Set<string>(), cycles: Flow["cycles"] = {};
+  const modelsByExec = new Map<number, string[]>();
+  for (const i of invocations) if (i.stageExecutionId !== null && i.model) modelsByExec.set(i.stageExecutionId, [...(modelsByExec.get(i.stageExecutionId) ?? []), i.model]);
+
+  const real = executions.filter((e) => e.outcome !== "waiting").sort((a, b) => a.id - b.id); // a re-check while waiting (CI, your merge) is not another attempt, and takes no time
+  real.forEach((e, i) => {
+    if (def && !known.has(e.stage)) return;
+    const n = node(e.stage);
+    n.attempts++;
+    n.lastExec = e;
+    if (e.finishedAt && e.startedAt) n.durationMs += e.finishedAt - e.startedAt;
+    for (const m of modelsByExec.get(e.id) ?? []) if (!n.models.includes(m)) n.models.push(m);
+    if (e.gate) n.gate = e.gate;
+    if (e.route) {
+      n.routes.push({ exec: e, route: e.route });
+      if (e.route.action === "retry") n.retries++;
+      if (e.route.action === "goto" && e.route.to) { taken.add(`${e.stage}>${e.route.to}`); loopsUsed.add(`${e.stage}>${e.route.to}`); if (e.route.phase) cycles[e.route.phase] = { used: Math.max(cycles[e.route.phase]?.used ?? 0, e.route.cycle ?? 0), of: e.route.of ?? 0 }; }
+      if ((e.route.action === "branch" || e.route.action === "next") && e.route.to) taken.add(`${e.stage}>${e.route.to}`);
+    }
+    // The job moved from this execution to the next one: a success edge was taken, whichever stage it reached.
+    const nextExec = real[i + 1];
+    if (e.outcome === "succeeded" && nextExec && nextExec.stage !== e.stage && !e.route?.to) taken.add(`${e.stage}>${nextExec.stage}`);
+    if (e.outcome === "succeeded" && !nextExec && job.stage === COMPLETE && !e.route?.to) taken.add(`${e.stage}>${COMPLETE}`);
+    if (e.route?.action === "skip" && nextExec) taken.add(`${e.stage}>${nextExec.stage}`);
+    n.state = e.route?.action === "goto" ? "done" // it did its work and sent the job back
+      : wasSkipped(e) ? "skipped"
+      : e.outcome === "succeeded" ? "done"
+      : e.outcome === "started" ? (job.status === "running" ? "run" : "wait")
+      : e.route?.action === "skip" ? "skipped"
+      : "fail"; // failed, timed_out, cancelled
+    n.skippedReason = n.state === "skipped" ? skipReason(e) : null;
+  });
+
+  const held = HELD_STAGES.includes(job.stage);
   const at = held ? job.heldFromStage : job.stage;
-  const cur = at ? STRIP.indexOf(BY_STAGE[at] ?? (at === "SPECIFICATION_REMEDIATION" ? "sval" : at === "REMEDIATION" ? "test" : "")) : -1;
-  if (job.stage === "COMPLETED" || job.status === "done") return STRIP.map(() => "done");
-  return STRIP.map((_, i) => (cur < 0 ? "idle" : i < cur ? "done" : i > cur ? "idle" : held ? (job.stage === "PAUSED" ? "wait" : "fail") : job.status === "running" ? "run" : "wait"));
+  const active = at && at !== COMPLETE && (!def || known.has(at)) ? at : null;
+  if (active) {
+    const n = node(active);
+    n.state = held ? (job.stage === "PAUSED" ? "wait" : job.stage === "BLOCKED" || job.stage === "NEEDS_ATTENTION" ? "blocked" : "fail") : job.status === "running" ? "run" : "wait";
+  }
+  if (job.stage === COMPLETE) node(COMPLETE).state = "done";
+  const first = executions.find((e) => e.startedAt)?.startedAt ?? job.createdAt ?? now;
+  const end = job.status === "done" || job.status === "failed" || job.status === "cancelled" ? (job.updatedAt ?? now) : now;
+  return { nodes, taken, loopsUsed, cycles, active, elapsedMs: Math.max(0, end - first), agentMs: invocations.reduce((s, i) => s + (i.durationMs ?? 0), 0), executionCount: real.length };
+}
+
+export const nodeState = (f: Flow, id: string): NodeState => f.nodes[id]?.state ?? "idle";
+
+/** One square per step on the success path, for list rows: states from where the job is now, in the order the workflow runs. */
+export function stripOrder(def: WorkflowDef | null | undefined): string[] { return def ? [...executionOrder(def).main] : []; }
+export function stripStates(job: Job, order: string[]): NodeState[] {
+  const held = HELD_STAGES.includes(job.stage);
+  const at = held ? job.heldFromStage : job.stage;
+  if (job.stage === COMPLETE || job.status === "done") return order.map(() => "done");
+  const cur = at ? order.indexOf(at) : -1;
+  return order.map((_, i) => (cur < 0 ? "idle" : i < cur ? "done" : i > cur ? "idle" : held ? (job.stage === "PAUSED" ? "wait" : job.stage === "FAILED" || job.stage === "CANCELLED" ? "fail" : "blocked") : job.status === "running" ? "run" : "wait"));
+}
+
+/** A sentence per failure rule, plus what happens when none matches (the engine's own defaults). */
+export function describeFailures(s: StageDef, names: Record<string, string>): string[] {
+  const nm = (id: string) => names[id] ?? id;
+  const out = s.onFailure.map((r) => {
+    const on = r.on === "any" ? "Any failure" : r.on === "findings" ? "Findings to fix" : r.on === "gate" ? "The success gate not passing" : r.on === "timeout" ? "A timeout" : "An error";
+    const what = r.action === "retry" ? `retry (up to ${s.retry.max} time${s.retry.max === 1 ? "" : "s"})` : r.action === "goto" ? `send the job to “${nm(r.target ?? "")}”${r.maxCycles ? ` (at most ${r.maxCycles} fix cycles)` : ""}` : r.action === "skip" ? "skip this step" : r.action === "block" ? "block the job until a person answers" : r.action === "manual" ? "ask a person (needs attention)" : "fail the job";
+    return `${on}: ${what}.`;
+  });
+  return out;
 }

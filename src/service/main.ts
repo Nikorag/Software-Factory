@@ -65,7 +65,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     db: ctx.handle.db, engine: ctx.engine, logger,
     intervals: { discoveryMs: config.factory.pollIntervalSeconds * 1000 },
     // Nothing to poll before the first project is added (first run): do not complain about a missing Linear key yet.
-    discover: async () => config.projects.projects.length === 0 ? { enqueued: [], skipped: [], errors: [] } : discoverIssues({ db: ctx.handle.db, client: ctx.linear(), linear: config.linear, projects: config.projects.projects, logger, dryRun: config.factory.dryRun, requireOnboarding: true, pickupMode: config.factory.pickupMode }),
+    discover: async () => config.projects.projects.length === 0 ? { enqueued: [], skipped: [], errors: [] } : discoverIssues({ db: ctx.handle.db, client: ctx.linear(), linear: config.linear, projects: config.projects.projects, logger, dryRun: config.factory.dryRun, requireOnboarding: true, pickupMode: config.factory.pickupMode, workflows: config.workflows }),
     flush: async () => (config.factory.dryRun ? { sent: 0, failed: 0, pending: 0 } : flushOutbox({ db: ctx.handle.db, client: ctx.linear(), linear: config.linear, logger })),
     validate: async () => {
       for (const p of config.projects.projects.filter((x) => x.enabled && x.managed)) { const c = await ensureClone(p, { hosts: ctx.hosts }); if (c.status === "error") logger.warn({ project: p.id, err: c.error }, "clone failed"); }

@@ -1,5 +1,5 @@
 import { and, count, desc, eq } from "drizzle-orm";
-import type { StageName, LinearConfig } from "../config/schema.js";
+import type { LinearConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { decisions, linearOutbox } from "../db/schema.js";
 import type { EngineObserver } from "../core/engine.js";
@@ -9,7 +9,7 @@ import { enqueueOutbox, type OutboxOp } from "./outbox.js";
 type StateKey = keyof LinearConfig["statuses"];
 
 /** Which Linear status reflects each stage. Stages not listed leave the status alone. */
-export function statusForStage(stage: StageName): StateKey | undefined {
+export function statusForStage(stage: string): StateKey | undefined {
   switch (stage) {
     case "REQUIREMENTS_ANALYSIS": case "SPECIFICATION_GENERATION": case "SPECIFICATION_REVIEW":
     case "SPECIFICATION_REMEDIATION": case "SPECIFICATION_VALIDATION":
@@ -27,8 +27,8 @@ export function statusForStage(stage: StageName): StateKey | undefined {
   }
 }
 
-const HELD_HUMAN = new Set<StageName>(["BLOCKED", "NEEDS_ATTENTION", "FAILED"]);
-const TITLES: Partial<Record<StageName, string>> = {
+const HELD_HUMAN = new Set<string>(["BLOCKED", "NEEDS_ATTENTION", "FAILED"]);
+const TITLES: Record<string, string> = {
   BLOCKED: "Blocked", NEEDS_ATTENTION: "Needs attention", FAILED: "Failed", CANCELLED: "Cancelled", COMPLETED: "Completed",
 };
 
@@ -38,7 +38,7 @@ const TITLES: Partial<Record<StageName, string>> = {
  */
 export function createLinearReporter(db: FactoryDb, opts: { globalDryRun?: () => boolean } = {}): EngineObserver {
   return {
-    onStage(job: JobRow, stage: StageName, detail) {
+    onStage(job: JobRow, stage: string, detail) {
       const issueId = job.externalId;
       const dry = job.dryRun || (opts.globalDryRun?.() ?? false);
       const ops: { op: OutboxOp; key: string }[] = [];

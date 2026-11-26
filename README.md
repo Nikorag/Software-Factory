@@ -185,7 +185,7 @@ pnpm typecheck && pnpm lint && pnpm test
 
 ## Documentation
 
-[Setup](docs/setup.md) · [Configuration](docs/configuration.md) · [Workflows](docs/workflows.md) · [Model routing](docs/model-routing.md) · [Integrations](docs/integrations.md) · [Jira](docs/jira.md) · [Bitbucket](docs/bitbucket.md) · [Operations](docs/operations.md) · [Troubleshooting](docs/troubleshooting.md) · [Decisions](docs/adr)
+[Setup](docs/setup.md) · [Configuration](docs/configuration.md) · [Workflows](docs/workflows.md) · [Configurable workflows](docs/configurable-workflows.md) · [Model routing](docs/model-routing.md) · [Integrations](docs/integrations.md) · [Jira](docs/jira.md) · [Bitbucket](docs/bitbucket.md) · [Operations](docs/operations.md) · [Troubleshooting](docs/troubleshooting.md) · [Decisions](docs/adr)
 
 ## License
 

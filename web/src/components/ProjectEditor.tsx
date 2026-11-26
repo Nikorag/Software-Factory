@@ -15,6 +15,7 @@ import type { GhAccounts } from "@/lib/types";
 import type { BitbucketCredential, Project, TeamAudit } from "@/lib/types";
 import { TASKS, type GlobalSettings, type Routes, type RouteCfg, type TaskId } from "@/lib/tasks";
 import { ModelPicker } from "./ModelPicker";
+import { ProjectWorkflowPicker } from "./workflow/ProjectWorkflowPicker";
 import { startAction, TaskOutput } from "./TaskRunner";
 
 const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
@@ -170,6 +171,12 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         </div>
       </Section>
       <Separator />
+      {project ? (
+        <Section title="Workflow" hint="The steps a ticket in this project goes through. A ticket label assigned to a workflow takes precedence; otherwise this one; otherwise the global default.">
+          <ProjectWorkflowPicker projectId={project.id} />
+        </Section>
+      ) : null}
+
       <Section title="Commands" hint="Run by the factory in a throwaway worktree, sandboxed. A test command is required before it will implement anything: use the project's own CI as the guide, then press “Run checks” to prove they work.">
         <div className="grid gap-3 sm:grid-cols-2">{CMDS.map((k) => <div key={k} className="grid gap-1.5"><Label htmlFor={`pe-c-${k}`} className="capitalize">{k}</Label><Input id={`pe-c-${k}`} className="font-mono text-xs" value={f.commands[k] ?? ""} onChange={(e) => set("commands", { ...f.commands, [k]: e.target.value })} placeholder={k === "test" ? "npm test" : ""} /></div>)}</div>
         {noTest ? <p className="text-sm text-loop">No test command: the factory will not implement changes here yet.</p> : null}
