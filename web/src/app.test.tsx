@@ -58,6 +58,17 @@ describe("flow derivation (from the stage history the factory already stores)", 
   });
 });
 
+describe("flow derivation: waiting", () => {
+  it("does not count re-checks while waiting as attempts or time on the step", () => {
+    const waits = Array.from({ length: 12 }, (_, i) => exec("MERGING", "waiting", 100 + i));
+    const f = deriveFlow(job({ stage: "MERGING", status: "queued" }), [exec("PULL_REQUEST_CREATION"), ...waits], []);
+    expect(f.attempts["hm"]).toBeUndefined();
+    expect(f.duration["hm"]).toBeUndefined();
+    expect(f.state["hm"]).toBe("wait");
+    expect(f.attempts["pr"]).toBe(1);
+  });
+});
+
 describe("dashboard", () => {
   it("renders the overview: state, mode, counts, system and dependency health", async () => {
     routes = { "/api/overview": overview() };

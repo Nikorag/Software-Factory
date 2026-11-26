@@ -90,6 +90,7 @@ describe("job timeline", () => {
   });
 });
 
+<<<<<<< HEAD
 describe("decisions after a standalone entry", () => {
   it("attach to the step that was running, not to an earlier 'You retried' entry that has no end", () => {
     id = 0;
@@ -102,3 +103,38 @@ describe("decisions after a standalone entry", () => {
   });
 });
 
+=======
+describe("a step that waits and is re-checked", () => {
+  const wait = (stage: string, i: number, reason: string) => ex(stage, "waiting", i * 600, i * 600 + 1, { output: JSON.stringify({ reason, delayMs: 600_000 }) });
+  it("is one entry however many times it was checked, saying how many checks and when the last one was", () => {
+    id = 0;
+    const waits = Array.from({ length: 14 }, (_, i) => wait("MERGING", i + 1, "awaiting a human to merge https://github.com/o/r/pull/3"));
+    const t = buildTimeline(detail([ex("PULL_REQUEST_CREATION", "succeeded", 0, 5), ...waits], [], [], job({ stage: "MERGING", status: "queued" })));
+    const merging = t.filter((e) => e.stage === "MERGING");
+    expect(merging).toHaveLength(1);
+    expect(merging[0]).toMatchObject({ tone: "wait", checks: 14, run: 1, title: "Awaiting your merge" });
+    expect(merging[0]!.summary).toBe("awaiting a human to merge https://github.com/o/r/pull/3 · checked 14 times");
+    expect(merging[0]!.at).toBe(T0 + 600 * 1000);                  // since the first check
+    expect(merging[0]!.lastCheckAt).toBe(T0 + 14 * 600 * 1000 + 1000);
+  });
+  it("ends as one finished entry when the wait is over, still saying it waited", () => {
+    id = 0;
+    const t = buildTimeline(detail([wait("CI_VALIDATION", 1, "CI pending: build"), wait("CI_VALIDATION", 2, "CI pending: build"), wait("CI_VALIDATION", 3, "CI pending: build"),
+      ex("CI_VALIDATION", "succeeded", 2400, 2401, { output: JSON.stringify({ checks: [] }) })]));
+    const ci = t.filter((e) => e.stage === "CI_VALIDATION");
+    expect(ci).toHaveLength(1);
+    expect(ci[0]).toMatchObject({ tone: "ok", run: 1 });
+    expect(ci[0]!.checks).toBeUndefined();
+    expect(ci[0]!.summary).toContain("after waiting, 3 checks");
+  });
+  it("keeps a later visit to the same step (after a fix) as its own entry", () => {
+    id = 0;
+    const t = buildTimeline(detail([wait("CI_VALIDATION", 1, "CI pending"), ex("CI_VALIDATION", "succeeded", 700, 701, { output: JSON.stringify({ remediate: "CI failed: build", details: {} }) }),
+      ex("REMEDIATION", "succeeded", 702, 900), wait("CI_VALIDATION", 20, "CI pending"), wait("CI_VALIDATION", 21, "CI pending")]));
+    const ci = t.filter((e) => e.stage === "CI_VALIDATION");
+    expect(ci).toHaveLength(2);
+    expect(ci.map((e) => e.run)).toEqual([1, 2]);
+    expect(ci[1]).toMatchObject({ tone: "wait", checks: 2 });
+  });
+});
+>>>>>>> origin/main
