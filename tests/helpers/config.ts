@@ -10,4 +10,8 @@ export function fixtureConfigDir(): string {
   copyFileSync(join(process.cwd(), "tests", "fixtures", "projects.yaml"), join(d, "projects.yaml"));
   return d;
 }
-export const fixtureConfig = () => loadConfig(fixtureConfigDir());
+/** The fixtures exercise the Spec Kit flow end to end, so they select `speckit`; the shipped default is `haiku_prompt` (see tests/haiku-flow.test.ts). */
+export const fixtureConfig = (planningMode: "speckit" | "haiku_prompt" = "speckit") => {
+  const c = loadConfig(fixtureConfigDir());
+  return { ...c, factory: { ...c.factory, workflow: { ...c.factory.workflow, planning_mode: planningMode } } };
+};

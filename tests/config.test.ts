@@ -43,6 +43,24 @@ describe("loadConfig", () => {
   });
 });
 
+describe("workflow.planning_mode (per profile)", () => {
+  it("defaults to the lightweight haiku_prompt workflow, with Haiku writing the prompt", () => {
+    const c = loadConfig(dir({ "models.yaml": MODELS }));
+    expect(c.factory.workflow).toEqual({ planning_mode: "haiku_prompt", max_conflict_resolutions: 3 });
+    expect(c.models.routes.prompt_generation).toEqual({ provider: "anthropic", model: "haiku" });
+    expect(loadConfig("config").factory.workflow.planning_mode).toBe("haiku_prompt");
+  });
+  it("a profile opts into speckit in its own factory.yaml, without touching another profile's", () => {
+    const a = loadConfig(dir({ "models.yaml": MODELS, "factory.yaml": "workflow:\n  planning_mode: speckit\n" }));
+    const b = loadConfig(dir({ "models.yaml": MODELS }));
+    expect([a.factory.workflow.planning_mode, b.factory.workflow.planning_mode]).toEqual(["speckit", "haiku_prompt"]);
+  });
+  it("rejects an unknown mode, and a prompt writer that cannot read the repository (local model)", () => {
+    expect(() => loadConfig(dir({ "models.yaml": MODELS, "factory.yaml": "workflow: { planning_mode: waterfall }" }))).toThrow(ConfigError);
+    expect(() => loadConfig(dir({ "models.yaml": `${MODELS}  prompt_generation: { provider: local, model: q }\n` }))).toThrow(/anthropic/);
+  });
+});
+
 describe("linear config", () => {
   it("fills every status and label default when linear.yaml is absent", () => {
     const c = loadConfig(dir({ "models.yaml": MODELS }));

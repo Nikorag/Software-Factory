@@ -206,11 +206,100 @@ describe.skipIf(!sandboxAvailable())("what a human (or GitHub) can do to the PR"
     expect(job(h).lastError).toMatch(/closed without merging/);
     expect(existsSync(h.wt)).toBe(true);
   });
-  it("merge conflicts need a human: the factory does not rewrite history", async () => {
-    const gh = new FakeGitHub(); gh.mergeable = "CONFLICTING";
-    const h = await harness({ github: gh, timing: FAST });
-    await until(h, () => stageOf(h) === "NEEDS_ATTENTION");
-    expect(job(h).lastError).toMatch(/merge conflicts.*does not rewrite history/);
+  describe("merge conflicts are resolved by Claude, not handed to a human", () => {
+    /** Someone else lands a change on origin/main that collides with the branch's src/due.js (add/add). */
+    const upstreamCollides = (h: H) => {
+      const other = join(h.repo, "..", "upstream");
+      sh(join(h.repo, ".."), "clone", "-q", origin(h), other);
+      write(other, "src/due.js", "export const fromMain = 1;\n");
+      sh(other, "add", "-A"); sh(other, "commit", "-q", "-m", "upstream: add due.js"); sh(other, "push", "-q", "origin", "main");
+      return sh(origin(h), "rev-parse", "main");
+    };
+    const gitLog = (h: H) => ({ main: sh(origin(h), "rev-parse", "main"), branch: sh(origin(h), "rev-parse", "factory/JAM-1") });
+
+    it("detects the conflict on the PR, merges the target branch in, resolves the files, re-verifies, pushes (never forced) and re-runs the PR checks", async () => {
+      const gh = new FakeGitHub(); gh.mergeable = "CONFLICTING";
+      const h = await harness({ github: gh, timing: FAST });
+      gh.mergeableWhen = () => decisionKinds(h).includes("conflict.resolved");
+      const mainSha = upstreamCollides(h);
+      await until(h, () => stageOf(h) === "MERGING" || stageOf(h) === "NEEDS_ATTENTION");
+      expect(job(h).lastError).toBeNull();
+      expect(stageOf(h)).toBe("MERGING");
+      // Claude was asked to resolve exactly the conflicting file, told to preserve both sides, and could not push or abort.
+      const asked = impl(h).find((c) => /merge conflicts/i.test(c.prompt))!;
+      expect(asked.prompt).toContain("- src/due.js");
+      expect(asked.prompt).toMatch(/BOTH sides/);
+      expect(asked.prompt).toMatch(/Do not rebase, reset, abort, push/);
+      // Both sides survived, in a real merge commit that is now on the PR branch; main was only read.
+      const merged = sh(origin(h), "show", "factory/JAM-1:src/due.js");
+      expect(merged).toContain("fromMain"); expect(merged).toContain("isOverdue");
+      expect(sh(origin(h), "log", "-1", "--format=%P", "factory/JAM-1").split(" ")).toHaveLength(2);
+      expect(gitLog(h).main).toBe(mainSha);
+      expect(sh(origin(h), "merge-base", "--is-ancestor", mainSha, "factory/JAM-1") ?? "").toBe("");
+      // Audit trail, bounded and logged; the merge was re-verified before the push (checks and reviews ran again after it).
+      const kinds = decisionKinds(h);
+      expect(kinds).toEqual(expect.arrayContaining(["conflict.attempt", "conflict.resolution", "conflict.resolved", "stage.redirect"]));
+      const order = h.stages();
+      const at = order.indexOf("CONFLICT_RESOLUTION");
+      expect(at).toBeGreaterThan(-1);
+      expect(order.slice(at, at + 3)).toEqual(["CONFLICT_RESOLUTION", "AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW"]);
+      expect(order.slice(at).filter((x) => x === "PULL_REQUEST_CREATION")).toHaveLength(1);
+      expect(h.github.created).toHaveLength(1); // the existing PR was updated, not replaced
+      // The target branch is now the diff base: the job's own diff does not include main's change.
+      expect(h.ctx.handle.db.select().from(worktrees).where(eq(worktrees.jobId, h.jobId)).get()!.baseSha).toBe(mainSha);
+      expect(job(h).remediationAttempts).toBe(0); // conflicts do not spend a fix cycle
+    });
+
+    it("merges cleanly without bothering the agent when git can", async () => {
+      const gh = new FakeGitHub(); gh.mergeable = "CONFLICTING";
+      const h = await harness({ github: gh, timing: FAST });
+      gh.mergeableWhen = () => decisionKinds(h).includes("conflict.resolved");
+      const other = join(h.repo, "..", "upstream");
+      sh(join(h.repo, ".."), "clone", "-q", origin(h), other);
+      write(other, "docs/notes.md", "unrelated\n"); sh(other, "add", "-A"); sh(other, "commit", "-q", "-m", "docs"); sh(other, "push", "-q", "origin", "main");
+      await until(h, () => stageOf(h) === "MERGING" || stageOf(h) === "NEEDS_ATTENTION");
+      expect(job(h).lastError).toBeNull();
+      expect(stageOf(h)).toBe("MERGING");
+      expect(impl(h).some((c) => /merge conflicts/i.test(c.prompt))).toBe(false);
+      expect(sh(origin(h), "show", "factory/JAM-1:docs/notes.md")).toContain("unrelated");
+    });
+
+    it("a genuine ambiguity stops for a human with the specific question, and leaves the branch exactly as it was", async () => {
+      const gh = new FakeGitHub(); gh.mergeable = "CONFLICTING";
+      const h = await harness({ github: gh, timing: FAST });
+      h.claude.b.conflict = () => ({ resolved: false, files: [], ambiguity: "src/due.js: main defines isOverdue as `due <= today`, the ticket says `due < today`: which is intended?", summary: "contradictory" });
+      upstreamCollides(h);
+      await until(h, () => stageOf(h) === "NEEDS_ATTENTION");
+      expect(job(h).lastError).toMatch(/need a human decision.*src\/due\.js.*which is intended\?/s);
+      expect(decisionKinds(h)).toContain("conflict.ambiguous");
+      expect(sh(h.wt, "log", "-1", "--format=%P").split(" ")).toHaveLength(1); // no merge commit was made
+      expect(sh(h.wt, "status", "--porcelain")).toBe(""); // the merge was aborted, no markers left behind
+    });
+
+    it("is bounded: when the PR still conflicts after the allowed resolutions, a human is asked", async () => {
+      const gh = new FakeGitHub(); gh.mergeable = "CONFLICTING"; // GitHub never agrees it is resolved
+      const h = await harness({ github: gh, timing: FAST, maxConflicts: 1 });
+      upstreamCollides(h);
+      await until(h, () => stageOf(h) === "NEEDS_ATTENTION", 200);
+      expect(job(h).lastError).toMatch(/merge conflicts.*1 automatic resolution/s);
+      expect(h.stages().filter((x) => x === "CONFLICT_RESOLUTION")).toHaveLength(1);
+    });
+
+    it("conflicts that appear while waiting for the human to merge are handled too", async () => {
+      const h = await harness({ timing: FAST });
+      await until(h, () => stageOf(h) === "MERGING");
+      upstreamCollides(h);
+      h.github.mergeable = "CONFLICTING";
+      h.github.mergeableWhen = () => decisionKinds(h).includes("conflict.resolved");
+      await until(h, () => h.stages().includes("CONFLICT_RESOLUTION") && stageOf(h) === "MERGING" && decisionKinds(h).includes("conflict.resolved"), 200);
+      expect(sh(origin(h), "show", "factory/JAM-1:src/due.js")).toContain("fromMain");
+    });
+
+    it("never touches the default branch or force-pushes: the conflict code has no push, no rebase, no reset, no force", () => {
+      const code = readFileSync(join(process.cwd(), "src/implement/conflicts.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+      expect(code).not.toMatch(/["']push["']|["']rebase["']|["']reset["']|--force|["']checkout["']|["']branch["']/);
+      expect(code).toMatch(/startsWith\("factory\/"\)/);
+    });
   });
   it("gives up waiting for a human after the configured time, instead of waiting forever", async () => {
     const h = await harness({ timing: { mergePollMs: 10, mergeMaxMs: 50 } });

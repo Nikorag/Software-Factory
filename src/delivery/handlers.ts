@@ -12,6 +12,7 @@ import { checkBranchProtection, createGhApi, parseRemote } from "../repo/inspect
 import { git as realGit, GitError, type GitFn } from "../repo/git.js";
 import { pushBranch, PushRejected } from "../repo/push.js";
 import { WorktreeError } from "../repo/worktrees.js";
+import { conflictAttempts, DEFAULT_MAX_CONFLICT_RESOLUTIONS } from "../implement/conflicts.js";
 import { deferrals, openTasks, triage } from "../implement/history.js";
 import { readSpecBundle } from "../speckit/artifacts.js";
 
@@ -24,6 +25,8 @@ export interface DeliveryDeps extends StageKitDeps {
   /** Per-project host (GitHub or Bitbucket): repo slug, git credentials and branch protection. Absent = GitHub (as before). */
   hosts?: Hosts;
   push?: typeof pushBranch;
+  /** Automatic merge-conflict resolutions allowed per job (live), see `workflow.max_conflict_resolutions`. */
+  maxConflictResolutions?: () => number;
   timing?: Partial<DeliveryTiming>;
   now?: () => Date;
 }
@@ -104,6 +107,16 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
     if (e instanceof WorktreeError) return { kind: "blocked", reason: e.message };
     return undefined;
   };
+  /**
+   * The PR cannot merge: send the job to CONFLICT_RESOLUTION (Claude merges the target branch in and resolves the conflicts) instead of
+   * stopping for a human. Bounded per job; past the bound, or when resolution finds a real ambiguity, a human is asked.
+   */
+  const conflictHop = (jobId: string, pr: PrInfo): StageResult => {
+    const max = (d.maxConflictResolutions ?? (() => DEFAULT_MAX_CONFLICT_RESOLUTIONS))();
+    const used = conflictAttempts(d.db, jobId);
+    if (used >= max) return { kind: "needs_attention", reason: `The pull request has merge conflicts with ${pr.baseRefName} (${pr.url}) and ${used} automatic resolution(s) did not settle it. A human must resolve them (the factory never force-pushes).` };
+    return { kind: "remediate", to: "CONFLICT_RESOLUTION", reason: `merge conflicts with ${pr.baseRefName} (${pr.url})`, output: { pr: pr.url, base: pr.baseRefName, attempt: used + 1, of: max } };
+  };
   const prOf = (jobId: string): number | undefined => {
     const url = d.db.select().from(jobs).where(eq(jobs.id, jobId)).get()?.prUrl;
     const m = url ? /\/pull\/(\d+)/.exec(url) : null;
@@ -160,6 +173,9 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
     try {
       const repo = await repoSlug(project, git);
       const gh = d.github(project);
+      // GitHub does not run pull_request workflows while a PR conflicts, so look before waiting for checks that will never come.
+      const current = await gh.getPr(repo, number);
+      if (current.state === "OPEN" && current.mergeable === "CONFLICTING") return conflictHop(ctx.job.id, current);
       const checks = await gh.checks(repo, number);
       const waited = waitedMs(ctx.job.id, "CI_VALIDATION");
       if (checks.length === 0) {
@@ -206,7 +222,7 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
   };
   const summarise = (cs: CheckInfo[]) => cs.map((c) => ({ name: c.name, workflow: c.workflow, bucket: c.bucket }));
 
-  /** Informational: is the PR mergeable and what does GitHub enforce? It never blocks on a missing review, and never merges. */
+  /** Informational: is the PR mergeable and what does GitHub enforce? It never blocks on a missing review, and never merges. Conflicts go to CONFLICT_RESOLUTION. */
   const mergeValidation: StageHandler = async (ctx) => {
     if (ctx.dryRun) return { kind: "ok", output: { dryRun: true } };
     const p = await prepare(ctx.job);
@@ -218,7 +234,7 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
       const repo = await repoSlug(project, git);
       const pr = await d.github(project).getPr(repo, number);
       if (pr.state === "CLOSED") return { kind: "fail", reason: `The pull request was closed without merging (${pr.url}).` };
-      if (pr.mergeable === "CONFLICTING") return { kind: "needs_attention", reason: `The pull request has merge conflicts with ${pr.baseRefName} (${pr.url}). A human must rebase or resolve them; the factory does not rewrite history.` };
+      if (pr.mergeable === "CONFLICTING") return conflictHop(ctx.job.id, pr);
       const [owner, name] = repo.split("/") as [string, string];
       const protection = d.hosts && project.host === "bitbucket" ? await d.hosts.protection(project, repo) : await checkBranchProtection({ owner, repo: name }, project.defaultBranch, createGhApi(project.github.account));
       const notes = [
@@ -247,6 +263,7 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
       const pr = await d.github(project).getPr(repo, number);
       if (pr.state === "MERGED") { record(ctx.job.id, "pr.merged", pr.url, `merged by a human at ${pr.mergedAt}`); return { kind: "ok", output: { merged: true, mergedAt: pr.mergedAt } }; }
       if (pr.state === "CLOSED") return { kind: "fail", reason: `The pull request was closed without merging (${pr.url}).` };
+      if (pr.mergeable === "CONFLICTING") return conflictHop(ctx.job.id, pr); // the target moved while a human was deciding
       if (waitedMs(ctx.job.id, "MERGING") > t.mergeMaxMs) return { kind: "needs_attention", reason: `The pull request has been open for ${Math.round(t.mergeMaxMs / 86_400_000)} days without being merged (${pr.url}).` };
       return { kind: "wait", reason: `awaiting a human to merge ${pr.url}`, delayMs: t.mergePollMs };
     } catch (e) {

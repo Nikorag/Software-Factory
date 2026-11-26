@@ -36,6 +36,7 @@ export function stageBudgetSeconds(stage: StageName, i: BudgetInputs): number | 
     case "LOCAL_MODEL_REVIEW": return 2 * 15 * MIN + 15 * MIN + MARGIN; // independent review (with fallback) + security review
     case "CLAUDE_REVIEW": return 20 * MIN + MARGIN;
     case "REMEDIATION": return 40 * MIN + MARGIN;
+    case "CONFLICT_RESOLUTION": return 5 * MIN + 40 * MIN + MARGIN; // fetch + merge, then the implementer resolves the conflicting files
     case "FINAL_VALIDATION": return CHECKS * cmd + 25 * MIN + MARGIN; // checks + final review
     default: return undefined;
   }

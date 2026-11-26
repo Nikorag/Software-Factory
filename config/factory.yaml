@@ -6,6 +6,9 @@ server:
 logLevel: info
 dryRun: false                    # true: discover and plan, never mutate repos or Linear
 mergeMode: pr-only               # the factory raises pull requests and NEVER merges them; a human merges
+workflow:
+  planning_mode: haiku_prompt    # haiku_prompt: Haiku reads the repo and writes the implementer's prompt (fast, default). speckit: the full Spec Kit flow
+  max_conflict_resolutions: 3    # how many times Claude may resolve merge conflicts on one PR before a human is asked
 maxRemediationAttempts: 3
 maxConcurrentJobs: 1             # raise only after measuring memory headroom
 pollIntervalSeconds: 60

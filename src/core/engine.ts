@@ -20,7 +20,7 @@ export interface StageContext {
 }
 export type StageResult =
   | { kind: "ok"; output?: unknown }
-  | { kind: "remediate"; reason: string; output?: unknown } // findings that need fixing
+  | { kind: "remediate"; reason: string; output?: unknown; /** Send the job to this stage instead of the usual remediation, without spending a fix cycle (the sender bounds it itself). */ to?: StageName } // findings that need fixing
   | { kind: "wait"; reason: string; delayMs: number } // nothing is wrong: poll again later (CI pending, awaiting a human). Never consumes retries.
   | { kind: "retry"; reason: string } // transient failure
   | { kind: "blocked"; reason: string } // needs a dependency / ambiguity resolved
@@ -271,6 +271,8 @@ export class Engine {
     void done.then(() => { if (this.unsettled.get(jobId) === done) this.unsettled.delete(jobId); });
   }
 
+  private planningMode() { return this.o.config.factory.workflow?.planning_mode ?? "speckit"; }
+
   /** Which fix-cycle budget a remediation from `stage` spends, and how many of it are already used. */
   private fixPhase(job: JobRow, stage: StageName): { phase: FixPhase; used: number } {
     if (stage === "SPECIFICATION_REVIEW" || stage === "SPECIFICATION_VALIDATION") return { phase: "specification", used: job.remediationAttempts };
@@ -288,7 +290,7 @@ export class Engine {
     const { db } = this.o;
     switch (result.kind) {
       case "ok": {
-        const next = nextStage(stage);
+        const next = nextStage(stage, this.planningMode());
         if (!next) throw new Error(`no successor for ${stage}`);
         db.transaction(() => {
           finish("succeeded", { output: result.output });
@@ -303,6 +305,15 @@ export class Engine {
         return next !== "COMPLETED";
       }
       case "remediate": {
+        if (result.to) { // a directed hop (merge conflicts): recorded, but not a fix cycle
+          const to = result.to;
+          finish("succeeded", { output: { redirect: result.reason, details: result.output } });
+          db.transaction(() => {
+            db.insert(decisions).values({ jobId: job.id, kind: "stage.redirect", decision: `${stage} -> ${to}`, rationale: result.reason, actor: "factory" }).run();
+            this.setStage(job, to, { stageAttempts: 0 });
+          });
+          return true;
+        }
         const target = remediationTarget(stage);
         if (!target) { finish("failed", { error: `${stage} cannot remediate` }); this.hold(job, "FAILED", `${stage} reported findings but has no remediation path`); return false; }
         const { phase, used } = this.fixPhase(job, stage);

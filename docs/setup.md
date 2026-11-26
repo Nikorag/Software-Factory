@@ -10,7 +10,7 @@ The installer checks all of this for you and says how to fix anything missing (`
 | Claude Code, signed in | `curl -fsSL https://claude.ai/install.sh | bash`, then run `claude` and `/login` with your subscription (no API key) |
 | GitHub CLI, signed in | `brew install gh`, then `gh auth login` (once per GitHub account you want to use) |
 | uv (provides Python for Spec Kit) | `brew install uv` |
-| Spec Kit | `uv tool install specify-cli` ([github/spec-kit](https://github.com/github/spec-kit)) |
+| Spec Kit (only for `workflow.planning_mode: speckit`) | `uv tool install specify-cli` ([github/spec-kit](https://github.com/github/spec-kit)) |
 | Linear API key | Linear → Settings → Account → Security & access → Personal API keys. The setup wizard stores it in your macOS keychain |
 
 ## Optional: a local model

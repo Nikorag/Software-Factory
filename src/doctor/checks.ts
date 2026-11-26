@@ -116,7 +116,7 @@ export async function runDoctor(config: LoadedConfig, fetchImpl: typeof fetch = 
     await tool("gh", "gh", ["--version"]),
     await checkGitHubAuth(),
     await tool("claude", "claude", ["--version"]),
-    await tool("specify (SpecKit)", findBinary("specify") ?? "specify", ["--version"], false),
+    ...(config.factory.workflow.planning_mode === "speckit" ? [await tool("specify (SpecKit)", findBinary("specify") ?? "specify", ["--version"], false)] : []), // only the speckit planning mode needs it
     ...(await localChecks(config, fetchImpl)),
     ...reviewerIndependence(config),
   ];

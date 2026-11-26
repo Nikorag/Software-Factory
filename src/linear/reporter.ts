@@ -1,5 +1,5 @@
 import { and, count, desc, eq } from "drizzle-orm";
-import type { StageName, LinearConfig } from "../config/schema.js";
+import type { StageName, LinearConfig, PlanningMode } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { decisions, linearOutbox } from "../db/schema.js";
 import type { EngineObserver } from "../core/engine.js";
@@ -9,13 +9,15 @@ import { enqueueOutbox, type OutboxOp } from "./outbox.js";
 type StateKey = keyof LinearConfig["statuses"];
 
 /** Which Linear status reflects each stage. Stages not listed leave the status alone. */
-export function statusForStage(stage: StageName): StateKey | undefined {
+export function statusForStage(stage: StageName, mode: PlanningMode = "speckit"): StateKey | undefined {
   switch (stage) {
-    case "REQUIREMENTS_ANALYSIS": case "SPECIFICATION_GENERATION": case "SPECIFICATION_REVIEW":
+    case "REQUIREMENTS_ANALYSIS": if (mode === "haiku_prompt") return "inProgress"; // no specification phase: the ticket goes straight to work
+    // falls through
+    case "SPECIFICATION_GENERATION": case "SPECIFICATION_REVIEW":
     case "SPECIFICATION_REMEDIATION": case "SPECIFICATION_VALIDATION":
       return "specificationReview";
     case "IMPLEMENTATION_PREPARATION": case "IMPLEMENTATION": case "AUTOMATED_TESTING": case "LOCAL_MODEL_REVIEW":
-    case "CLAUDE_REVIEW": case "REMEDIATION": case "FINAL_VALIDATION":
+    case "CLAUDE_REVIEW": case "REMEDIATION": case "CONFLICT_RESOLUTION": case "FINAL_VALIDATION":
       return "inProgress";
     case "PULL_REQUEST_CREATION": case "CI_VALIDATION": case "MERGE_VALIDATION":
       return "readyForReview";
@@ -36,7 +38,7 @@ const TITLES: Partial<Record<StageName, string>> = {
  * Translates stage changes into outbox rows. Runs inside the engine's transaction, so a stage change and its
  * Linear update are committed together. Dry-run jobs record the intention instead of queuing a write.
  */
-export function createLinearReporter(db: FactoryDb, opts: { globalDryRun?: () => boolean } = {}): EngineObserver {
+export function createLinearReporter(db: FactoryDb, opts: { globalDryRun?: () => boolean; planningMode?: () => PlanningMode } = {}): EngineObserver {
   return {
     onStage(job: JobRow, stage: StageName, detail) {
       const issueId = job.externalId;
@@ -45,7 +47,7 @@ export function createLinearReporter(db: FactoryDb, opts: { globalDryRun?: () =>
       const seq = (kind: string) => db.select({ n: count() }).from(linearOutbox).where(and(eq(linearOutbox.jobId, job.id), eq(linearOutbox.kind, kind as never))).get()?.n ?? 0;
       const last = (kind: string) => db.select().from(linearOutbox).where(and(eq(linearOutbox.jobId, job.id), eq(linearOutbox.kind, kind as never))).orderBy(desc(linearOutbox.id)).limit(1).get();
 
-      const target = statusForStage(stage);
+      const target = statusForStage(stage, opts.planningMode?.());
       if (target) {
         const prev = last("set_state");
         if (!prev || (JSON.parse(prev.payloadJson) as { stateKey: string }).stateKey !== target) {

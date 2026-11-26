@@ -130,7 +130,7 @@ program
     const selected = config.projects.projects.filter((p) => !id || p.id === id);
     if (selected.length === 0) { console.error(id ? `no such project: ${id}` : "no projects configured in config/projects.yaml"); process.exitCode = 1; handle.close(); return; }
     syncProjects(handle.db, config.projects.projects);
-    const reports = await validateProjects(handle.db, selected, { hosts: createHosts(config) });
+    const reports = await validateProjects(handle.db, selected, { hosts: createHosts(config), planningMode: config.factory.workflow.planning_mode });
     for (const r of reports) {
       if (opts.json) { console.log(JSON.stringify(r, null, 2)); continue; }
       console.log(`${r.ok ? "✓" : "✗"} ${r.projectId}  ${r.path}  (default: ${r.defaultBranch ?? "?"}, build: ${r.buildSystems.join(",") || "none"}, protection: ${r.branchProtection.status})`);

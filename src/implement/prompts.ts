@@ -45,6 +45,24 @@ export function implementPrompt(o: { featureDir: string; wrapper: string; checks
   ].join("\n\n");
 }
 
+const DEFER_RULE_DIRECT = `Never get stuck on work only a person can do (manual or visual testing, a walkthrough in a real window or browser, real devices, external servers, credentials, or a command the check tool does not offer, such as generating a database migration with a tool you cannot run). Do not fake it and do not keep retrying it: list it in \`deferred\` with a short id, the reason and what the person should check. The factory posts deferred items on the pull request and carries on.`;
+
+/** haiku_prompt mode: the implementer works from the Haiku-written prompt, with no spec, tasks file or converge step. */
+export function implementPromptDirect(o: { plan: { prompt: string; criteria: Criterion[] }; wrapper: string; checks: string[]; ticket?: string; previousFailures?: string[]; unrestricted?: boolean }): string {
+  return [
+    "Implement the change described below in this worktree, on the current branch. It was written for you from the ticket and the repository; the ticket text follows it for reference.",
+    `<implementation-prompt>\n${o.plan.prompt}\n</implementation-prompt>`,
+    `Acceptance criteria (the change is reviewed against these):\n${o.plan.criteria.map((c) => `- ${c.id}: ${c.text}`).join("\n")}`,
+    o.ticket ?? "",
+    failuresText(o.previousFailures),
+    o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : `Verify your work ONLY with the factory's check tool, one check per command: ${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}. It runs the project's own command inside a sandbox with no network. Do not run npm, pnpm, yarn, node, python or any other command to execute code: they are refused. You cannot install dependencies; if one is missing, say so in your summary instead of working around it.`,
+    "Write or update tests for every behaviour you change, and never delete, skip or weaken an existing test to make a check pass. Do not expand scope beyond the prompt.",
+    "Commit coherent changes as you go with `git add` and `git commit`. Do not touch CI workflows, secrets, or the .claude directory.",
+    DEFER_RULE_DIRECT,
+    "Finish with a short summary per the JSON schema: what you changed and tested, and anything deferred to a human.",
+  ].filter(Boolean).join("\n\n");
+}
+
 export const convergePrompt = (featureDir: string, o: { skipped?: { id: string; reason: string }[]; deferred?: { id: string; reason: string }[] } = {}) => [
   skillPrompt("converge", featureDir, "This step only assesses the codebase against the spec, plan and tasks. You may append new tasks to tasks.md and change nothing else."),
   o.skipped?.length || o.deferred?.length
@@ -63,7 +81,7 @@ const resultsText = (results: { kind: string; ok: boolean; command: string }[]) 
 
 export const codeReviewPrompt = (o: { ticket: string; spec: string; stat: string; diff: string; results: { kind: string; ok: boolean; command: string }[]; history?: string }) => [
   "Independently review this implementation. You have not seen the author's reasoning.", o.ticket,
-  `Specification (excerpt):\n${clip(o.spec, 12_000)}`, `Check results:\n${resultsText(o.results)}`, `Diff stat:\n${o.stat}`, `Diff (code only):\n\`\`\`diff\n${o.diff}\n\`\`\``,
+  `Requirements (excerpt):\n${clip(o.spec, 12_000)}`, `Check results:\n${resultsText(o.results)}`, `Diff stat:\n${o.stat}`, `Diff (code only):\n\`\`\`diff\n${o.diff}\n\`\`\``,
   o.history ?? "",
   "Report findings per the JSON schema with the file and line. `blocker`: wrong behaviour, data loss, or a requirement not met. `major`: a likely bug, an untested behaviour, or a weakened/deleted test. `minor`: polish. Only report what you can point to in the diff or the code; do not speculate. Never block on something only a person can verify (manual or visual testing, real devices); that is listed on the pull request.",
 ].filter(Boolean).join("\n\n");
@@ -75,13 +93,13 @@ export const securityReviewPrompt = (diff: string, files: string[]) => [
 
 export const claudeReviewPrompt = (o: { ticket: string; spec: string; stat: string; earlier: { id: string; severity: string; file: string; issue: string }[]; results: { kind: string; ok: boolean; command: string }[]; base: string; history?: string }) => [
   `Review this implementation as the senior reviewer. Read the changed files yourself (use \`git diff ${o.base}...HEAD\` and the Read tool).`, o.ticket,
-  `Specification (excerpt):\n${clip(o.spec, 12_000)}`, `Check results:\n${resultsText(o.results)}`, `Diff stat:\n${o.stat}`,
+  `Requirements (excerpt):\n${clip(o.spec, 12_000)}`, `Check results:\n${resultsText(o.results)}`, `Diff stat:\n${o.stat}`,
   `An independent reviewer (a different model) reported these earlier findings:\n${JSON.stringify(o.earlier, null, 2)}`,
   o.history ?? "",
   "For EACH earlier finding give a verdict in `earlier`: valid or not, with evidence. Then report any further blocker/major problems in `findings`. Judge on evidence; do not rubber-stamp and do not invent problems. Never block on something only a person can verify; that is listed on the pull request.",
 ].filter(Boolean).join("\n\n");
 
-export const implRemediationPrompt = (o: { featureDir: string; wrapper: string; checks: string[]; findings: unknown[]; ticket?: string; history?: string; previousFailures?: string[]; unrestricted?: boolean }) => [
+export const implRemediationPrompt = (o: { featureDir?: string; wrapper: string; checks: string[]; findings: unknown[]; ticket?: string; history?: string; previousFailures?: string[]; unrestricted?: boolean }) => [
   "Fix the findings below in this worktree. Judge each on its merits: fix the valid ones, and reject any that are wrong with concrete evidence. Never delete, skip or weaken a test to make a check pass.",
   o.ticket ?? "",
   failuresText(o.previousFailures),
@@ -89,12 +107,12 @@ export const implRemediationPrompt = (o: { featureDir: string; wrapper: string; 
   FIXTURE_NOTE,
   `Findings:\n${JSON.stringify(o.findings, null, 2)}`,
   o.history ?? "",
-  `If a finding can only be resolved by a person, do not reject it: defer it. ${DEFER_RULE} For a finding about open tasks in ${o.featureDir}/tasks.md, defer the task ids. These can never be deferred and must be fixed: failing project checks (check:*), weakened or deleted tests, protected paths, uncommitted changes and conflict markers.`,
+  `If a finding can only be resolved by a person, do not reject it: defer it. ${o.featureDir ? DEFER_RULE : DEFER_RULE_DIRECT} ${o.featureDir ? `For a finding about open tasks in ${o.featureDir}/tasks.md, defer the task ids. ` : ""}These can never be deferred and must be fixed: failing project checks (check:*), weakened or deleted tests, protected paths, uncommitted changes and conflict markers.`,
   "Finish by reporting which finding ids you accepted (fixed), which you rejected (with evidence) and which you deferred to a human (with the reason) per the JSON schema.",
 ].filter(Boolean).join("\n\n");
 
 export const finalReviewPrompt = (o: { ticket: string; criteria: Criterion[]; stat: string; results: { kind: string; ok: boolean; command: string }[]; base: string; decisions: string[]; history?: string }) => [
-  `You are the final gate. Verify the implementation against the specification. Read the code and tests yourself (\`git diff ${o.base}...HEAD\`, the Read tool).`, o.ticket,
+  `You are the final gate. Verify the implementation against the requirements and criteria below. Read the code and tests yourself (\`git diff ${o.base}...HEAD\`, the Read tool).`, o.ticket,
   `Criteria that must be met (functional requirements and success criteria):\n${o.criteria.map((c) => `- ${c.id}: ${c.text}`).join("\n")}`,
   `Check results (re-run just now):\n${resultsText(o.results)}`, `Diff stat:\n${o.stat}`,
   o.decisions.length ? `Decisions the agents recorded (rejected findings and their reasons; challenge any you disagree with):\n${o.decisions.map((d) => `- ${d}`).join("\n")}` : "",
@@ -103,3 +121,16 @@ export const finalReviewPrompt = (o: { ticket: string; criteria: Criterion[]; st
 ].filter(Boolean).join("\n\n");
 
 export const specExcerpt = (b: SpecBundle) => b.files["spec.md"] ?? "";
+
+/** The merge of the target branch into the job branch stopped on conflicts: the implementer resolves them and concludes the merge. */
+export const conflictPrompt = (o: { base: string; files: string[]; ticket: string; brief?: string; wrapper: string; checks: string[]; unrestricted?: boolean }) => [
+  `The target branch (${o.base}) was merged into this job's branch and stopped on merge conflicts. Resolve them in this worktree and finish the merge.`,
+  o.ticket,
+  o.brief ? `What this branch was built to do:\n${clip(o.brief, 8000)}` : "",
+  `Conflicting files:\n${o.files.map((f) => `- ${f}`).join("\n")}`,
+  "For each conflict, understand BOTH sides before editing: `git log` / `git show` for what the target branch changed and why, and `git diff` / the branch's own commits for what this change intended. Combine them so the result keeps the intended behaviour of both. Never resolve by simply taking one side or by deleting either side's changes (including tests), unless one side's change is truly superseded by the other, and then say so. Remove every conflict marker.",
+  o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : `You may verify with the factory's check tool only (${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}); other code-running commands are refused. The factory re-runs all checks afterwards.`,
+  "When every file is resolved, `git add` them and run `git commit --no-edit` to conclude the merge. Do not rebase, reset, abort, push, or change branches. Do not touch CI workflows, secrets or the .claude directory.",
+  "If a conflict hides a genuine ambiguity you cannot settle from the code, the tickets and the history (the two sides contradict each other and either choice changes behaviour), do NOT guess: set `resolved` to false and put the specific files and the question in `ambiguity`; leave the files untouched. Routine conflicts (adjacent edits, imports, lockfiles, renames, formatting, independent additions to the same area) are yours to resolve.",
+  "Finish per the JSON schema: whether you resolved and committed, a one-line resolution per file, and any ambiguity.",
+].filter(Boolean).join("\n\n");

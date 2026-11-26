@@ -165,6 +165,15 @@ describe("workflow settings (global) and per-project overrides", () => {
     expect(readFileSync(join(dir, "models.yaml"), "utf8")).toContain("# Model routing."); // the shipped comments survive
     expect(loadConfig(dir).models.routes.specification.model).toBe("sonnet");               // really on disk
   });
+  it("switches the profile's planning mode on disk and live, keeping the rest of factory.yaml", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    const live = loadConfig(dir);
+    expect(live.factory.workflow.planning_mode).toBe("haiku_prompt");
+    applyGlobal(live, updateGlobalSettings(global({ planningMode: "speckit" }), dir));
+    expect(live.factory.workflow.planning_mode).toBe("speckit");
+    expect(loadConfig(dir).factory.workflow).toMatchObject({ planning_mode: "speckit", max_conflict_resolutions: 3 });
+    expect(readFileSync(join(dir, "factory.yaml"), "utf8")).toContain("# Factory-wide settings");
+  });
   it("refuses values outside the limits, or a local model for a stage that needs file tools, and writes nothing", () => {
     const dir = seedHomeConfig(join(tmpDir(), "config"));
     const before = readFileSync(join(dir, "factory.yaml"), "utf8") + readFileSync(join(dir, "models.yaml"), "utf8");

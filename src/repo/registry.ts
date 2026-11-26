@@ -25,7 +25,7 @@ export function getProjectConfig(db: FactoryDb, id: string): ProjectConfig | und
 
 /** Validate (read-only) and persist the report. Disabled projects are skipped. */
 export async function validateProjects(
-  db: FactoryDb, configured: ProjectConfig[], deps: { git?: GitFn; gh?: GhApi; now?: () => Date; hosts?: Hosts } = {},
+  db: FactoryDb, configured: ProjectConfig[], deps: { git?: GitFn; gh?: GhApi; now?: () => Date; hosts?: Hosts; planningMode?: "haiku_prompt" | "speckit" } = {},
 ): Promise<RepoReport[]> {
   const reports: RepoReport[] = [];
   for (const p of configured.filter((c) => c.enabled)) {

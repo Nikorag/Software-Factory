@@ -42,7 +42,7 @@ export function createProjectActions(ctx: Pick<Context, "config" | "handle" | "r
       syncProjects(ctx.handle.db, config.projects.projects);
       // Managed clones are the factory's own, so it may fetch to see a just-merged onboarding PR. A checkout of yours is never touched.
       if (p.managed) await realGit(p.repository, ["fetch", "--quiet", "origin"], { env: await ctx.hosts.gitAuth(p).catch(() => undefined) }).catch(() => { /* offline: validate what we have */ });
-      const [r] = await validateProjects(ctx.handle.db, [p], { hosts: ctx.hosts });
+      const [r] = await validateProjects(ctx.handle.db, [p], { hosts: ctx.hosts, planningMode: ctx.config.factory.workflow.planning_mode });
       if (!r) return false;
       log(`${r.ok ? "✓" : "✗"} default branch ${r.defaultBranch ?? "?"}, build: ${r.buildSystems.join(", ") || "none"}, protection: ${r.branchProtection.status}`);
       for (const f of r.findings) log(`  ${f.severity} ${f.code}: ${f.message}`);

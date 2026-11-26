@@ -19,3 +19,4 @@ routes:
   implementation:     { provider: anthropic, model: default }
   independent_review: { provider: anthropic, model: haiku }
   final_review:       { provider: anthropic, model: default }
+  prompt_generation:  { provider: anthropic, model: haiku }   # haiku_prompt mode: writes the implementer's prompt (must be anthropic)

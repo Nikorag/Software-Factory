@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Agent, AgentRequest, AgentResult } from "../../src/agents/types.js";
 
@@ -10,6 +11,10 @@ export interface ImplBehaviour {
   converge: (n: number) => S;
   classify: () => S; codeReview: (n: number) => S; security: () => S; claudeReview: (n: number) => S; finalReview: (n: number) => S;
   remediation: () => S;
+  /** haiku_prompt mode: the prompt writer's answer. */
+  plan?: () => S;
+  /** What the implementer does when asked to resolve merge conflicts (default: keeps both sides of every conflict and commits the merge). */
+  conflict?: (cwd: string, req: AgentRequest) => S;
   /** The implementer's structured answer on each implement pass (default: T001 done, nothing skipped or deferred). */
   implementResult?: (n: number) => S;
   failure?: (req: AgentRequest) => Partial<AgentResult> | undefined;
@@ -18,12 +23,21 @@ export interface ImplBehaviour {
 export const write = (cwd: string, rel: string, content: string) => { const p = join(cwd, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, content); };
 export const tickTasks = (cwd: string, dir: string) => {
   const p = join(cwd, dir, "tasks.md");
+  if (!existsSync(p)) return; // haiku_prompt mode has no task list
   writeFileSync(p, readFileSync(p, "utf8").replace(/- \[ \] (T\d{3})/g, "- [x] $1"));
 };
 /** Leaves (or puts back) a task unticked, optionally with a marker such as `[HUMAN]` after its id. */
 export const untick = (cwd: string, dir: string, id: string, tag = "") => {
   const p = join(cwd, dir, "tasks.md");
   writeFileSync(p, readFileSync(p, "utf8").replace(new RegExp(`- \\[[ xX]\\] ${id}\\b`), `- [ ] ${id}${tag ? ` ${tag}` : ""}`));
+};
+/** Resolves every conflicted file by keeping both sides (dropping the markers) and concludes the merge, as a careful agent would for independent additions. */
+export const keepBothSides = (cwd: string): S => {
+  const git = (...a: string[]) => execFileSync("git", a, { cwd, encoding: "utf8" }).trim();
+  const files = git("diff", "--name-only", "--diff-filter=U").split("\n").filter(Boolean);
+  for (const f of files) writeFileSync(join(cwd, f), readFileSync(join(cwd, f), "utf8").split("\n").filter((l) => !/^(<<<<<<<|=======|>>>>>>>)/.test(l)).join("\n"));
+  git("add", "-A"); git("commit", "--no-edit");
+  return { resolved: true, files: files.map((path) => ({ path, resolution: "kept both sides" })), ambiguity: "", summary: "combined both sides" };
 };
 export const GOOD_SRC = 'export function isOverdue(due, today) { return due < today; }\n';
 export const GOOD_TEST = 'import test from "node:test";\nimport assert from "node:assert";\nimport { isOverdue } from "../src/due.js";\ntest("a past date is overdue", () => assert.equal(isOverdue("2020-01-01", "2026-01-01"), true));\ntest("today is not overdue", () => assert.equal(isOverdue("2026-01-01", "2026-01-01"), false));\n';
@@ -56,7 +70,10 @@ export class ImplAgent implements Agent {
     const props = (req.jsonSchema?.properties ?? {}) as Record<string, unknown>;
     const dir = this.featureDir(req);
     let s: S;
-    if ("tasksDone" in props) { this.b.implement(req.cwd, dir, ++this.n.implement, req); s = this.b.implementResult?.(this.n.implement) ?? { summary: "implemented", tasksDone: ["T001"], tasksSkipped: [], deferred: [] }; }
+    if ("acceptanceCriteria" in props) s = this.b.plan?.() ?? { verdict: "ready", questions: [], prompt: "Add isOverdue(due, today) to src/due.js, following the existing module style, with node:test tests.", acceptanceCriteria: ["isOverdue is true for a past date", "isOverdue is false for today"] };
+    else if ("resolved" in props) s = this.b.conflict ? this.b.conflict(req.cwd, req) : keepBothSides(req.cwd);
+    else if ("deferred" in props && !("accepted" in props) && !("tasksDone" in props) && !("converged" in props)) { this.b.implement(req.cwd, "", ++this.n.implement, req); s = this.b.implementResult?.(this.n.implement) ?? { summary: "implemented", deferred: [] }; }
+    else if ("tasksDone" in props) { this.b.implement(req.cwd, dir, ++this.n.implement, req); s = this.b.implementResult?.(this.n.implement) ?? { summary: "implemented", tasksDone: ["T001"], tasksSkipped: [], deferred: [] }; }
     else if ("converged" in props) s = this.b.converge(++this.n.converge);
     else if ("failingTests" in props) s = this.b.classify();
     else if (JSON.stringify(req.jsonSchema ?? {}).includes('"exploit"')) s = this.b.security();

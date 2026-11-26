@@ -47,22 +47,22 @@ software-factory launchd:uninstall
 With a LaunchAgent installed, `software-factory shutdown` (and "Stop the Factory and Quit…" in the app) **boots it out** so launchd does not restart it; it comes back at the next login or with `software-factory start`, which re-renders the plist for the current install and loads it again rather than starting an unsupervised copy. `update` stops profiles the same way (LaunchAgent bootout, then the control API, then a verified signal) and afterwards reloads every LaunchAgent that was loaded. A LaunchAgent is only treated as this install's when its `WorkingDirectory` is this install and its logs are under this profile's data dir; a development checkout or another `FACTORY_ROOT` never stops or rewrites the real one. `launchd:install --load` while a copy started by `start` is running hands over: that copy is stopped (its jobs re-queued) and launchd starts its own. If launchd's copy ever finds a healthy factory already holding the profile, it exits 0 (no 30-second restart loop).
 
 ## Monitoring
-`GET /api/overview` and the Health page show: Claude Code login, Linear and GitHub authentication, sandbox and Spec Kit availability (local model only if a route uses one), macOS memory pressure and free percentage, disk, load, job counts, the Linear outbox backlog, and **rate-limit/auth/timeout failures from the last hour** (Claude subscription limits are shared with your interactive use). Probes are read-only, cached for 5 minutes, and use no model tokens.
+`GET /api/overview` and the Health page show: Claude Code login, tracker and GitHub authentication, sandbox availability, and Spec Kit availability (only in `speckit` planning mode; local model only if a route uses one), macOS memory pressure and free percentage, disk, load, job counts, the Linear outbox backlog, and **rate-limit/auth/timeout failures from the last hour** (Claude subscription limits are shared with your interactive use). Probes are read-only, cached for 5 minutes, and use no model tokens.
 
 ## Data layout (`~/.software-factory`)
 `database/factory.sqlite` (all durable state; back this up), `projects/<id>` (factory-managed clones), `workspaces/<id>/<KEY>` (job worktrees; failed ones are preserved), `reports/<job>.md` (evidence reports), `jobs/<job>/` (sandbox profiles, the `factory-exec` wrapper), `logs/` (service, agents, commands, checks), `control-token`, `factory.lock`, `run/` (agent process groups, stop marker).
 
 ## Recovery
-Crash, reboot or power loss: restart the service. Expired leases are detected, interrupted stage attempts are closed as interrupted, and the job is re-queued at its stage; handlers are idempotent, so completed work (commits, pushed branches, PRs, Linear writes) is never repeated. Linear or GitHub outages queue writes in the outbox and retry; the job keeps going.
+Crash, reboot or power loss: restart the service. Expired leases are detected, interrupted stage attempts are closed as interrupted, and the job is re-queued at its stage; handlers are idempotent, so completed work (commits, pushed branches, PRs, Linear writes) is never repeated. Tracker or GitHub outages queue writes in the outbox and retry; the job keeps going.
 
 ## Workspaces, onboarding, verification
 - `pnpm factory project:check <id>`: prove a project's commands work (throwaway worktree, real sandbox).
-- `pnpm factory project:onboard <id> [--pr]`: add Spec Kit and a constitution on a local review branch; `--pr` pushes it and opens a PR (never merges).
+- `pnpm factory project:onboard <id> [--pr]`: add Spec Kit and a constitution on a local review branch; `--pr` pushes it and opens a PR (never merges). Only needed for `speckit` mode.
 - Worktrees: created from the freshly fetched default branch; the original checkout is never touched; `reconcile` reports drift without deleting; finished worktrees are removed after a human merge, failed ones are preserved.
-- Live verification: `FACTORY_LIVE=1 pnpm vitest run tests/live` uses real Claude/Spec Kit (several minutes; subscription quota).
+- Live verification: `FACTORY_LIVE=1 pnpm vitest run tests/live` uses real Claude (and Spec Kit for the speckit tests; several minutes; subscription quota).
 
 ## Before you let it run unattended
 1. `pnpm factory doctor` and the dashboard Health page are green; `pnpm factory linear:check` is clean.
-2. Every project you intend to use has a **verified** test command (`project:check`) and has had its onboarding PR merged.
+2. Every project you intend to use has a **verified** test command (`project:check`) and, if its profile uses `speckit` planning, has had its onboarding PR merged.
 3. Start with `serve --dry-run`, then a single labelled ticket on a low-risk project while watching the dashboard.
 4. Delivery is PR-only: nothing merges without you. Projects stay `autonomy: supervised`.

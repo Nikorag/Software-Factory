@@ -8,6 +8,14 @@ export function validHubUrl(u: string): boolean {
 export const AutonomyLevel = z.enum(["full", "supervised", "off"]);
 export type AutonomyLevel = z.infer<typeof AutonomyLevel>;
 
+/**
+ * How a job gets from ticket to implementation. `haiku_prompt` (default): Claude Haiku inspects the repository and writes one concise,
+ * implementation-ready prompt that the implementer works from. `speckit`: the full Spec Kit flow (specify, clarify, plan, tasks, independent
+ * spec review, validation, converge). Chosen per profile in factory.yaml; profiles never affect each other.
+ */
+export const PlanningMode = z.enum(["haiku_prompt", "speckit"]);
+export type PlanningMode = z.infer<typeof PlanningMode>;
+
 export const FactoryConfig = z.object({
   dataDir: z.string().default("~/.software-factory"),
   server: z
@@ -32,6 +40,11 @@ export const FactoryConfig = z.object({
     // Lets the hub's web dashboard operate this factory (it relays dashboard requests to this machine). OFF by default and separate
     // from `enabled`: reporting progress never grants remote control. Turn on with `factory hub remote-access on`.
     remoteAccess: z.boolean().default(false),
+  }).prefault({}),
+  workflow: z.object({
+    planning_mode: PlanningMode.default("haiku_prompt"),
+    // How many times Claude may resolve merge conflicts with the target branch for one pull request before a human is asked.
+    max_conflict_resolutions: z.number().int().min(0).max(10).default(3),
   }).prefault({}),
   dryRun: z.boolean().default(false),
   maxRemediationAttempts: z.number().int().min(0).max(10).default(3),
@@ -84,14 +97,16 @@ export const ModelsConfig = z
     implementation: ModelRoute,
     independent_review: ModelRoute,
     final_review: ModelRoute,
+    // Writes the implementer's prompt (haiku_prompt planning mode). Reads the repository, so it must be Claude Code. Optional: Haiku by default.
+    prompt_generation: ModelRoute.default({ provider: "anthropic", model: "haiku" }),
   }),
   })
-  .refine((m) => m.routes.implementation.provider === "anthropic" && m.routes.specification.provider === "anthropic", {
-    message: "specification and implementation need file and shell tools, so they must use provider `anthropic` (Claude Code)",
+  .refine((m) => m.routes.implementation.provider === "anthropic" && m.routes.specification.provider === "anthropic" && m.routes.prompt_generation.provider === "anthropic", {
+    message: "specification, implementation and prompt_generation need file and shell tools, so they must use provider `anthropic` (Claude Code)",
   });
 export type ModelsConfig = z.infer<typeof ModelsConfig>;
 
-const RouteName = ["classification", "specification", "implementation", "independent_review", "final_review"] as const;
+const RouteName = ["classification", "specification", "implementation", "independent_review", "final_review", "prompt_generation"] as const;
 /** Anything set here beats the global setting for this project only; anything left out follows the global one. */
 export const ProjectOverrides = z.object({
   pickupMode: z.enum(["automatic", "manual"]).optional(),
@@ -100,8 +115,8 @@ export const ProjectOverrides = z.object({
   maxImplementationPasses: z.number().int().min(1).max(10).optional(),
   agentAccess: z.enum(["restricted", "unrestricted"]).optional(), // this project's override of factory.agentAccess
   models: z.object(Object.fromEntries(RouteName.map((r) => [r, ModelRoute.optional()])) as Record<(typeof RouteName)[number], z.ZodOptional<typeof ModelRoute>>)
-    .refine((m) => (m.specification?.provider ?? "anthropic") === "anthropic" && (m.implementation?.provider ?? "anthropic") === "anthropic", {
-      message: "specification and implementation need file and shell tools, so they must use provider `anthropic` (Claude Code)",
+    .refine((m) => (m.specification?.provider ?? "anthropic") === "anthropic" && (m.implementation?.provider ?? "anthropic") === "anthropic" && (m.prompt_generation?.provider ?? "anthropic") === "anthropic", {
+      message: "specification, implementation and prompt_generation need file and shell tools, so they must use provider `anthropic` (Claude Code)",
     }).optional(),
 });
 export type ProjectOverrides = z.infer<typeof ProjectOverrides>;
@@ -152,7 +167,7 @@ export const STAGES = [
   "DISCOVERED", "ELIGIBILITY_CHECK", "REQUIREMENTS_ANALYSIS", "SPECIFICATION_GENERATION",
   "SPECIFICATION_REVIEW", "SPECIFICATION_REMEDIATION", "SPECIFICATION_VALIDATION",
   "IMPLEMENTATION_PREPARATION", "IMPLEMENTATION", "AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW",
-  "CLAUDE_REVIEW", "REMEDIATION", "FINAL_VALIDATION", "PULL_REQUEST_CREATION", "CI_VALIDATION",
+  "CLAUDE_REVIEW", "REMEDIATION", "CONFLICT_RESOLUTION", "FINAL_VALIDATION", "PULL_REQUEST_CREATION", "CI_VALIDATION",
   "MERGE_VALIDATION", "MERGING", "LINEAR_COMPLETION", "COMPLETED",
 ] as const;
 export const TERMINAL_OR_HELD = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION"] as const;
@@ -302,6 +317,9 @@ export const LoadedConfig = z.object({
   configDir: z.string().optional(),
 });
 export type LoadedConfig = z.infer<typeof LoadedConfig>;
+
+/** The profile's planning mode (factory.yaml `workflow.planning_mode`). */
+export const planningModeOf = (config: { factory: { workflow: { planning_mode: PlanningMode } } }): PlanningMode => config.factory.workflow.planning_mode;
 
 /** How tickets of a project get started: its own override, else the profile's setting. */
 export const pickupModeOf = (project: { overrides?: { pickupMode?: "automatic" | "manual" } | undefined }, factory: { pickupMode: "automatic" | "manual" }): "automatic" | "manual" =>

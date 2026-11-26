@@ -9,7 +9,7 @@ import { api, send } from "@/lib/api";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { GhAccounts } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
-import { TASKS, type GlobalSettings } from "@/lib/tasks";
+import { DEFAULT_PROMPT_ROUTE, TASKS, type GlobalSettings } from "@/lib/tasks";
 
 /** A number box you can clear and retype: it only commits a value once something valid is typed, clamps to the range, and restores on blur if left empty. */
 function NumberField({ id, value, min, max, onChange }: { id: string; value: number; min: number; max: number; onChange: (n: number) => void }) {
@@ -44,6 +44,16 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
           </div>
           <p className="text-xs text-muted-foreground">A project can override this in its own settings. In either mode you can start any ticket yourself from the Board (it needs no label or status), and a project must be fully onboarded first.</p>
         </CardContent></Card>
+      <Card><CardHeader><CardTitle className="text-sm">Planning</CardTitle><CardDescription>How a ticket becomes an implementation. Chosen per profile.</CardDescription></CardHeader>
+        <CardContent className="grid gap-2">
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Planning mode">
+            {([["haiku_prompt", "Haiku prompt", "Claude Haiku reads the ticket and the repository and writes one concise prompt for the implementer. Fast, no spec files. The default."], ["speckit", "Spec Kit", "The full Spec Kit flow: specify, clarify, plan, tasks, independent spec review and validation, and a completeness check after implementing. Needs .specify/ in each repository."]] as const).map(([v, label, hint]) => (
+              <button key={v} type="button" role="radio" aria-checked={(g.planningMode ?? "haiku_prompt") === v} onClick={() => { setSaved(false); setG({ ...g, planningMode: v }); }}
+                className={`grid max-w-sm flex-1 gap-0.5 rounded-md border p-3 text-left text-sm transition-colors hover:bg-accent ${(g.planningMode ?? "haiku_prompt") === v ? "border-foreground bg-accent" : ""}`}><b>{label}</b><span className="text-xs text-muted-foreground">{hint}</span></button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">Takes effect at each job's next stage. Also set as <code>workflow.planning_mode</code> in this profile's factory.yaml.</p>
+        </CardContent></Card>
       <Card><CardHeader><CardTitle className="text-sm">GitHub account</CardTitle><CardDescription>The <code>gh</code> login this profile uses to clone, push branches and open pull requests. A project can name a different one. Your machine's own active gh login is never switched.</CardDescription></CardHeader>
         <CardContent className="grid gap-1.5">
           <Select value={g.githubAccount || "__none"} onValueChange={(v) => { setSaved(false); setG({ ...g, githubAccount: v === "__none" ? "" : v }); }}>
@@ -68,7 +78,7 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
           {TASKS.map((t) => (
             <div key={t.id} className="grid gap-1.5 border-b pb-4 last:border-0 last:pb-0">
               <div className="flex flex-wrap items-baseline gap-x-3"><b className="text-sm">{t.label}</b><span className="text-xs text-muted-foreground">{t.steps}</span></div>
-              <ModelPicker label={t.label} allowLocal={t.local} value={g.routes[t.id]} onChange={(v) => { setSaved(false); setG({ ...g, routes: { ...g.routes, [t.id]: v } }); }} />
+              <ModelPicker label={t.label} allowLocal={t.local} value={g.routes[t.id] ?? DEFAULT_PROMPT_ROUTE} onChange={(v) => { setSaved(false); setG({ ...g, routes: { ...g.routes, [t.id]: v } }); }} />
             </div>
           ))}
           {g.routes.independent_review.model === g.routes.specification.model && g.routes.independent_review.provider === g.routes.specification.provider

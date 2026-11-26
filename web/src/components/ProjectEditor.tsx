@@ -14,7 +14,7 @@ import { usePoll } from "@/hooks/usePoll";
 import { BUILTIN_ENTRIES, WORDS, withTracker } from "@/lib/trackers";
 import type { GhAccounts } from "@/lib/types";
 import type { BitbucketCredential, Project, TeamAudit, TrackerEntry } from "@/lib/types";
-import { TASKS, type GlobalSettings, type Routes, type RouteCfg, type TaskId } from "@/lib/tasks";
+import { DEFAULT_PROMPT_ROUTE, TASKS, type GlobalSettings, type Routes, type RouteCfg, type TaskId } from "@/lib/tasks";
 import { ModelPicker } from "./ModelPicker";
 import { startAction, TaskOutput } from "./TaskRunner";
 
@@ -223,7 +223,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         </div>
         <div className="grid gap-3">
           {TASKS.map((t) => {
-            const own = f.models[t.id], glob = globals?.routes[t.id];
+            const own = f.models[t.id], glob = globals?.routes[t.id] ?? (t.id === "prompt_generation" ? DEFAULT_PROMPT_ROUTE : undefined);
             return (
               <div key={t.id} className="grid gap-1.5"><div className="flex flex-wrap items-baseline gap-x-3"><Label>{t.label} model</Label>
                 {own ? <button type="button" className="text-xs underline" onClick={() => { const m = { ...f.models }; delete m[t.id]; set("models", m); }}>use global ({glob?.model ?? "…"})</button> : <span className="text-xs text-muted-foreground">global: {glob?.model ?? "…"}</span>}</div>

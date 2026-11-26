@@ -11,8 +11,12 @@ import { createStageKit, type StageKitDeps } from "../app/stage-kit.js";
 import { readSpecBundle, validateSpecArtifacts } from "../speckit/artifacts.js";
 import { commitAll } from "../speckit/tools.js";
 import { addedLines, changedFiles, codeDiff, historyAddedLines, NON_CODE } from "./diff.js";
-import { claudeReviewPrompt, codeReviewPrompt, convergePrompt, extractCriteria, failureSummaryPrompt, finalReviewPrompt, implRemediationPrompt, implementPrompt, securityReviewPrompt, specExcerpt } from "./prompts.js";
-import { ClaudeReview, CodeReview, Converge, FailureSummary, FinalReview, ImplRemediation, ImplementResult, SecurityReview } from "./schemas.js";
+import { claudeReviewPrompt, codeReviewPrompt, convergePrompt, extractCriteria, failureSummaryPrompt, finalReviewPrompt, implRemediationPrompt, implementPrompt, implementPromptDirect, securityReviewPrompt, specExcerpt } from "./prompts.js";
+import { latestPlan, planExcerpt, type StoredPlan } from "../planning/plan.js";
+import type { PlanningMode, ProjectConfig } from "../config/schema.js";
+import { createConflictHandler, DEFAULT_MAX_CONFLICT_RESOLUTIONS } from "./conflicts.js";
+import type { GitHubClient } from "../github/client.js";
+import { ClaudeReview, CodeReview, Converge, DirectResult, FailureSummary, FinalReview, ImplRemediation, ImplementResult, SecurityReview } from "./schemas.js";
 import { scanForSecrets } from "./secrets.js";
 import { findProtectedChanges } from "../agents/guard.js";
 import { deferrals, fixCycles, historyText, HUMAN_ONLY_REASON, isDeferrable, openTasks, previousFailures, recordDeferral, sameCodeRun, triage, type Finding } from "./history.js";
@@ -21,6 +25,12 @@ import type { z } from "zod";
 
 export interface ImplDeps extends StageKitDeps {
   dataDir: string;
+  /** The profile's planning mode (live). `haiku_prompt`: the implementer works from the generated prompt and there is no spec to validate. Default: speckit. */
+  planningMode?: () => PlanningMode;
+  /** Pull request access, git fetch credentials and the retry bound for CONFLICT_RESOLUTION (the PR's merge conflicts, resolved by the implementer). */
+  github?: (project: ProjectConfig) => GitHubClient;
+  fetchEnv?: (project: ProjectConfig) => Promise<NodeJS.ProcessEnv | undefined>;
+  maxConflictResolutions?: () => number;
   /** How many implement-and-converge rounds a project allows (live: read each stage). */
   maxPasses?: (projectId: string) => number;
   /** The project's agent access (live): decides whether prompts describe the check-tool-only limits. */
@@ -50,6 +60,14 @@ export function createImplementationHandlers(d: ImplDeps) {
   const { prepare, agent, record, independent } = createStageKit(d);
   const exec = d.runCommand ?? runProjectCommand;
   const jobDir = (jobId: string) => join(d.dataDir, "jobs", jobId);
+  const direct = () => d.planningMode?.() === "haiku_prompt";
+  /** What reviewers measure the change against: the generated brief (haiku_prompt) or the specification (speckit). */
+  const requirementsFor = (jobId: string, cwd: string, featureDir: string): string => {
+    if (!direct()) return specExcerpt(readSpecBundle(cwd, featureDir));
+    const plan = latestPlan(d.db, jobId);
+    return plan ? planExcerpt(plan) : "";
+  };
+  const noPlan = (): StageResult => ({ kind: "blocked", reason: "There is no implementation prompt for this job (it was started in another planning mode). Retry the job from requirements analysis, or switch the profile's workflow.planning_mode back." });
 
   async function commonDir(wt: string): Promise<string> {
     const g = await git(wt, ["rev-parse", "--git-common-dir"]);
@@ -133,7 +151,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     let commits = "";
     try { commits = await git(wt, ["log", "--format=%h %s", `${base}..HEAD`]); } catch { /* none yet */ }
     const summary = [
-      "Your previous session on this job could not be resumed, so you are starting fresh in the same worktree and branch. Read the code and tasks.md to pick up where it left off.",
+      "Your previous session on this job could not be resumed, so you are starting fresh in the same worktree and branch. Read the code (and tasks.md, if there is one) to pick up where it left off.",
       `Commits on this branch so far:\n${commits.trim().slice(0, 3000) || "(none)"}`,
       await reviewHistory(ctx.job.id, wt),
     ].filter(Boolean).join("\n\n");
@@ -156,9 +174,11 @@ export function createImplementationHandlers(d: ImplDeps) {
     if (!project.commands.test) {
       return { kind: "blocked", reason: `No test command is configured for ${project.id}. The factory will not implement or merge without tests: set \`commands.test\` (and ideally lint/typecheck) in config/projects.yaml, then retry.` };
     }
-    const bundle = readSpecBundle(p.cwd, p.featureDir);
-    const bad = validateSpecArtifacts(bundle).filter((c) => !c.ok);
-    if (bad.length) return { kind: "blocked", reason: `The specification no longer validates: ${bad.map((c) => c.id).join(", ")}` };
+    if (direct()) { if (!latestPlan(d.db, ctx.job.id)) return noPlan(); }
+    else {
+      const bad = validateSpecArtifacts(readSpecBundle(p.cwd, p.featureDir)).filter((c) => !c.ok);
+      if (bad.length) return { kind: "blocked", reason: `The specification no longer validates: ${bad.map((c) => c.id).join(", ")}` };
+    }
     try {
       if (project.commands.install) {
         const [inst] = await runChecks(ctx, p.cwd, { install: project.commands.install }, ["install"], project.allowLoopback);
@@ -178,12 +198,34 @@ export function createImplementationHandlers(d: ImplDeps) {
     }
   };
 
+  /** haiku_prompt mode: one implementer run from the generated prompt. Verification, review and fix cycles are the stages that follow. */
+  const implementDirect = async (ctx: Parameters<StageHandler>[0], p: Extract<Awaited<ReturnType<typeof prepare>>, { ok: true }>, plan: StoredPlan): Promise<StageResult> => {
+    const project = d.project(ctx.job.projectId);
+    const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands, project.allowLoopback);
+    const r = await implementer(ctx, {
+      task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: DirectResult, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id),
+      prompt: implementPromptDirect({ plan, wrapper, checks, ticket: p.ticket, previousFailures: previousFailures(d.db, ctx.job.id, "IMPLEMENTATION"), unrestricted: d.agentAccess?.(project.id) === "unrestricted" }),
+    }, p.cwd, p.info.base);
+    if (!r.ok) return r.stop;
+    await commitAll(p.cwd, `impl(${p.issue.identifier}): implement`, git);
+    const leak = await secretStop(p.cwd, p.info.base);
+    if (leak) return leak;
+    if ((await changedFiles(p.cwd, p.info.base, { code: true }, git)).length === 0) return { kind: "retry", reason: "the implementer finished without changing any code" };
+    for (const x of r.data!.deferred) recordDeferral(d.db, ctx.job.id, { id: x.id, severity: "minor", issue: x.id }, x.reason);
+    record(ctx.job.id, "implementation.pass", `implemented from the generated prompt${r.data!.deferred.length ? `, ${r.data!.deferred.length} deferred to a human` : ""}`, r.data!.summary);
+    return { kind: "ok", output: { passes: 1, summary: r.data!.summary, deferred: r.data!.deferred, files: (await changedFiles(p.cwd, p.info.base, { code: true }, git)).length } };
+  };
+
   const implementation: StageHandler = async (ctx) => {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
     // A secret already in the branch's history (an earlier, failed attempt) cannot be fixed by another agent run: stop first.
     const early = await secretStop(p.cwd, p.info.base);
     if (early) return early;
+    if (direct()) {
+      const plan = latestPlan(d.db, ctx.job.id);
+      return plan ? implementDirect(ctx, p, plan) : noPlan();
+    }
     const project = d.project(ctx.job.projectId);
     const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands, project.allowLoopback);
     let session = latestImplementerSession(ctx.job.id); // a retry continues the earlier conversation
@@ -280,7 +322,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       reviewer = String(prev.reviewer ?? "previous review");
       record(ctx.job.id, "code-review.reused", "no code change since the last independent review; reusing its findings");
     } else {
-      const prompt = codeReviewPrompt({ ticket: p.ticket, spec: specExcerpt(readSpecBundle(p.cwd, p.featureDir)), stat: diff.stat, diff: diff.text, results: latestResults(ctx.job.id), history: await reviewHistory(ctx.job.id, p.cwd) });
+      const prompt = codeReviewPrompt({ ticket: p.ticket, spec: requirementsFor(ctx.job.id, p.cwd, p.featureDir), stat: diff.stat, diff: diff.text, results: latestResults(ctx.job.id), history: await reviewHistory(ctx.job.id, p.cwd) });
       const r = await independent(ctx, (task) => agent(ctx, { task, role: "qa-reviewer", prompt, cwd: p.cwd, schema: CodeReview, timeoutMs: 15 * MIN }));
       if (!r.ok) return r.stop;
       findings = [...r.data.findings];
@@ -318,7 +360,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       const earlier = ((prev?.outputJson ? JSON.parse(prev.outputJson) : {}) as { findings?: { id: string; severity: string; file: string; issue: string }[] }).findings ?? [];
       const r = await agent(ctx, {
         task: "final_review", role: "qa-reviewer", cwd: p.cwd, timeoutMs: 20 * MIN, schema: ClaudeReview,
-        prompt: claudeReviewPrompt({ ticket: p.ticket, spec: specExcerpt(readSpecBundle(p.cwd, p.featureDir)), stat: diff.stat, earlier, results: latestResults(ctx.job.id), base: p.info.base, history: await reviewHistory(ctx.job.id, p.cwd) }),
+        prompt: claudeReviewPrompt({ ticket: p.ticket, spec: requirementsFor(ctx.job.id, p.cwd, p.featureDir), stat: diff.stat, earlier, results: latestResults(ctx.job.id), base: p.info.base, history: await reviewHistory(ctx.job.id, p.cwd) }),
       });
       if (!r.ok) return r.stop;
       for (const e of r.data!.earlier) record(ctx.job.id, "code-review.verdict", `${e.id}: ${e.valid ? "valid" : "invalid"}`, e.evidence);
@@ -342,7 +384,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     const before = await head(p.cwd);
     const r = await implementer(ctx, {
       task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 40 * MIN, schema: ImplRemediation, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id),
-      prompt: implRemediationPrompt({ unrestricted: d.agentAccess?.(project.id) === "unrestricted", featureDir: p.featureDir, wrapper, checks, findings, ticket: p.ticket, history: await reviewHistory(ctx.job.id, p.cwd), previousFailures: previousFailures(d.db, ctx.job.id, "REMEDIATION") }),
+      prompt: implRemediationPrompt({ unrestricted: d.agentAccess?.(project.id) === "unrestricted", ...(direct() ? {} : { featureDir: p.featureDir }), wrapper, checks, findings, ticket: p.ticket, history: await reviewHistory(ctx.job.id, p.cwd), previousFailures: previousFailures(d.db, ctx.job.id, "REMEDIATION") }),
     }, p.cwd, p.info.base);
     if (!r.ok) return r.stop;
     const byId = (id: string) => findings.find((f) => f.id === id) ?? { id, severity: "minor", issue: id };
@@ -393,7 +435,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     if (deleted.length) gate("test-deleted", `test file(s) deleted: ${deleted.map((l) => l.split(/\s+/)[1]).join(", ")}`);
     // Tasks tagged [HUMAN], or deferred to a human during the run, are not open work for the agents: they go on the PR.
     const deferredIds = new Set(deferrals(d.db, ctx.job.id).map((x) => x.id));
-    const open = openTasks(readSpecBundle(p.cwd, p.featureDir).files["tasks.md"] ?? "").filter((t) => !t.human && !deferredIds.has(t.id));
+    const open = direct() ? [] : openTasks(readSpecBundle(p.cwd, p.featureDir).files["tasks.md"] ?? "").filter((t) => !t.human && !deferredIds.has(t.id));
     if (open.length) {
       gate("tasks-open", `${open.length} task(s) in tasks.md are not ticked: ${open.map((t) => t.id).join(", ")}. If a task can only be done by a person (manual or visual testing, real devices), tag it [HUMAN] and defer it instead of rejecting this.`, `${p.featureDir}/tasks.md`,
         { tasks: open.map((t) => t.id), fix: "Do the open tasks and tick them; defer any that only a person can do." });
@@ -403,7 +445,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     const deferred = [...t.deferred];
 
     if (findings.length === 0) {
-      const criteria = extractCriteria(readSpecBundle(p.cwd, p.featureDir).files["spec.md"] ?? "");
+      const criteria = direct() ? (latestPlan(d.db, ctx.job.id)?.criteria ?? []) : extractCriteria(readSpecBundle(p.cwd, p.featureDir).files["spec.md"] ?? "");
       const rejected = d.db.select().from(decisions).where(and(eq(decisions.jobId, ctx.job.id), eq(decisions.kind, "remediation.rejected"))).all().map((x) => `${x.decision}: ${x.rationale}`);
       type Review = z.infer<typeof FinalReview>;
       let review: Review;
@@ -439,7 +481,14 @@ export function createImplementationHandlers(d: ImplDeps) {
     return { kind: "remediate", reason: `${findings.length} blocking issue(s) at final validation`, output: { findings, results: brief(results), head: at, deferred } };
   };
 
+  const kit = createStageKit(d);
+  const conflictResolution = createConflictHandler(
+    { db: d.db, git, project: d.project, github: d.github, fetchEnv: d.fetchEnv, maxResolutions: d.maxConflictResolutions ?? (() => DEFAULT_MAX_CONFLICT_RESOLUTIONS) },
+    { ...kit, implementer, wrapperFor, secretStop, ...(d.agentAccess ? { agentAccess: d.agentAccess } : {}) },
+  );
+
   return {
+    CONFLICT_RESOLUTION: conflictResolution,
     IMPLEMENTATION_PREPARATION: implementationPreparation,
     IMPLEMENTATION: implementation,
     AUTOMATED_TESTING: automatedTesting,

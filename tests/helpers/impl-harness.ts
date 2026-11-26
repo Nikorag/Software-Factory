@@ -23,19 +23,20 @@ export const SPEC_FILES = ["spec.md", "plan.md", "tasks.md", "research.md", "dat
 
 export interface H { github: FakeGitHub; linear: FakeLinear; ctx: Context; claude: ImplAgent; haiku: ImplAgent; repo: string; jobId: string; engine: Engine; wt: string; hist: () => string[]; stages: () => string[] }
 
-export async function harness(o: { passes?: number; projectPasses?: number; commands?: Record<string, string>; baseTest?: string; github?: FakeGitHub; timing?: Partial<DeliveryTiming>; clockStepMs?: number; now?: () => Date } = {}): Promise<H> {
+export async function harness(o: { planning?: "speckit" | "haiku_prompt"; maxConflicts?: number; passes?: number; projectPasses?: number; commands?: Record<string, string>; baseTest?: string; github?: FakeGitHub; timing?: Partial<DeliveryTiming>; clockStepMs?: number; now?: () => Date } = {}): Promise<H> {
   const { repo } = makeRepo({
     "package.json": JSON.stringify({ name: "todo", type: "module", scripts: { test: "node --test" } }),
     "src/todos.js": "export const list = () => [];\n",
     "test/todos.test.js": o.baseTest ?? 'import test from "node:test";\nimport assert from "node:assert";\nimport { list } from "../src/todos.js";\ntest("empty", () => assert.deepEqual(list(), []));\n',
     ".gitignore": "node_modules\n",
   });
-  const base = fixtureConfig();
+  const planning = o.planning ?? "speckit";
+  const base = fixtureConfig(planning);
   const commands = o.commands ?? { test: "node --test", lint: "node --check src/todos.js" };
   const project = ProjectConfig.parse({ id: "p", name: "P", repository: repo, linear: { teamKey: "JAM" }, github: { repo: "Nikorag/todo" }, commands, overrides: o.projectPasses ? { maxImplementationPasses: o.projectPasses } : undefined });
   const r = (provider: string, model: string) => ({ provider, model });
   const config: LoadedConfig = {
-    ...base, factory: { ...base.factory, dataDir: join(repo, "..", "data"), ...(o.passes ? { maxImplementationPasses: o.passes } : {}) }, projects: { projects: [project] },
+    ...base, factory: { ...base.factory, dataDir: join(repo, "..", "data"), ...(o.passes ? { maxImplementationPasses: o.passes } : {}), workflow: { ...base.factory.workflow, ...(o.maxConflicts !== undefined ? { max_conflict_resolutions: o.maxConflicts } : {}) } }, projects: { projects: [project] },
     models: ModelsConfig.parse({ routes: { classification: r("anthropic", "haiku"), specification: r("anthropic", "default"), implementation: r("anthropic", "default"), independent_review: r("anthropic", "haiku"), final_review: r("anthropic", "default") } }),
   };
   let virtualCalls = 0; // a virtual clock for delivery waits: each reading is clockStepMs later, independent of how fast the machine is
@@ -49,11 +50,15 @@ export async function harness(o: { passes?: number; projectPasses?: number; comm
   const jobId = enqueue(ctx.handle.db, { projectId: "p", externalId: issue.id, externalKey: "JAM-1" }).job.id;
   // Arrive at IMPLEMENTATION_PREPARATION the way a real job does: worktree on factory/JAM-1 with the committed spec.
   const info = await ctx.worktrees.create({ id: jobId, projectId: "p", externalKey: "JAM-1" });
-  const dir = featureDirFor("JAM-1", TITLE);
-  for (const f of SPEC_FILES) write(info.path, `${dir}/${f}`, fixture(f));
-  write(info.path, `${dir}/ticket.md`, `# JAM-1: ${TITLE}\n`);
-  await commitPaths(info.path, [dir], "spec(JAM-1): all");
-  ctx.handle.db.update(jobs).set({ stage: "IMPLEMENTATION_PREPARATION" }).where(eq(jobs.id, jobId)).run();
+  if (planning === "speckit") {
+    const dir = featureDirFor("JAM-1", TITLE);
+    for (const f of SPEC_FILES) write(info.path, `${dir}/${f}`, fixture(f));
+    write(info.path, `${dir}/ticket.md`, `# JAM-1: ${TITLE}\n`);
+    await commitPaths(info.path, [dir], "spec(JAM-1): all");
+    ctx.handle.db.update(jobs).set({ stage: "IMPLEMENTATION_PREPARATION" }).where(eq(jobs.id, jobId)).run();
+  } else {
+    ctx.handle.db.update(jobs).set({ stage: "REQUIREMENTS_ANALYSIS" }).where(eq(jobs.id, jobId)).run(); // the first stage that differs: Haiku writes the prompt
+  }
   const engine = new Engine({ db: ctx.handle.db, logger: pino({ level: "silent" }), config, handlers: ctx.handlers, backoffBaseMs: 0, observer: createLinearReporter(ctx.handle.db), ...(o.now ? { now: o.now } : {}) });
   const hist = () => ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.jobId, jobId)).all().map((x) => `${x.stage}:${x.outcome}`);
   return { github, linear, ctx, claude, haiku, repo, jobId, engine, wt: info.path, hist, stages: () => hist().map((h) => h.split(":")[0]!) };

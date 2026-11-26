@@ -36,3 +36,13 @@ export const ImplRemediation = z.object({
   deferred: Deferred,
   summary: z.string(),
 });
+
+/** haiku_prompt mode: no task list, so just what was done and what a person must check. */
+export const DirectResult = z.object({ summary: z.string(), deferred: Deferred });
+/** The implementer's report after resolving merge conflicts with the target branch. */
+export const ConflictResolution = z.object({
+  resolved: z.boolean().describe("true only if every conflict is resolved and the merge is committed"),
+  files: z.array(z.object({ path: z.string(), resolution: z.string().describe("how both sides were combined") })).default([]),
+  ambiguity: z.string().default("").describe("when not resolved: the specific files and the question only a human can settle"),
+  summary: z.string(),
+});

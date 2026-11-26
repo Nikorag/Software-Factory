@@ -7,6 +7,7 @@ export const ROLE_PROFILE: Record<AgentRole, PermissionProfile> = {
   classifier: "read-only",
   assistant: "read-only",
   "requirements-analyst": "read-only",
+  "prompt-writer": "read-only",
   "spec-writer": "spec-writer",
   "spec-reviewer": "read-only",
   implementer: "implementer",

@@ -101,7 +101,7 @@ export async function checkBranchProtection(remote: { owner: string; repo: strin
   return { status: "unknown", reason: `GitHub API returned ${res.status || "no response"} (private repo on a free plan, or insufficient access)` };
 }
 
-export async function inspectRepository(project: ProjectConfig, deps: { git?: GitFn; gh?: GhApi; /** how to read branch protection for a Bitbucket project */ bitbucketProtection?: (slug: string) => Promise<Protection> } = {}): Promise<RepoReport> {
+export async function inspectRepository(project: ProjectConfig, deps: { git?: GitFn; gh?: GhApi; /** how to read branch protection for a Bitbucket project */ bitbucketProtection?: (slug: string) => Promise<Protection>; /** the profile's planning mode: Spec Kit is only required in `speckit` mode (default, as before) */ planningMode?: "haiku_prompt" | "speckit" } = {}): Promise<RepoReport> {
   const git = deps.git ?? realGit;
   const gh = deps.gh ?? createGhApi(project.github.account); // (only called for GitHub projects)
   const path = expandHome(project.repository);
@@ -146,7 +146,7 @@ export async function inspectRepository(project: ProjectConfig, deps: { git?: Gi
   report.onboardingBranchPushed = await git(root, ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/factory/onboard-speckit"]).then(() => true, () => false);
   report.hasSubmodules = existsSync(join(root, ".gitmodules"));
   if (!report.hasClaudeMd) add("info", "no-claude-md", "No CLAUDE.md: agents will have no project instructions (onboarding should propose one, never overwrite)");
-  if (project.specKit && !report.hasSpecKit) add("warn", "no-speckit", "specKit is enabled but .specify/ is missing; it must be initialised during onboarding");
+  if ((deps.planningMode ?? "speckit") === "speckit" && project.specKit && !report.hasSpecKit) add("warn", "no-speckit", "this profile uses the speckit planning mode but .specify/ is missing; it must be initialised during onboarding");
   if (report.hasSubmodules) add("info", "submodules", "Repository uses submodules; worktrees will initialise them");
 
   const build = detectBuild(root);

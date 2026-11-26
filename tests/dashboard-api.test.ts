@@ -135,7 +135,7 @@ describe("dashboard API data (real persisted state, nothing mocked)", () => {
     expect((await get(s.app, "/api/jobs?status=done")).json().jobs).toHaveLength(0);
     const d = (await get(s.app, `/api/jobs/${a.id}`)).json();
     expect(d.job).toMatchObject({ key: "JAM-1", project: "p" });
-    expect(d.stageOrder).toHaveLength(20);
+    expect(d.stageOrder).toHaveLength(21);
     expect(d.executions[0]).toMatchObject({ stage: "DISCOVERED", outcome: "succeeded" });
     expect(d.decisions[0]).toMatchObject({ kind: "eligibility" });
     expect(d.invocations[0]).toMatchObject({ agent: "anthropic/implementer", durationMs: 1234, usage: { denials: 2 } });

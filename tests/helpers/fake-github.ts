@@ -14,6 +14,8 @@ export class FakeGitHub implements GitHubClient {
   logs: Record<string, string> = {};
   failures: { method: string; times: number; error: GitHubError }[] = [];
   mergeable = "MERGEABLE";
+  /** Test-only: once this returns true GitHub reports the PR mergeable (e.g. after the factory resolved the conflicts). */
+  mergeableWhen?: () => boolean;
   private poll = 0;
 
   private maybeFail(method: string) {
@@ -28,7 +30,7 @@ export class FakeGitHub implements GitHubClient {
     this.prs.push(pr);
     return pr;
   }
-  async getPr(_repo: string, number: number) { this.calls.push("getPr"); this.maybeFail("getPr"); const p = this.prs.find((x) => x.number === number); if (!p) throw new GitHubError("not found", false); return { ...p, mergeable: p.state === "OPEN" ? this.mergeable : p.mergeable }; }
+  async getPr(_repo: string, number: number) { this.calls.push("getPr"); this.maybeFail("getPr"); const p = this.prs.find((x) => x.number === number); if (!p) throw new GitHubError("not found", false); return { ...p, mergeable: p.state === "OPEN" ? (this.mergeableWhen?.() ? "MERGEABLE" : this.mergeable) : p.mergeable }; }
   async checks(_repo: string, _n: number) { this.calls.push("checks"); this.maybeFail("checks"); const r = this.checkPolls[Math.min(this.poll, this.checkPolls.length - 1)]!; this.poll++; return r; }
   async failedLog(_repo: string, c: CheckInfo) { return this.logs[c.name] ?? ""; }
   async commentOnPr(_repo: string, _n: number, body: string) { this.comments.push(body); }

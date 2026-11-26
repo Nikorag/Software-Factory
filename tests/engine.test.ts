@@ -14,7 +14,7 @@ let h: DbHandle;
 beforeEach(() => { h = openDb(":memory:"); h.db.insert(projects).values({ id: "p", configJson: "{}" }).run(); });
 
 const config = (over: Record<string, unknown> = {}) => ({
-  factory: FactoryConfig.parse({ ...over }),
+  factory: FactoryConfig.parse({ workflow: { planning_mode: "speckit" }, ...over }),
   workflows: WorkflowsConfig.parse({ defaults: { timeoutSeconds: 5, maxRetries: 2 } }),
 });
 const engine = (handlers: HandlerRegistry, cfg = config(), extra = {}) =>
@@ -28,7 +28,25 @@ describe("happy path", () => {
     await engine(simulatedHandlers()).tick();
     const j = getJob(h.db, job.id)!;
     expect(j).toMatchObject({ stage: "COMPLETED", status: "done", leaseOwner: null });
-    expect(history(job.id)).toEqual(STAGES.slice(0, -1).map((s) => `${s}:succeeded`).filter((x) => !x.startsWith("SPECIFICATION_REMEDIATION") && !x.startsWith("REMEDIATION")));
+    expect(history(job.id)).toEqual(STAGES.slice(0, -1).map((s) => `${s}:succeeded`).filter((x) => !x.startsWith("SPECIFICATION_REMEDIATION") && !x.startsWith("REMEDIATION") && !x.startsWith("CONFLICT_RESOLUTION")));
+  });
+  it("haiku_prompt mode goes from requirements straight to implementation: no Spec Kit stages run", async () => {
+    const job = add();
+    await engine(simulatedHandlers(), config({ workflow: { planning_mode: "haiku_prompt" } })).tick();
+    expect(getJob(h.db, job.id)).toMatchObject({ stage: "COMPLETED", status: "done" });
+    const ran = history(job.id).map((x) => x.split(":")[0]);
+    expect(ran.slice(0, 5)).toEqual(["DISCOVERED", "ELIGIBILITY_CHECK", "REQUIREMENTS_ANALYSIS", "IMPLEMENTATION_PREPARATION", "IMPLEMENTATION"]);
+    expect(ran.some((s) => s!.startsWith("SPECIFICATION_"))).toBe(false);
+  });
+  it("a directed remediate (merge conflicts) moves the job there without spending a fix cycle", async () => {
+    const job = add();
+    let hops = 0;
+    const e = engine({ ...simulatedHandlers(), CI_VALIDATION: async () => (hops++ === 0 ? { kind: "remediate", to: "CONFLICT_RESOLUTION", reason: "conflicts" } : { kind: "ok" }) });
+    await e.tick();
+    const j = getJob(h.db, job.id)!;
+    expect(j).toMatchObject({ stage: "COMPLETED", remediationAttempts: 0 });
+    expect(history(job.id)).toContain("CONFLICT_RESOLUTION:succeeded");
+    expect(h.db.select().from(decisions).where(eq(decisions.jobId, job.id)).all().map((d) => d.kind)).toContain("stage.redirect");
   });
 });
 

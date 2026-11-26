@@ -6,7 +6,7 @@ import { ModelRouter } from "../agents/router.js";
 import { AgentRunner } from "../agents/runner.js";
 import { usageFile } from "../agents/usage.js";
 import { ConfigError } from "../config/load.js";
-import type { LoadedConfig, ProjectConfig } from "../config/schema.js";
+import { planningModeOf, type LoadedConfig, type ProjectConfig } from "../config/schema.js";
 import { openDb, type DbHandle } from "../db/client.js";
 import { Engine, type HandlerRegistry } from "../core/engine.js";
 import type { LinearClient } from "../linear/client.js";
@@ -18,6 +18,7 @@ import { createHosts, type Hosts } from "../host/index.js";
 import { syncProjects } from "../repo/registry.js";
 import { WorktreeManager } from "../repo/worktrees.js";
 import { createSpecKitHandlers } from "../speckit/handlers.js";
+import { createPromptHandlers } from "../planning/handlers.js";
 import { createImplementationHandlers, type ImplDeps } from "../implement/handlers.js";
 import { createDeliveryHandlers, type DeliveryDeps } from "../delivery/handlers.js";
 import type { GitHubClient } from "../github/client.js";
@@ -68,19 +69,25 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
   const trackers = trackerSet(config, {}, opts.linear);
   const linear = (projectId?: string): LinearClient => trackers.client(trackers.idOf(projectId ? config.projects.projects.find((p) => p.id === projectId) : undefined));
 
+  const stageDeps = { db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger };
+  const planningMode = () => planningModeOf(config);
+  // REQUIREMENTS_ANALYSIS is the one stage both planning modes share: in haiku_prompt mode the Spec Kit stages after it are skipped by the workflow.
+  const speckit = createSpecKitHandlers(stageDeps);
+  const prompt = createPromptHandlers(stageDeps);
+  const specHandlers: HandlerRegistry = { ...speckit, REQUIREMENTS_ANALYSIS: (ctx) => (planningMode() === "speckit" ? speckit.REQUIREMENTS_ANALYSIS : prompt.REQUIREMENTS_ANALYSIS)(ctx) };
   const handlers: HandlerRegistry = {
     ...createIntakeHandlers({ db: handle.db, linear, linearConfig: config.linear, linearNames: (id) => trackers.names(trackers.idOf(project(id))), project }),
-    ...createSpecKitHandlers({ db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger }),
+    ...specHandlers,
     ...createImplementationHandlers({
       db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger,
-      dataDir, runCommand: opts.runCommand, agentAccess: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess, maxPasses: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.maxImplementationPasses ?? config.factory.maxImplementationPasses, settings: { protectedPaths: config.factory.protectedPaths, commandTimeoutSeconds: config.factory.commandTimeoutSeconds, sandbox: config.factory.sandbox },
+      dataDir, runCommand: opts.runCommand, planningMode, github: (p) => opts.github ?? hosts.pr(p), fetchEnv: (p) => hosts.gitAuth(p), maxConflictResolutions: () => config.factory.workflow.max_conflict_resolutions, agentAccess: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess, maxPasses: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.maxImplementationPasses ?? config.factory.maxImplementationPasses, settings: { protectedPaths: config.factory.protectedPaths, commandTimeoutSeconds: config.factory.commandTimeoutSeconds, sandbox: config.factory.sandbox },
     }),
     // PR-only delivery: push + open the PR, watch CI, report readiness, wait for a human to merge. The factory never merges.
     ...createDeliveryHandlers({
       db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger, dataDir,
-      github: (p) => opts.github ?? hosts.pr(p), hosts, timing: opts.delivery, now: opts.deliveryNow, push: opts.push,
+      github: (p) => opts.github ?? hosts.pr(p), hosts, maxConflictResolutions: () => config.factory.workflow.max_conflict_resolutions, timing: opts.delivery, now: opts.deliveryNow, push: opts.push,
     }),
   };
-  const engine = new Engine({ db: handle.db, logger, config, handlers, observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun }) });
+  const engine = new Engine({ db: handle.db, logger, config, handlers, observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun, planningMode }) });
   return { config, handle, logger, router, runner, worktrees, linear, trackers, project, handlers, engine, hosts };
 }
