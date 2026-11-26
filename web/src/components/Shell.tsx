@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useMatch } from "react-router-dom";
-import { ArrowUpCircle, OctagonAlert, Pause, Play, ShieldOff, X } from "lucide-react";
+import { ArrowUpCircle, Menu, OctagonAlert, Pause, Play, ShieldOff, X } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,14 @@ export function Shell() {
   const jobs = useMemo(() => openJobs(o), [o]);
   const projectId = projMatch ? decodeURIComponent(projMatch.params.projectId!) : jobId ? everyJob.find((j) => j.id === jobId)?.project ?? null : null;
   useEffect(() => { if (projectId) rememberTab(projectId, pathname); }, [projectId, pathname]);
+  const [navOpen, setNavOpen] = useState(false); // the rail is a drawer below the md breakpoint
+  useEffect(() => setNavOpen(false), [pathname]);
+  useEffect(() => {
+    if (!navOpen) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setNavOpen(false); };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [navOpen]);
   const [busy, setBusy] = useState(false);
   // Pause/resume/clear-stop are disabled while one is in flight or the API is unreachable. Emergency stop never is: it is always worth trying.
   const act = async (name: string) => {
@@ -45,10 +53,12 @@ export function Shell() {
   };
   const stop = o?.control.emergencyStop, paused = o?.control.paused;
   return (
-    <div className="flex min-h-screen w-full flex-col md:h-screen md:flex-row">
-      <ProjectRail overview={o} projects={projects} jobs={jobs} projectId={projectId} jobId={jobId} profiles={prof ?? null} stop={Boolean(stop)} paused={Boolean(paused)} />
+    <div className="flex min-h-dvh w-full flex-col md:h-screen md:flex-row">
+      {navOpen ? <div aria-hidden className="fixed inset-0 z-20 bg-black/55 md:hidden" onClick={() => setNavOpen(false)} /> : null}
+      <ProjectRail open={navOpen} overview={o} projects={projects} jobs={jobs} projectId={projectId} jobId={jobId} profiles={prof ?? null} stop={Boolean(stop)} paused={Boolean(paused)} />
       <div className="flex min-w-0 flex-1 flex-col bg-background md:min-h-0">
         <header className={cn("app-drag flex min-h-[52px] shrink-0 flex-wrap items-center gap-1.5 border-b border-line px-3 py-2", electronOverlay && "md:pr-36")}>
+          <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open menu" aria-expanded={navOpen} onClick={() => setNavOpen(true)}><Menu /></Button>
           {projectId ? <JobTabs projectId={projectId} jobs={jobs.filter((j) => j.project === projectId)} jobId={jobId} /> : <h1 className="px-1.5 text-sm font-semibold">{TITLES[pathname] ?? "Software Factory"}</h1>}
           <span className="flex-1" />
           {o && !paused && !stop ? <Button variant="outline" size="sm" disabled={busy || offline} onClick={() => void act("pause")}><Pause />Pause</Button> : null}

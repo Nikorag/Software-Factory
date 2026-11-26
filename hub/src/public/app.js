@@ -217,6 +217,11 @@ function connectStream() {
 }
 setInterval(() => { if (me) render(); }, 30000); // keeps "last seen" fresh even with no events
 
+const setNav = (open) => { $("shell").classList.toggle("nav-open", open); $("burger").setAttribute("aria-expanded", String(open)); };
+$("burger").addEventListener("click", () => setNav(!$("shell").classList.contains("nav-open")));
+$("scrim").addEventListener("click", () => setNav(false));
+$("rail").addEventListener("click", (e) => { if (e.target.closest("button")) setNav(false); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") setNav(false); });
 $("addFactory").addEventListener("click", () => go({ name: "list", addFocus: true }));
 $("logout").addEventListener("click", async () => { await api("POST", "/auth/logout", {}); stream?.close(); me = null; await boot(); });
 $("addPasskey").addEventListener("click", async () => {

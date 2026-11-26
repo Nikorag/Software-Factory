@@ -13,7 +13,8 @@ const GROUPS: { id: Bucket; label: string; color: string }[] = [
   { id: "running", label: "Working", color: TONE.run }, { id: "needs", label: "Needs you", color: TONE.wait }, { id: "queued", label: "Queued", color: "#C4C4CC" },
 ];
 
-export function ProjectRail({ overview: o, projects, jobs, projectId, jobId, profiles, stop, paused }: {
+export function ProjectRail({ open, overview: o, projects, jobs, projectId, jobId, profiles, stop, paused }: {
+  open: boolean;
   overview: Overview | null; projects: Project[]; jobs: Job[]; projectId: string | null; jobId: string | null;
   profiles: { current: string; profiles: ProfileInfo[] } | null; stop: boolean; paused: boolean;
 }) {
@@ -22,7 +23,7 @@ export function ProjectRail({ overview: o, projects, jobs, projectId, jobId, pro
   const state = stop ? { t: "EMERGENCY STOP", c: TONE.fail } : paused ? { t: "PAUSED", c: TONE.wait } : { t: "RUNNING", c: TONE.ok };
   const pick = (id: string) => nav(lastTab(id) ?? `/p/${encodeURIComponent(id)}`);
   return (
-    <aside aria-label="Projects and jobs" className="flex max-h-[60vh] min-h-0 w-full shrink-0 flex-col border-b border-line bg-rail md:max-h-none md:w-[264px] md:border-b-0 md:border-r">
+    <aside aria-label="Projects and jobs" className={cn("fixed inset-y-0 left-0 z-30 flex h-dvh min-h-0 w-[min(280px,85vw)] shrink-0 flex-col border-r border-line bg-rail transition-transform duration-200 md:static md:z-auto md:h-auto md:w-[264px] md:translate-x-0 md:transition-none", open ? "translate-x-0" : "-translate-x-full invisible md:visible")}>
       <div className={cn("app-drag flex h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3.5", electronMac ? "pl-[84px]" : "pl-4")}>
         {inHubMode() ? <a href="/" className="text-xs text-muted-foreground hover:underline">← Hub</a> : null}
         <NavLink to="/" className="flex-1 truncate text-sm font-semibold">Software Factory</NavLink>
