@@ -90,7 +90,6 @@ describe("job timeline", () => {
   });
 });
 
-<<<<<<< HEAD
 describe("decisions after a standalone entry", () => {
   it("attach to the step that was running, not to an earlier 'You retried' entry that has no end", () => {
     id = 0;
@@ -103,7 +102,6 @@ describe("decisions after a standalone entry", () => {
   });
 });
 
-=======
 describe("a step that waits and is re-checked", () => {
   const wait = (stage: string, i: number, reason: string) => ex(stage, "waiting", i * 600, i * 600 + 1, { output: JSON.stringify({ reason, delayMs: 600_000 }) });
   it("is one entry however many times it was checked, saying how many checks and when the last one was", () => {
@@ -137,4 +135,3 @@ describe("a step that waits and is re-checked", () => {
     expect(ci[1]).toMatchObject({ tone: "wait", checks: 2 });
   });
 });
->>>>>>> origin/main
