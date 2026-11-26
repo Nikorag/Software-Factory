@@ -37,9 +37,10 @@ const schema = z.object({
   WEBAUTHN_RP_NAME: z.string().default("Software Factory Hub"),
   WEBAUTHN_ORIGIN: z.url(),
 
-  VAPID_PUBLIC_KEY: z.string().min(1),
-  VAPID_PRIVATE_KEY: z.string().min(1),
-  VAPID_SUBJECT: z.string().regex(/^(mailto:|https:\/\/)/, "VAPID_SUBJECT must be mailto: or https:"),
+  // Web Push is not built yet, so VAPID is optional: set all three or none (generate with `node dist/cli.js vapid-generate`).
+  VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+  VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+  VAPID_SUBJECT: z.string().regex(/^(mailto:|https:\/\/)/, "VAPID_SUBJECT must be mailto: or https:").optional(),
 
   COMMAND_DEFAULT_TTL_SECONDS: int(3600, 10),
   COMMAND_LEASE_SECONDS: int(60, 5),
@@ -54,6 +55,8 @@ const schema = z.object({
   TUNNEL_TIMEOUT_SECONDS: int(25, 1),
   TUNNEL_RATE_LIMIT_PER_MINUTE: int(1500, 1),
   RUN_BACKGROUND: bool.default(true), // false = API-only replica (no outbox relay / workers)
+}).refine((c) => [c.VAPID_PUBLIC_KEY, c.VAPID_PRIVATE_KEY, c.VAPID_SUBJECT].filter(Boolean).length % 3 === 0, {
+  path: ["VAPID_PUBLIC_KEY"], message: "set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and VAPID_SUBJECT together, or none of them",
 });
 
 export type Config = z.infer<typeof schema>;
