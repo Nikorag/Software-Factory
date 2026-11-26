@@ -11,8 +11,9 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { api, send } from "@/lib/api";
 import { usePoll } from "@/hooks/usePoll";
+import { BUILTIN_ENTRIES, WORDS, withTracker } from "@/lib/trackers";
 import type { GhAccounts } from "@/lib/types";
-import type { BitbucketCredential, Project, TeamAudit } from "@/lib/types";
+import type { BitbucketCredential, Project, TeamAudit, TrackerEntry } from "@/lib/types";
 import { TASKS, type GlobalSettings, type Routes, type RouteCfg, type TaskId } from "@/lib/tasks";
 import { ModelPicker } from "./ModelPicker";
 import { ProjectWorkflowPicker } from "./workflow/ProjectWorkflowPicker";
@@ -20,14 +21,14 @@ import { startAction, TaskOutput } from "./TaskRunner";
 
 const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-export interface Form { passes: string; host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
-const blank = (): Form => ({ passes: "", host: "github", bbRepo: "", bbCred: "default", pickup: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", team: "", lproject: "", enabled: true, commands: {} });
+export interface Form { passes: string; host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; tracker: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
+const blank = (): Form => ({ passes: "", host: "github", bbRepo: "", bbCred: "default", pickup: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", tracker: "", team: "", lproject: "", enabled: true, commands: {} });
 const fromProject = (p: Project): Form => ({
   host: p.host ?? "github", bbRepo: p.bitbucketRepo ?? "", bbCred: p.bitbucketCredential ?? "default",
   passes: p.overrides?.maxImplementationPasses?.toString() ?? "",
   pickup: p.overrides?.pickupMode ?? "", conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
   id: p.id, name: p.name, source: p.managed ? "github" : "path", repo: p.githubRepo ?? "", path: p.managed ? "" : p.repository, account: p.githubAccount ?? "", branch: p.defaultBranch, autonomy: p.autonomy,
-  team: p.linear?.teamKey ?? "", lproject: p.linear?.projectName ?? "", enabled: p.enabled, commands: Object.fromEntries(CMDS.map((k) => [k, p.commands[k] ?? ""])),
+  tracker: p.tracker ?? "", team: p.linear?.teamKey ?? "", lproject: p.linear?.projectName ?? "", enabled: p.enabled, commands: Object.fromEntries(CMDS.map((k) => [k, p.commands[k] ?? ""])),
 });
 const same = (a: Form, b: Form) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -50,7 +51,16 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
   const { data: gh } = usePoll(() => api<GhAccounts>("/api/setup/github"), 120000);
   const { data: creds } = usePoll(() => api<{ credentials: BitbucketCredential[] }>("/api/bitbucket/credentials"), 60000);
   const [access, setAccess] = useState<string | null>(null);
-  const team = teams.find((t) => t.key === f.team);
+  // Which tracker connection this project's tickets live in: its own, else the profile's default. Teams come from that connection.
+  const { data: trackerList } = usePoll(() => api<{ default: string; trackers: TrackerEntry[] }>("/api/trackers"), 60000);
+  const connections = trackerList?.trackers ?? BUILTIN_ENTRIES(tracker ?? "linear");
+  const defaultConn = connections.find((c) => c.isDefault) ?? connections[0]!;
+  const chosen = connections.find((c) => c.id === (f.tracker || defaultConn.id)) ?? defaultConn;
+  const ownTracker = f.tracker !== "" && f.tracker !== defaultConn.id;
+  const { data: ownTeams } = usePoll(async () => (ownTracker ? (await api<{ teams: TeamAudit[] }>(withTracker("/api/setup/linear", f.tracker, defaultConn.id))).teams : null), 120000, [f.tracker, ownTracker]);
+  const pickList = ownTracker ? (ownTeams ?? []) : teams;
+  const words = WORDS[chosen.kind];
+  const team = pickList.find((t) => t.key === f.team);
   const id = project?.id ?? (f.id || slug(f.name));
 
   const save = async () => {
@@ -59,6 +69,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
     const r = await send("PUT", `/api/settings/projects/${encodeURIComponent(id)}`, {
       name: f.name.trim(), defaultBranch: f.branch.trim() || "main", enabled: f.enabled, autonomy: f.autonomy, commands,
       host: f.host,
+      ...(f.tracker ? { tracker: f.tracker } : {}),
       ...(f.host === "bitbucket"
         ? { bitbucket: { repo: f.bbRepo.trim() || undefined, credential: f.bbCred }, ...(f.source === "path" ? { repository: f.path.trim() } : {}) }
         : f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
@@ -158,15 +169,21 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         )}
       </Section>
       <Separator />
-      <Section title={tracker === "jira" ? "Jira" : tracker === "github" ? "GitHub Issues" : "Linear"} hint={tracker === "jira" ? "Tickets of this Jira project (and, if you choose one, this component) belong to this repository." : tracker === "github" ? "Issues of this GitHub repository (and, if you choose one, this milestone) belong to this project." : undefined}>
+      <Section title="Issue tracker" hint={words.hint}>
+        {connections.length > 1 || ownTracker ? (
+          <div className="grid max-w-sm gap-1.5"><Label htmlFor="pe-tracker">Tracker connection</Label>
+            <Select value={f.tracker || "__default"} onValueChange={(v) => { set("tracker", v === "__default" ? "" : v); set("team", ""); set("lproject", ""); }}>
+              <SelectTrigger id="pe-tracker" aria-label="tracker connection"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="__default">(profile default: {defaultConn.label})</SelectItem>{connections.filter((c) => c.id !== defaultConn.id).map((c) => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}</SelectContent></Select></div>
+        ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="grid gap-1.5"><Label htmlFor="pe-team">{tracker === "jira" ? "Jira project" : tracker === "github" ? "Issues repository" : "Team key"}</Label>
-            {teams.length ? <Select value={f.team || "__none"} onValueChange={(v) => { set("team", v === "__none" ? "" : v); set("lproject", ""); }}><SelectTrigger id="pe-team" aria-label="linear team"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="__none">{tracker === "jira" || tracker === "github" ? "(choose)" : "(none)"}</SelectItem>{teams.map((t) => <SelectItem key={t.key} value={t.key}>{t.key} · {t.name}</SelectItem>)}</SelectContent></Select>
-              : <Input id="pe-team" value={f.team} onChange={(e) => set("team", tracker === "github" ? e.target.value.trim() : e.target.value.toUpperCase())} placeholder={tracker === "github" ? "owner/repo" : "ENG"} />}</div>
-          <div className="grid gap-1.5"><Label htmlFor="pe-lp">{tracker === "jira" ? "Component (optional)" : tracker === "github" ? "Milestone (optional)" : "Project"}</Label>
+          <div className="grid gap-1.5"><Label htmlFor="pe-team">{words.team}</Label>
+            {pickList.length ? <Select value={f.team || "__none"} onValueChange={(v) => { set("team", v === "__none" ? "" : v); set("lproject", ""); }}><SelectTrigger id="pe-team" aria-label="linear team"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="__none">{words.none}</SelectItem>{pickList.map((t) => <SelectItem key={t.key} value={t.key}>{t.key === t.name ? t.key : `${t.key} · ${t.name}`}</SelectItem>)}</SelectContent></Select>
+              : <Input id="pe-team" value={f.team} onChange={(e) => set("team", chosen.kind === "github" ? e.target.value.trim() : e.target.value.toUpperCase())} placeholder={words.placeholder} />}</div>
+          <div className="grid gap-1.5"><Label htmlFor="pe-lp">{words.project}</Label>
             {team?.projects.length ? <Select value={f.lproject || "__all"} onValueChange={(v) => set("lproject", v === "__all" ? "" : v)}><SelectTrigger id="pe-lp" aria-label="linear project"><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="__all">{tracker === "jira" ? "(whole Jira project)" : tracker === "github" ? "(whole repository)" : "(whole team)"}</SelectItem>{team.projects.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent></Select>
+              <SelectContent><SelectItem value="__all">{words.whole}</SelectItem>{team.projects.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent></Select>
               : <Input id="pe-lp" value={f.lproject} onChange={(e) => set("lproject", e.target.value)} placeholder="optional" />}</div>
         </div>
       </Section>

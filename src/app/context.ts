@@ -9,7 +9,7 @@ import type { LoadedConfig, ProjectConfig } from "../config/schema.js";
 import { openDb, type DbHandle } from "../db/client.js";
 import { Engine, type HandlerRegistry, type TypedHandlers } from "../core/engine.js";
 import type { LinearClient } from "../linear/client.js";
-import { createTrackerClient } from "../tracker/index.js";
+import { trackerSet, type TrackerSet } from "../tracker/index.js";
 import { createIntakeHandlers } from "../linear/handlers.js";
 import { createLinearReporter } from "../linear/reporter.js";
 import { createLogger } from "../logging/logger.js";
@@ -30,7 +30,9 @@ export interface Context {
   router: ModelRouter;
   runner: AgentRunner;
   worktrees: WorktreeManager;
-  linear: () => LinearClient;
+  linear: (projectId?: string) => LinearClient;
+  /** Which tracker connection each project uses, with its client and names. */
+  trackers: TrackerSet;
   project: (id: string) => ProjectConfig;
   handlers: HandlerRegistry;
   /** The reusable stage types (agent, review, check) that custom workflows are built from. */
@@ -66,10 +68,11 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     repoPath: (id) => project(id).repository, defaultBranch: (id) => project(id).defaultBranch,
     networkEnv: (id) => hosts.gitAuth(project(id)),
   });
-  const linear = (): LinearClient => (opts.linear ? opts.linear : createTrackerClient(config));
+  const trackers = trackerSet(config, {}, opts.linear);
+  const linear = (projectId?: string): LinearClient => trackers.client(trackers.idOf(projectId ? config.projects.projects.find((p) => p.id === projectId) : undefined));
 
   const handlers: HandlerRegistry = {
-    ...createIntakeHandlers({ db: handle.db, linear, linearConfig: config.linear, project }),
+    ...createIntakeHandlers({ db: handle.db, linear, linearConfig: config.linear, linearNames: (id) => trackers.names(trackers.idOf(project(id))), project }),
     ...createSpecKitHandlers({ db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger }),
     ...createImplementationHandlers({
       db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger,
@@ -87,5 +90,5 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     settings: { commandTimeoutSeconds: config.factory.commandTimeoutSeconds, sandbox: config.factory.sandbox },
   });
   const engine = new Engine({ db: handle.db, logger, config, handlers, typed, observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun }) });
-  return { config, handle, logger, router, runner, worktrees, linear, project, handlers, typed, engine, hosts };
+  return { config, handle, logger, router, runner, worktrees, linear, trackers, project, handlers, typed, engine, hosts };
 }

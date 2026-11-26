@@ -30,13 +30,13 @@ export interface JobDetail {
 export interface Project {
   host?: "github" | "bitbucket"; bitbucketRepo?: string | null; bitbucketCredential?: string;
   id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; overrides: { maxImplementationPasses?: number; pickupMode?: "automatic" | "manual"; maxConcurrentJobs?: number; maxRemediationAttempts?: number; models?: Partial<import("./tasks").Routes> } | null;
-  linear: { teamKey: string; projectName?: string } | null; commands: Record<string, string | undefined>;
+  tracker?: string | null; linear: { teamKey: string; projectName?: string } | null; commands: Record<string, string | undefined>;
   validation: { ok: boolean; protection: string; findings: string[] } | null; activeJobs: number;
   onboarding?: { status: "ready" | "in-progress" | "not-started"; steps: { id: string; label: string; ok: boolean; detail: string }[] };
 }
 export interface HealthReport { system: SystemInfo; health: Health[]; scheduler: Scheduler | null }
 
-export interface SetupInfo { configDir: string | null; homeConfigDir: string; usingDefaults: boolean; projectCount: number; tracker: { kind: "linear" | "jira" | "github"; name: string; connected: boolean }; linear: { keyPresent: boolean; env: string; keychainService: string | null } }
+export interface SetupInfo { configDir: string | null; homeConfigDir: string; usingDefaults: boolean; projectCount: number; tracker: { kind: "linear" | "jira" | "github"; id?: string; name: string; connected: boolean }; linear: { keyPresent: boolean; env: string; keychainService: string | null } }
 export interface TeamAudit { key: string; name: string; projects: string[]; audited?: boolean; audit: { ok: boolean; statuses: { name: string; required: boolean }[]; labels: { name: string; required: boolean }[] } }
 export interface TaskState { id: string; label: string; status: "running" | "ok" | "failed"; lines: string[] }
 export interface UpdateInfo { version?: string; error?: string; current: string | null; latest: string | null; available: boolean; checkedAt: number | null }
@@ -47,7 +47,9 @@ export interface BoardItem {
   projectId: string; projectName: string; mode: "automatic" | "manual"; job: { id: string; status: string; stage: string } | null; canStart: boolean; reason: string | null;
 }
 export interface Board { mode: "automatic" | "manual"; query: string; items: BoardItem[]; projects: { id: string; name: string; mode: "automatic" | "manual" }[] }
-export interface GithubIssuesMapping { statusPrefix: string; statuses: Record<string, string>; labels: Record<string, string> }
+export interface GithubIssuesMapping { statusPrefix: string; statuses: Record<string, string>; labels: Record<string, string>; account?: string | null }
+/** One tracker connection (an instance of Linear, Jira or GitHub Issues); a profile can have several of each. */
+export interface TrackerEntry { id: string; kind: "linear" | "jira" | "github"; label: string; builtin: boolean; isDefault: boolean; connected: boolean; projects: string[]; env?: string; keychainService?: string }
 export interface JiraStatus { tracker: "linear" | "jira" | "github"; clientId: string | null; secretSet: boolean; connected: boolean; site: { cloudId: string; url: string; name: string } | null; siteChoices: { id: string; name: string; url: string }[]; callbackUrl: string; scopes: string[] }
 export interface JiraMetadata { projects: { key: string; name: string }[]; project: string | null; statuses: string[]; labels: string[] }
 export interface JiraMapping { statuses: Record<string, string>; labels: Record<string, string>; required: { statuses: string[]; labels: string[]; automaticStatus: string; automaticLabel: string } }
