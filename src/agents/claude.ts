@@ -11,8 +11,14 @@ import type { Agent, AgentFailure, AgentRequest, AgentResult } from "./types.js"
  * --dangerously-skip-permissions.
  */
 export function buildClaudeArgs(req: AgentRequest): string[] {
+  // Only the implementer can be unrestricted: reviewers stay read-only so a review can never change the code it reviews.
+  if (req.access === "unrestricted" && req.profile === "implementer") return finishArgs(req, [
+    "-p", "--output-format", "stream-json", "--verbose",
+    "--permission-mode", "auto", // the same mode an interactive auto-mode session uses; settings files load as they would there
+    "--strict-mcp-config",
+  ]);
   const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow, roots: pathRoots(req.cwd) });
-  const args = [
+  return finishArgs(req, [
     "-p",
     "--output-format", "stream-json", "--verbose", // one JSON event per line, as it happens: the whole conversation is logged live, and the last line is the result
     "--permission-mode", "dontAsk", // anything not explicitly allowed is refused, never prompted for
@@ -21,7 +27,10 @@ export function buildClaudeArgs(req: AgentRequest): string[] {
     "--tools", policy.tools.join(","),
     "--allowedTools", ...policy.allow,
     "--disallowedTools", ...policy.deny,
-  ];
+  ]);
+}
+
+function finishArgs(req: AgentRequest, args: string[]): string[] {
   if (req.model && req.model !== "default") args.push("--model", req.model);
   if (req.systemPrompt) args.push("--append-system-prompt", req.systemPrompt);
   if (req.jsonSchema) args.push("--json-schema", JSON.stringify(req.jsonSchema));

@@ -101,6 +101,15 @@ describe("buildClaudeArgs", () => {
     expect(a[a.indexOf("--permission-mode") + 1]).toBe("dontAsk");
     expect(a[a.indexOf("--setting-sources") + 1]).toBe("");
   });
+  it("unrestricted implementer uses auto mode with no tool lists; reviewers can never be unrestricted", () => {
+    const a = buildClaudeArgs(req({ access: "unrestricted" }));
+    expect(a[a.indexOf("--permission-mode") + 1]).toBe("auto");
+    for (const f of ["--tools", "--allowedTools", "--disallowedTools"]) expect(a).not.toContain(f);
+    expect(a).not.toContain("--setting-sources");
+    expect(a.join(" ")).not.toMatch(/dangerously|bypassPermissions/);
+    const r = buildClaudeArgs(req({ profile: "read-only", role: "qa-reviewer", access: "unrestricted" }));
+    expect(r[r.indexOf("--permission-mode") + 1]).toBe("dontAsk");
+  });
   it("passes a model only when it is not 'default'", () => {
     expect(buildClaudeArgs(req({ model: "default" }))).not.toContain("--model");
     expect(buildClaudeArgs(req())).not.toContain("--model");

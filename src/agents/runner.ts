@@ -30,13 +30,21 @@ export interface RunStep {
  * records the invocation, and independently verifies afterwards that the agent respected its boundaries.
  */
 export class AgentRunner {
-  constructor(private readonly d: { db: FactoryDb; router: ModelRouter; logDir: string; protectedPaths: string[]; git?: GitFn }) {}
+  constructor(private readonly d: {
+    db: FactoryDb; router: ModelRouter; logDir: string; protectedPaths: string[]; git?: GitFn;
+    access?: (projectId?: string) => "restricted" | "unrestricted"; // per project; default restricted
+    projectBashAllow?: (projectId?: string) => string[]; // per project extra shell prefixes for the restricted implementer
+  }) {}
 
   async run(step: RunStep): Promise<AgentResult & { route: Route; violations: string[] }> {
     const { db, router } = this.d;
     const git = this.d.git ?? realGit;
     const profile = ROLE_PROFILE[step.role];
     const route = router.route(step.task, step.projectId); // fail on bad config before recording anything
+    const access = profile === "implementer" ? (this.d.access?.(step.projectId) ?? "restricted") : "restricted";
+    if (access === "unrestricted" && step.jobId) {
+      db.insert(decisions).values({ jobId: step.jobId, kind: "agent.unrestricted", decision: `${step.role} runs with unrestricted access (Claude Code auto mode)`, rationale: "agentAccess is `unrestricted`", actor: "factory" }).run();
+    }
     const logFile = join(this.d.logDir, step.jobId ?? "_unattached", `${Date.now()}-${step.role}.log`);
     const row = step.jobId
       ? db.insert(agentInvocations).values({
@@ -50,7 +58,7 @@ export class AgentRunner {
     const before = profile === "read-only" && route.provider === "anthropic" ? await git(step.cwd, ["status", "--porcelain", "--untracked-files=all"]).catch(() => null) : null;
     const result = await router.run(step.task, {
       role: step.role, profile, prompt: step.prompt, cwd: step.cwd, timeoutMs: step.timeoutMs, signal: step.signal,
-      systemPrompt: rolePrompt(step.role), protectedPaths: this.d.protectedPaths, bashAllow: step.bashAllow,
+      systemPrompt: rolePrompt(step.role), protectedPaths: this.d.protectedPaths, access, bashAllow: [...(step.bashAllow ?? []), ...(this.d.projectBashAllow?.(step.projectId) ?? [])],
       jsonSchema: step.jsonSchema, resumeSessionId: step.resumeSessionId, persistSession: profile === "implementer", logFile,
     }, step.projectId);
 

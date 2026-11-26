@@ -17,6 +17,7 @@ export interface AgentRequest {
   timeoutMs: number;
   signal?: AbortSignal; // cancellation / emergency stop
   protectedPaths?: string[]; // globs the agent may not write
+  access?: "restricted" | "unrestricted"; // implementer only: "unrestricted" = Claude Code auto mode, no factory tool lists
   bashAllow?: string[]; // extra shell command prefixes, e.g. a project's "pnpm test"
   resumeSessionId?: string; // continue an earlier session (remediation)
   persistSession?: boolean;

@@ -55,7 +55,10 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     anthropic: new ClaudeCodeAgent({ bin: opts.claudeBin }),
     local: new LocalModelClient({ baseUrl: config.models.local.baseUrl }),
   }, (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.models);
-  const runner = new AgentRunner({ db: handle.db, router, logDir: join(dataDir, "logs", "agents"), protectedPaths: config.factory.protectedPaths });
+  const runner = new AgentRunner({ db: handle.db, router, logDir: join(dataDir, "logs", "agents"), protectedPaths: config.factory.protectedPaths,
+    access: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess,
+    projectBashAllow: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAllow ?? [],
+  });
   const worktrees = new WorktreeManager({
     db: handle.db, logger, workspacesRoot: join(dataDir, "workspaces"),
     repoPath: (id) => project(id).repository, defaultBranch: (id) => project(id).defaultBranch,

@@ -43,6 +43,10 @@ export const FactoryConfig = z.object({
   // Project commands (install/build/test/lint/typecheck) run under macOS sandbox-exec: no network (installs excepted),
   // writes only inside the worktree/temp, no reading of credentials. `required: true` refuses to run them unconfined.
   sandbox: z.object({ required: z.boolean().default(true), readAllow: z.array(z.string()).optional(), writeAllow: z.array(z.string()).optional() }).prefault({}),
+  // How much freedom the implementer agent has. `restricted` (default): an allowlist of git commands plus the project's checks.
+  // `unrestricted`: Claude Code's own `auto` permission mode with no factory tool allow/deny lists, like any interactive auto-mode
+  // session. The factory still checks the diff afterwards (protected paths, secrets). Can be overridden per project.
+  agentAccess: z.enum(["restricted", "unrestricted"]).default("restricted"),
   commandTimeoutSeconds: z.number().int().min(10).default(900),
   pollIntervalSeconds: z.number().int().min(10).default(60),
   // Agent conversation logs hold ticket text, code and command output. They are deleted after this many days (0 = keep forever).
@@ -94,6 +98,7 @@ export const ProjectOverrides = z.object({
   maxConcurrentJobs: z.number().int().min(1).max(8).optional(), // jobs of THIS project running at once (default 1: each job has its own worktree, but tickets in one repository tend to touch the same files)
   maxRemediationAttempts: z.number().int().min(0).max(10).optional(),
   maxImplementationPasses: z.number().int().min(1).max(10).optional(),
+  agentAccess: z.enum(["restricted", "unrestricted"]).optional(), // this project's override of factory.agentAccess
   models: z.object(Object.fromEntries(RouteName.map((r) => [r, ModelRoute.optional()])) as Record<(typeof RouteName)[number], z.ZodOptional<typeof ModelRoute>>)
     .refine((m) => (m.specification?.provider ?? "anthropic") === "anthropic" && (m.implementation?.provider ?? "anthropic") === "anthropic", {
       message: "specification and implementation need file and shell tools, so they must use provider `anthropic` (Claude Code)",
@@ -127,6 +132,8 @@ export const ProjectConfig = z.object({
     })
     .prefault({}),
   overrides: ProjectOverrides.optional(),
+  // Extra shell command prefixes the (restricted) implementer may run, e.g. "GOLDEN_OUT=/tmp/golden godot --headless". Ignored when unrestricted.
+  agentBashAllow: z.array(z.string()).default([]),
   commands: z
     .object({ install: z.string().optional(), build: z.string().optional(), test: z.string().optional(), lint: z.string().optional(), typecheck: z.string().optional() })
     .default({}),
