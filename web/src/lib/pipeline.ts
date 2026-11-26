@@ -70,6 +70,7 @@ export function deriveFlow(job: Job, executions: Execution[], invocations: Invoc
   for (const e of executions) {
     const id = BY_STAGE[e.stage];
     if (!id) continue;
+    if (e.outcome === "waiting") continue; // a re-check while waiting (CI, your merge) is not another attempt, and does not take time
     attempts[id] = (attempts[id] ?? 0) + 1;
     if (e.finishedAt && e.startedAt) duration[id] = (duration[id] ?? 0) + (e.finishedAt - e.startedAt);
     if (e.outcome === "succeeded") state[id] = "done";
