@@ -141,7 +141,7 @@ export class HubReporter {
       const c = getControl(db);
       const counts = db.select({ status: jobs.status, n: sql<number>`count(*)` }).from(jobs).groupBy(jobs.status).all();
       await client.heartbeat(this.o.version, {
-        paused: c.paused, emergencyStop: c.emergencyStop, tracker: this.o.tracker, dryRun: this.o.dryRun,
+        paused: c.paused, emergencyStop: c.emergencyStop, tracker: this.o.tracker, dryRun: this.o.dryRun, remoteAccess: settings.remoteAccess,
         jobs: Object.fromEntries(counts.map((r) => [r.status, Number(r.n)])),
       });
       const sync = collectSync(db), hash = createHash("sha256").update(JSON.stringify(sync)).digest("hex");

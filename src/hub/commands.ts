@@ -10,11 +10,11 @@ export interface ConnectDeps { configDir: string; dataDir: string; fetch?: Fetch
  * Validates the key against the hub (a heartbeat), stores it (keychain, never a file), then switches reporting on.
  * Nothing is enabled if the hub rejects the key or the key cannot be stored.
  */
-export async function connectHub(input: { url: string; key: string }, d: ConnectDeps): Promise<{ url: string }> {
+export async function connectHub(input: { url: string; key: string; remoteAccess?: boolean }, d: ConnectDeps): Promise<{ url: string; remoteAccess: boolean }> {
   const url = normalizeHubUrl(input.url);
   const key = input.key.trim();
   if (!looksLikeHubKey(key)) throw new Error("that does not look like a hub API key (expected sfh_…): copy it again from the hub");
-  try { await new HubClient({ url, key, fetch: d.fetch, timeoutMs: 10_000 }).heartbeat(d.version, {}); }
+  try { await new HubClient({ url, key, fetch: d.fetch, timeoutMs: 10_000 }).heartbeat(d.version, { remoteAccess: input.remoteAccess === true }); }
   catch (e) {
     if (e instanceof HubError && e.rejected) throw new Error("the hub rejected this key. Check it was copied in full and has not been revoked.");
     throw new Error(`could not reach the hub at ${url}: ${(e as Error).message}`);
@@ -25,22 +25,30 @@ export async function connectHub(input: { url: string; key: string }, d: Connect
     catch (e) { throw new Error(`could not store the key (${(e as Error).message}). Set ${HUB_KEY_ENV} in the service's environment instead, then run this again.`); }
   }
   rmSync(stateFile(d.dataDir), { force: true }); // fresh cursor for a fresh connection
-  writeHubSettings({ enabled: true, url }, d.configDir);
-  return { url };
+  // Remote control is never a side effect of connecting: it is on only if asked for explicitly, and a (re)connect always resets it,
+  // so pointing at a different hub can never inherit an earlier grant.
+  writeHubSettings({ enabled: true, url, remoteAccess: input.remoteAccess === true }, d.configDir);
+  return { url, remoteAccess: input.remoteAccess === true };
 }
 
 export function disconnectHub(d: { configDir: string; dataDir: string; deleteKey?: () => void }): void {
-  writeHubSettings({ enabled: false }, d.configDir);
+  writeHubSettings({ enabled: false, remoteAccess: false }, d.configDir);
   (d.deleteKey ?? (() => deleteSecret(hubKeySource())))();
   rmSync(stateFile(d.dataDir), { force: true });
 }
 
-export interface HubStatus { enabled: boolean; url: string; keyPresent: boolean; keyRejected: boolean; lastSuccessAt: string | null; lastError: string | null; pendingRetryAt: string | null }
+/** Turns the hub's remote dashboard on or off. Refuses to turn it on until a hub is connected. */
+export function setRemoteAccess(on: boolean, d: { configDir: string }): void {
+  if (on) { const s = readHubSettings(d.configDir); if (!s.enabled || !s.url) throw new Error("connect to a hub first: factory hub connect --url <hub>"); }
+  writeHubSettings({ remoteAccess: on }, d.configDir);
+}
+
+export interface HubStatus { enabled: boolean; remoteAccess: boolean; url: string; keyPresent: boolean; keyRejected: boolean; lastSuccessAt: string | null; lastError: string | null; pendingRetryAt: string | null }
 /** Never includes the key itself. */
 export function hubStatus(d: { configDir: string; dataDir: string; getKey?: () => string | undefined }): HubStatus {
   const s = readHubSettings(d.configDir), st = readState(d.dataDir);
   return {
-    enabled: s.enabled, url: s.url, keyPresent: Boolean((d.getKey ?? hubKey)()), keyRejected: st.keyRejected,
+    enabled: s.enabled, remoteAccess: s.remoteAccess, url: s.url, keyPresent: Boolean((d.getKey ?? hubKey)()), keyRejected: st.keyRejected,
     lastSuccessAt: st.lastSuccessAt ? new Date(st.lastSuccessAt).toISOString() : null, lastError: st.lastError,
     pendingRetryAt: st.nextAttemptAt > Date.now() ? new Date(st.nextAttemptAt).toISOString() : null,
   };

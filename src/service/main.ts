@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import type { FastifyInstance } from "fastify";
 import { createContext, type Context } from "../app/context.js";
 import type { LoadedConfig } from "../config/schema.js";
+import { decisions } from "../db/schema.js";
 import { ensureClone } from "../repo/clone.js";
 import { validateProjects } from "../repo/registry.js";
 import { discoverIssues } from "../linear/discovery.js";
@@ -20,6 +21,7 @@ import { createLinearClient } from "../linear/client.js";
 import { createProjectActions } from "./actions.js";
 import { saveSecret } from "./secrets.js";
 import { HubReporter } from "../hub/reporter.js";
+import { HubTunnel } from "../hub/tunnel.js";
 import { hubKey, readHubSettings } from "../hub/settings.js";
 import { PACKAGE_ROOT } from "../config/load.js";
 import { TaskManager } from "./tasks.js";
@@ -104,6 +106,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
   const rotateTimer = setInterval(rotate, 10 * 60_000); rotateTimer.unref();
   // Reports to the hub only when the user has connected one (off by default). Settings are re-read each pass, so connect/disconnect apply live.
   let hubTimer: NodeJS.Timeout | undefined;
+  let tunnel: HubTunnel | undefined, tunnelTimer: NodeJS.Timeout | undefined;
   if (opts.scheduler !== false) {
     const version = (() => { try { return (JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf8")) as { version?: string }).version; } catch { return undefined; } })();
     const reporter = new HubReporter({ db: ctx.handle.db, dataDir, logger, getSettings: () => readHubSettings(config.configDir), getKey: hubKey, version, tracker: config.factory.tracker, dryRun: config.factory.dryRun });
@@ -116,6 +119,14 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
       void reporter.tick();
     }, 5000);
     hubTimer.unref();
+    // The hub's web dashboard can operate this factory only if the user turned `hub.remoteAccess` on (separate from reporting, off by
+    // default). Dashboard requests run through this same server in-process, filtered by src/hub/remote-policy.ts.
+    tunnel = new HubTunnel({
+      app, port, logger, getSettings: () => readHubSettings(config.configDir), getKey: hubKey,
+      audit: (a) => { try { ctx.handle.db.insert(decisions).values({ kind: "remote.request", decision: `${a.method} ${a.route} -> ${a.status}`, actor: "hub-remote" }).run(); } catch { /* best effort */ } },
+    });
+    tunnelTimer = setInterval(() => tunnel?.sync(), 5000); tunnelTimer.unref();
+    tunnel.sync();
   }
   scheduler?.start();
   logger.info({ port, scheduler: Boolean(scheduler), dryRun: config.factory.dryRun, mergeMode: config.factory.mergeMode }, "factory service started");
@@ -126,7 +137,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     async stop(reason = "stop requested") {
       if (stopped) return; stopped = true;
       writeStopMarker(dataDir, reason); // first, so the app can tell this stop from a crash however it ends
-      clearInterval(pruneTimer); clearInterval(rotateTimer); if (hubTimer) clearInterval(hubTimer);
+      clearInterval(pruneTimer); clearInterval(rotateTimer); if (hubTimer) clearInterval(hubTimer); if (tunnelTimer) clearInterval(tunnelTimer); tunnel?.stop();
       logger.info({ reason }, "factory service stopping");
       await scheduler?.stop();
       // The engine is idle once each aborted stage has returned, which can be before its process group has exited (it gets

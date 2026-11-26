@@ -49,7 +49,7 @@ function reporter(db: ReturnType<typeof seed>, dataDir: string, hub: ReturnType<
   let getSettingsCalls = 0, getKeyCalls = 0;
   const r = new HubReporter({
     db, dataDir, logger: log, fetch: hub.fetch, now: o.now, version: "1.2.3", tracker: "linear",
-    getSettings: () => { getSettingsCalls++; return { enabled: o.enabled ?? true, url: "https://hub.example.test", reportIntervalSeconds: 30 }; },
+    getSettings: () => { getSettingsCalls++; return { enabled: o.enabled ?? true, url: "https://hub.example.test", reportIntervalSeconds: 30, remoteAccess: false }; },
     getKey: o.getKey ?? (() => { getKeyCalls++; return "key" in o ? o.key : KEY; }),
   });
   return { r, counts: () => ({ getSettingsCalls, getKeyCalls }) };

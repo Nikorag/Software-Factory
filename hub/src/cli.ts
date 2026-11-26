@@ -2,7 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { ConfigError, loadConfig } from "./config.js";
 import { createPgDb } from "./db.js";
 import { createHub } from "./hub.js";
-import { createBullQueue, createRedisBus, createRedisRateLimiter } from "./infra.js";
+import { createBullQueue, createRedisBus, createRedisRateLimiter, createRedisTunnel } from "./infra.js";
 import { createLogger } from "./log.js";
 import { loadMigrations, migrate, pendingMigrations } from "./migrate.js";
 
@@ -38,7 +38,8 @@ async function main() {
     return;
   }
 
-  const hub = createHub(cfg, { db: createPgDb(cfg), bus: createRedisBus(cfg), queue: createBullQueue(cfg), limiter: createRedisRateLimiter(cfg) }, log);
+  const bus = createRedisBus(cfg);
+  const hub = createHub(cfg, { db: createPgDb(cfg), bus, tunnel: createRedisTunnel(cfg, bus), queue: createBullQueue(cfg), limiter: createRedisRateLimiter(cfg) }, log);
   let closing = false;
   const stop = (sig: string) => {
     if (closing) return; closing = true;

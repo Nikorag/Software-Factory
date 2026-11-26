@@ -2,7 +2,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { pino } from "pino";
 import { loadConfig, type Config } from "../src/config.js";
 import type { Db, Queryable } from "../src/db.js";
-import type { Bus, DispatchQueue, RateLimiter } from "../src/infra.js";
+import type { Bus, DispatchQueue, RateLimiter, Tunnel, TunnelRequest, TunnelResponse } from "../src/infra.js";
 import { createHub } from "../src/hub.js";
 import { migrate } from "../src/migrate.js";
 
@@ -45,6 +45,19 @@ export class FakeQueue implements DispatchQueue {
   async close() {}
 }
 
+/** In-memory Tunnel with the same semantics as the Redis one (at-most-once take, single response, expiry). */
+export class FakeTunnel implements Tunnel {
+  queues = new Map<string, TunnelRequest[]>(); live = new Set<string>(); responses = new Map<string, TunnelResponse>(); full = false;
+  async push(f: string, r: TunnelRequest) { if (this.full) return false; this.live.add(r.id); (this.queues.get(f) ?? this.queues.set(f, []).get(f)!).push(r); return true; }
+  async take(f: string, n: number) { return this.queues.get(f)?.splice(0, n) ?? []; }
+  async respond(id: string, res: TunnelResponse) { if (!this.live.delete(id)) return false; this.responses.set(id, res); return true; }
+  async awaitResponse(id: string, ms: number) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { const r = this.responses.get(id); if (r) { this.responses.delete(id); return r; } await new Promise((ok) => setTimeout(ok, 10)); }
+    this.live.delete(id); return null;
+  }
+}
+
 export const allowAll: RateLimiter = { allow: async () => true, close: async () => {} };
 
 export async function seed(db: Db) {
@@ -58,9 +71,9 @@ export async function seed(db: Db) {
 }
 
 export function testHub(db: Db, over: Record<string, string> = {}) {
-  const cfg = testConfig(over), bus = new FakeBus(), queue = new FakeQueue();
+  const cfg = testConfig(over), bus = new FakeBus(), queue = new FakeQueue(), tunnel = new FakeTunnel();
   const log = pino({ level: "silent" });
-  const hub = createHub(cfg, { db, bus, queue, limiter: allowAll }, log);
+  const hub = createHub(cfg, { db, bus, tunnel, queue, limiter: allowAll }, log);
   hub.state.initialised = true; queue.startWorker((id) => hub.commands.onDispatch(id));
-  return { cfg, bus, queue, hub, commands: hub.commands, app: hub.app };
+  return { cfg, bus, queue, tunnel, hub, commands: hub.commands, app: hub.app };
 }

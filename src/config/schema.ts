@@ -29,6 +29,9 @@ export const FactoryConfig = z.object({
     enabled: z.boolean().default(false),
     url: z.string().default("").refine((u) => u === "" || validHubUrl(u), { message: "hub url must be https (http only for localhost)" }),
     reportIntervalSeconds: z.number().int().min(10).max(3600).default(30),
+    // Lets the hub's web dashboard operate this factory (it relays dashboard requests to this machine). OFF by default and separate
+    // from `enabled`: reporting progress never grants remote control. Turn on with `factory hub remote-access on`.
+    remoteAccess: z.boolean().default(false),
   }).prefault({}),
   dryRun: z.boolean().default(false),
   maxRemediationAttempts: z.number().int().min(0).max(10).default(3),

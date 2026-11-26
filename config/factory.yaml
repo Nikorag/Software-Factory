@@ -12,3 +12,4 @@ pollIntervalSeconds: 60
 hub:                             # report progress to a central Software Factory Hub. Off until you run `factory hub connect`
   enabled: false
   url: ""
+  remoteAccess: false            # let the hub's web dashboard operate this factory. Separate from reporting; turn on with `factory hub remote-access on`

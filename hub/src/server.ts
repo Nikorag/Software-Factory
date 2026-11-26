@@ -7,13 +7,14 @@ import { audit, CommandError, type CommandService } from "./commands.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db.js";
 import { makeReadiness, type HubState } from "./health.js";
-import { channels, type Bus, type RateLimiter } from "./infra.js";
+import { channels, type Bus, type RateLimiter, type Tunnel } from "./infra.js";
 import { registerAuthRoutes } from "./routes-auth.js";
 import { registerDashboardRoutes } from "./routes-dashboard.js";
+import { registerTunnelRoutes } from "./routes-tunnel.js";
 import { registerUi, SECURITY_HEADERS } from "./ui.js";
 import { eventsBody, ingestEvents, syncBody, syncMetadata } from "./ingest.js";
 
-export interface Deps { cfg: Config; db: Db; bus: Bus; limiter: RateLimiter; log: Logger; commands: CommandService; state: HubState }
+export interface Deps { cfg: Config; db: Db; bus: Bus; tunnel: Tunnel; limiter: RateLimiter; log: Logger; commands: CommandService; state: HubState }
 
 declare module "fastify" { interface FastifyRequest { factory?: FactoryPrincipal; user?: UserPrincipal } }
 
@@ -51,7 +52,7 @@ export function buildServer(d: Deps): FastifyInstance {
   });
   app.addHook("onResponse", async (req, reply) => {
     if (req.url.startsWith("/healthz")) return;
-    req.log.info({ method: req.method, route: req.routeOptions.url, status: reply.statusCode, ms: Math.round(reply.elapsedTime), factoryId: req.factory?.factoryId, userId: req.user?.userId }, "request");
+    req.log[req.method === "GET" && reply.statusCode < 400 && req.url.startsWith("/f/") ? "debug" : "info"]({ method: req.method, route: req.routeOptions.url, status: reply.statusCode, ms: Math.round(reply.elapsedTime), factoryId: req.factory?.factoryId, userId: req.user?.userId }, "request");
   });
 
   app.addHook("onSend", async (_req, reply) => { for (const [k, v] of Object.entries(SECURITY_HEADERS)) reply.header(k, v); });
@@ -73,17 +74,20 @@ export function buildServer(d: Deps): FastifyInstance {
     req.factory = p;
     req.log = req.log.child({ factoryId: p.factoryId });
   };
-  const requireUser = async (req: FastifyRequest, reply: FastifyReply) => {
+  // Cookie-authenticated routes. `strictJson` (the API) requires mutations to be JSON; the tunnel instead requires the
+  // dashboard's custom X-Factory-UI header (it forces a CORS preflight, which this server never grants).
+  const makeUserGuard = (kind: "json" | "tunnel") => async (req: FastifyRequest, reply: FastifyReply) => {
     const p = await authenticateSession(cfg, db, req.headers.cookie);
     if (!p) return reply.code(401).send({ error: "unauthorized" });
-    // DELETE is exempt from the JSON rule: it is never a "simple" cross-site request (it forces a CORS preflight).
-    // Cookie auth: refuse cross-site form posts. Mutations must be JSON (not a "simple" CORS request).
-    if (req.method !== "GET" && req.method !== "DELETE" && !req.headers["content-type"]?.startsWith("application/json")) return reply.code(415).send({ error: "json_required" });
+    const safe = req.method === "GET" || req.method === "HEAD";
+    if (!safe && kind === "json" && req.method !== "DELETE" && !req.headers["content-type"]?.startsWith("application/json")) return reply.code(415).send({ error: "json_required" });
+    if (!safe && kind === "tunnel" && req.headers["x-factory-ui"] !== "1") return reply.code(403).send({ error: "missing_ui_header" });
     // Defence in depth on top of SameSite=Strict: a cookie-authenticated mutation must come from our own origin.
     const origin = req.headers.origin;
-    if (req.method !== "GET" && origin && origin !== cfg.WEBAUTHN_ORIGIN) return reply.code(403).send({ error: "bad_origin" });
+    if (!safe && origin && origin !== cfg.WEBAUTHN_ORIGIN) return reply.code(403).send({ error: "bad_origin" });
     req.user = p;
   };
+  const requireUser = makeUserGuard("json");
   const uuidParam = (v: unknown) => { if (!isUuid(v)) throw new CommandError("invalid", "invalid id"); return v; };
 
   // ================= Factory-facing API (bearer factory token) =================
@@ -199,5 +203,6 @@ export function buildServer(d: Deps): FastifyInstance {
   registerAuthRoutes(app as unknown as FastifyInstance, d, requireUser);
   registerDashboardRoutes(app as unknown as FastifyInstance, d, requireUser);
   registerUi(app as unknown as FastifyInstance);
+  registerTunnelRoutes(app as unknown as FastifyInstance, d, makeUserGuard("tunnel"), requireFactory);
   return app as unknown as FastifyInstance;
 }

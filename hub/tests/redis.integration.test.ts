@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createBullQueue, createRedisBus, createRedisRateLimiter } from "../src/infra.js";
+import { createBullQueue, createRedisBus, createRedisRateLimiter, createRedisTunnel } from "../src/infra.js";
 import { testConfig } from "./helpers.js";
 
 // Runs against a real Redis only when REDIS_URL is set, e.g.:  REDIS_URL=redis://127.0.0.1:6379 pnpm test
@@ -29,5 +29,24 @@ describe.skipIf(!url)("redis adapters (real Redis)", () => {
   it("rate limiter: blocks past the limit", async () => {
     const l = createRedisRateLimiter(cfg());
     expect([await l.allow("k"), await l.allow("k"), await l.allow("k")]).toEqual([true, true, false]); await l.close();
+  });
+
+  it("tunnel: at-most-once take, single response, round trip across two connections, expiry", async () => {
+    const c = cfg(); const busA = createRedisBus(c), busB = createRedisBus(c);
+    const browserSide = createRedisTunnel(c, busA), factorySide = createRedisTunnel(c, busB);
+    const req = { id: "11111111-1111-4111-8111-111111111111", method: "GET", path: "/api/overview", headers: {}, expiresAt: new Date(Date.now() + 5000).toISOString() };
+    expect(await browserSide.push("f1", req)).toBe(true);
+    const waiting = browserSide.awaitResponse(req.id, 5000);
+    const [t1, t2] = await Promise.all([factorySide.take("f1", 10), factorySide.take("f1", 10)]);
+    expect(t1.length + t2.length).toBe(1);
+    expect(await factorySide.respond(req.id, { status: 200, headers: {}, bodyBase64: "e30=" })).toBe(true);
+    expect(await factorySide.respond(req.id, { status: 200, headers: {}, bodyBase64: "e30=" })).toBe(false);
+    expect(await waiting).toMatchObject({ status: 200 });
+    // unanswered: times out, and a late answer is refused
+    const late = { ...req, id: "22222222-2222-4222-8222-222222222222" };
+    await browserSide.push("f1", late);
+    expect(await browserSide.awaitResponse(late.id, 600)).toBeNull();
+    expect(await factorySide.respond(late.id, { status: 200, headers: {}, bodyBase64: "" })).toBe(false);
+    await busA.close(); await busB.close();
   });
 });

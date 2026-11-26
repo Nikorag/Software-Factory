@@ -32,7 +32,7 @@ import { agentServes, agentStatus, installAgent, refreshAgent, uninstallAgent } 
 import { repairNativeModules } from "./service/native.js";
 import { backupDatabase, profileDbFile, runUpdate, UpdateRefused } from "./service/update-run.js";
 import { LockHeldError } from "./service/lock.js";
-import { connectHub, disconnectHub, hubStatus } from "./hub/commands.js";
+import { connectHub, disconnectHub, hubStatus, setRemoteAccess } from "./hub/commands.js";
 import { HUB_KEY_ENV } from "./hub/settings.js";
 import { installCrashHandlers, shutdownController } from "./agents/children.js";
 
@@ -350,12 +350,14 @@ hub
   .description("Connect to a hub with an API key from its web page, then start reporting")
   .requiredOption("--url <url>", "the hub's address, e.g. https://factory.nikorag.co.uk")
   .option("--key <key>", `the hub API key (safer: omit it and paste when asked, or set ${HUB_KEY_ENV})`)
-  .action(async (o: { url: string; key?: string }) => {
+  .option("--remote-access", "also let the hub's web dashboard operate this factory (off unless you pass this; see `hub remote-access`)")
+  .action(async (o: { url: string; key?: string; remoteAccess?: boolean }) => {
     const config = loadConfig();
     try {
       const key = o.key ?? process.env[HUB_KEY_ENV] ?? (await readKeyFromStdin());
-      const r = await connectHub({ url: o.url, key }, { configDir: config.configDir ?? defaultConfigDir(), dataDir: config.factory.dataDir, version: program.version() });
+      const r = await connectHub({ url: o.url, key, remoteAccess: o.remoteAccess === true }, { configDir: config.configDir ?? defaultConfigDir(), dataDir: config.factory.dataDir, version: program.version() });
       console.log(`✓ Connected to ${r.url}. Reporting is on: a running factory starts within a minute, otherwise at its next start.`);
+      console.log(r.remoteAccess ? "  Remote dashboard access is ON: the hub's web dashboard can operate this factory. Turn it off with `software-factory hub remote-access off`." : "  Remote dashboard access is off. Enable it with `software-factory hub remote-access on`.");
     } catch (e) { console.error(`✗ ${(e as Error).message}`); process.exitCode = 1; }
   });
 hub.command("disconnect").description("Stop reporting and forget the API key").action(() => {
@@ -363,10 +365,19 @@ hub.command("disconnect").description("Stop reporting and forget the API key").a
   disconnectHub({ configDir: config.configDir ?? defaultConfigDir(), dataDir: config.factory.dataDir });
   console.log("✓ Disconnected. Nothing is reported and the key has been removed from this machine.");
 });
+hub.command("remote-access <state>").description("Let the hub's web dashboard operate this factory (on) or not (off, the default)").action((state: string) => {
+  if (state !== "on" && state !== "off") { console.error("usage: software-factory hub remote-access on|off"); process.exitCode = 1; return; }
+  const config = loadConfig();
+  try {
+    setRemoteAccess(state === "on", { configDir: config.configDir ?? defaultConfigDir() });
+    console.log(state === "on" ? "✓ Remote dashboard access is ON: signed-in users of your hub can operate this factory (a running factory picks this up within a minute). Secrets, shutdown and updates stay blocked." : "✓ Remote dashboard access is OFF.");
+  } catch (e) { console.error(`✗ ${(e as Error).message}`); process.exitCode = 1; }
+});
 hub.command("status").description("Is reporting on, and when did it last succeed? (never prints the key)").action(() => {
   const config = loadConfig(), s = hubStatus({ configDir: config.configDir ?? defaultConfigDir(), dataDir: config.factory.dataDir });
   console.log(`reporting:    ${s.enabled ? "on" : "off (default)"}`);
   if (s.enabled || s.url) console.log(`hub:          ${s.url || "(none)"}`);
+  if (s.enabled) console.log(`remote UI:    ${s.remoteAccess ? "on (the hub's dashboard can operate this factory)" : "off (default)"}`);
   if (s.enabled) {
     console.log(`api key:      ${s.keyPresent ? "present" : `missing (run \`factory hub connect\`, or set ${HUB_KEY_ENV})`}`);
     console.log(`last success: ${s.lastSuccessAt ?? "never"}`);

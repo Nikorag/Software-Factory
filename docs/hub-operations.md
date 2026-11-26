@@ -54,6 +54,7 @@ All via environment variables: non-sensitive in the ConfigMap, sensitive in a Se
 | `POLL_MAX_WAIT_SECONDS` / `RATE_LIMIT_PER_MINUTE` | | 25 / 300 | rate limit is per client IP, via Redis, fails open |
 | `RECONCILE_INTERVAL_MS` / `OUTBOX_INTERVAL_MS` | | 15000 / 1000 | |
 | `SHUTDOWN_DRAIN_MS` / `SHUTDOWN_TIMEOUT_MS` | | 5000 / 25000 | |
+| `WEB_DIST_DIR` / `TUNNEL_TIMEOUT_SECONDS` / `TUNNEL_RATE_LIMIT_PER_MINUTE` | | bundled / 25 / 1500 | see "The remote dashboard" |
 | `RUN_BACKGROUND` | | true | `false` = API-only replica |
 
 🔒 = Secret. Local dev template: `hub/.env.example`.
@@ -86,7 +87,7 @@ The container's default command is `node dist/cli.js serve`. Other commands: `mi
 1. Open `https://factory.nikorag.co.uk`. With no users yet it shows **Set up your hub**.
 2. Enter the `SETUP_TOKEN` secret, your email and name, then create a passkey. This is the only way to create a user and the only time the token is used; once a user exists, setup is closed (the endpoint returns 403 even with the right token).
 3. Sign-in is **passkey-only**: no passwords exist anywhere. Registration and login both require user verification (biometric/PIN) and a discoverable credential. Use **Add passkey** to enrol a second device straight away: the last passkey cannot be removed, and there is no recovery flow. If you lose every passkey, recovery is operator-side (delete the rows from `users`/`passkey_credentials` in PostgreSQL to re-open setup).
-4. **Add a factory** (name it) to get an **API key**, shown once. Put it in your local factory with `software-factory hub connect --url https://factory.nikorag.co.uk` (see `docs/hub-client.md`). Reporting is off in a local factory until you do this. Rotate or revoke the key from the factory's page at any time.
+4. **Add a factory** (name it) to get an **API key**, shown once. Put it in your local factory with `software-factory hub connect --url https://factory.nikorag.co.uk --remote-access` (see `docs/hub-client.md`). Reporting and remote access are both off in a local factory until you do this. Rotate or revoke the key from the factory's page at any time.
 
 The WebAuthn relying-party ID must stay `factory.nikorag.co.uk` and the origin must match the URL you browse to exactly (HTTPS required, except `localhost`).
 
@@ -161,14 +162,28 @@ Roll back: set the image version variable back and apply (or `kubectl rollout un
 
 On SIGTERM the pod immediately reports unready, waits `SHUTDOWN_DRAIN_MS` for endpoint removal to propagate, then stops background loops, releases long-polls and SSE streams, finishes in-flight requests and the active queue job, and closes PostgreSQL/Redis. `terminationGracePeriodSeconds` (45) exceeds the in-app timeout (25s). Interrupted work is safe: commands are leased in PostgreSQL and recovered by `reconcile()`.
 
+## The remote dashboard (same frontend, tunnelled)
+
+The hub does not have its own copy of the dashboard. The image **builds and bundles the same React app as the local factory (`web/`)**, and for each factory serves it at `https://factory.nikorag.co.uk/f/<factory-id>/`. The only difference at runtime is one `<meta name="factory-hub-base">` tag the hub fills in; the app then prefixes its `/api` calls with `/f/<id>`. So there is one frontend to maintain: every dashboard change ships to both places. (The hub's own pages, sign-in and the factory list/keys, are a tiny separate vanilla UI.)
+
+How a request flows: browser → hub `/f/<id>/api/*` (passkey session, per-factory permission, same-origin + `X-Factory-UI` header for changes) → short-lived Redis relay → the factory, which is long-polling the hub → the factory runs it against its own local API and answers → hub → browser. The hub never interprets these calls.
+
+- **Execute now or fail.** Requests live only in Redis with a ~60 s TTL, are never stored in PostgreSQL and are never redelivered. If the factory is offline or too slow the user gets a 504, so a "start job" can never fire hours later. Each request goes to exactly one poller, and a response is accepted once.
+- **Two opt-ins, both on the factory.** Reporting is off until `hub connect`; **remote access is a separate switch** (`software-factory hub remote-access on`, or `connect --remote-access`), off by default. The hub shows "Remote dashboard is off" until the factory says otherwise, and `POST/PUT/DELETE` also need the `command` permission (owners/admins).
+- **The factory enforces what is allowed**, not the hub: secret-bearing routes (API keys, OAuth secrets), shutdown/update and profile management are blocked remotely. See `docs/hub-client.md` for the exact list.
+- **Audit.** Every changing call is recorded in `audit_events` (who, method, route; never the body).
+- **What transits the hub.** Dashboard responses, including agent logs and conversations when someone opens them, pass through hub memory and Redis for a moment in transit. They are not persisted, and not logged (bodies and headers are never logged), but whoever operates the hub could observe them. That is the trade-off of a remote dashboard.
+- Limits: 64 KB request / 5 MB response, 50 waiting requests per factory, 25 s timeout, 1500 requests/min per user (`TUNNEL_*`).
+- Image: `WEB_DIST_DIR` (default `/app/dist/web`) is the bundled build; if it's missing `/f/<id>/` returns 503 saying so.
+
 ## Scope: what the hub is and is not
 
-The hub is a **passive dashboard and ingest point** for factories running on your own machines. It does not run agents, hold Claude/Anthropic/GitHub/Linear credentials, or call any model: all Claude Code, git and tracker work stays local. It stores only the metadata a local factory chooses to report (see `docs/hub-client.md` for exactly what) and shows it behind a passkey login.
+The hub runs no agents and holds no Claude, Anthropic, GitHub or Linear credentials, and it calls no model. All Claude Code, git and tracker work stays on your machine; the hub stores only what a factory reports (see `docs/hub-client.md`) and relays dashboard calls that a factory has explicitly allowed.
 
-Built: passkey authentication, API keys, factory registration/rotation, event + metadata ingest, live dashboard (SSE), durable command queue.
+Built: passkey authentication, API keys, factory registration/rotation, event + metadata ingest, live overview (SSE), the tunnelled full dashboard, a durable command queue.
 
 Not built yet:
-- **Acting on commands.** The hub can queue remote commands, but the local factory does not poll for or execute them, and the dashboard has no buttons for them. Today the link is one-way: factory → hub.
+- The durable command queue is not used by the dashboard (it uses the tunnel above); nothing on the factory consumes it.
 - Web Push sending and notification workers (the tables, VAPID settings and queue plumbing exist).
 - More than one user: after the first, there is no invite flow.
 - Ticket titles: the local factory doesn't store them, so jobs show the ticket key.

@@ -20,15 +20,34 @@ export interface DispatchQueue {
   close(): Promise<void>;
 }
 
+/**
+ * Transient request/response relay between a browser (via the hub) and a factory's local dashboard API.
+ * Lives only in Redis with short TTLs and is NEVER stored in PostgreSQL: the semantics are "execute now or
+ * fail", so a queued request can't fire hours later. Delivery is at-most-once (take() removes it) and a
+ * response is accepted once.
+ */
+export interface TunnelRequest { id: string; method: string; path: string; headers: Record<string, string>; bodyBase64?: string; expiresAt: string }
+export interface TunnelResponse { status: number; headers: Record<string, string>; bodyBase64: string }
+export interface Tunnel {
+  /** false when that factory's queue is full. */
+  push(factoryId: string, req: TunnelRequest): Promise<boolean>;
+  take(factoryId: string, max: number): Promise<TunnelRequest[]>;
+  /** false when the request already expired or was already answered. */
+  respond(id: string, res: TunnelResponse): Promise<boolean>;
+  awaitResponse(id: string, timeoutMs: number): Promise<TunnelResponse | null>;
+}
+
 export interface RateLimiter {
-  /** true = allowed. Implementations fail open when Redis is unavailable. */
-  allow(key: string): Promise<boolean>;
+  /** true = allowed. Implementations fail open when Redis is unavailable. `limit` overrides the default per-minute limit. */
+  allow(key: string, limit?: number): Promise<boolean>;
   close(): Promise<void>;
 }
 
 export const channels = {
   wake: (factoryId: string) => `wake:${factoryId}`,
   org: (orgId: string) => `org:${orgId}`,
+  tunnel: (factoryId: string) => `tunnel:${factoryId}`,
+  tunnelRes: (requestId: string) => `tunres:${requestId}`,
 };
 
 export function redisOptions(cfg: Config, extra: RedisOptions = {}): RedisOptions {
@@ -105,14 +124,57 @@ export function createBullQueue(cfg: Config): DispatchQueue {
 export function createRedisRateLimiter(cfg: Config): RateLimiter {
   const r = quiet(new Redis(redisOptions(cfg, { maxRetriesPerRequest: 1, commandTimeout: 2000 })));
   return {
-    async allow(key) {
+    async allow(key, limit) {
       try {
         const k = `${cfg.REDIS_KEY_PREFIX}:rl:${key}:${Math.floor(Date.now() / 60_000)}`;
         const n = await r.incr(k);
         if (n === 1) await r.expire(k, 90);
-        return n <= cfg.RATE_LIMIT_PER_MINUTE;
+        return n <= (limit ?? cfg.RATE_LIMIT_PER_MINUTE);
       } catch { return true; }
     },
     async close() { await r.quit().catch(() => r.disconnect()); },
+  };
+}
+
+export const TUNNEL_QUEUE_MAX = 50;
+const TUNNEL_TTL_S = 60;
+
+export function createRedisTunnel(cfg: Config, bus: Bus): Tunnel {
+  const r = quiet(new Redis(redisOptions(cfg, { maxRetriesPerRequest: 1, commandTimeout: 2000 })));
+  const p = cfg.REDIS_KEY_PREFIX;
+  const q = (f: string) => `${p}:tun:q:${f}`, live = (id: string) => `${p}:tun:p:${id}`, res = (id: string) => `${p}:tun:r:${id}`;
+  return {
+    async push(factoryId, req) {
+      if ((await r.llen(q(factoryId))) >= TUNNEL_QUEUE_MAX) return false;
+      await r.set(live(req.id), "1", "EX", TUNNEL_TTL_S);
+      await r.rpush(q(factoryId), JSON.stringify(req));
+      await r.expire(q(factoryId), TUNNEL_TTL_S * 2);
+      await bus.publish(channels.tunnel(factoryId), req.id).catch(() => undefined);
+      return true;
+    },
+    async take(factoryId, max) {
+      const items = (await r.lpop(q(factoryId), max)) as string[] | null; // atomic: each request goes to exactly one poller
+      return (items ?? []).map((i) => JSON.parse(i) as TunnelRequest);
+    },
+    async respond(id, response) {
+      if ((await r.del(live(id))) !== 1) return false; // expired, or already answered
+      await r.set(res(id), JSON.stringify(response), "EX", TUNNEL_TTL_S);
+      await bus.publish(channels.tunnelRes(id), "1").catch(() => undefined);
+      return true;
+    },
+    async awaitResponse(id, timeoutMs) {
+      let wake: (() => void) | undefined;
+      const unsub = await bus.subscribe(channels.tunnelRes(id), () => wake?.()).catch(() => undefined);
+      try {
+        const deadline = Date.now() + timeoutMs;
+        for (;;) {
+          const got = await r.getdel(res(id)); // one-shot read
+          if (got) return JSON.parse(got) as TunnelResponse;
+          const left = deadline - Date.now();
+          if (left <= 0) { await r.del(live(id)); return null; } // stop a late answer from being accepted
+          await new Promise<void>((ok) => { const t = setTimeout(ok, Math.min(left, 1000)); wake = () => { clearTimeout(t); ok(); }; });
+        }
+      } finally { await unsub?.(); }
+    },
   };
 }

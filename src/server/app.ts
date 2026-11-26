@@ -46,10 +46,17 @@ export function requestLogLevel(method: string, statusCode: number): "info" | "d
   return !read || statusCode < 200 || statusCode >= 300 ? "info" : "debug";
 }
 
+/** Every route this server registers (method + Fastify URL pattern). The hub remote-access policy is tested against this list so a new route cannot become remotely reachable by accident. */
+export interface RegisteredRoute { method: string; url: string }
+declare module "fastify" { interface FastifyInstance { registeredRoutes: RegisteredRoute[] } }
+
 export function buildServer(deps: ServerDeps): FastifyInstance {
   // Fastify's own per-request logging is off: the dashboard and the menu bar app poll several endpoints every few seconds, which
   // filled factory.log with ~150k lines a day. requestLogLevel() decides instead: changes and errors at info, routine reads at debug.
   const app: FastifyInstance = Fastify({ loggerInstance: deps.logger as FastifyBaseLogger, bodyLimit: 16 * 1024, disableRequestLogging: true });
+  const registeredRoutes: RegisteredRoute[] = [];
+  app.decorate("registeredRoutes", registeredRoutes);
+  app.addHook("onRoute", (r) => { for (const method of [r.method].flat()) registeredRoutes.push({ method, url: r.url }); });
   // disableRequestLogging also silences Fastify's default error log, so keep server errors (with their stack) ourselves.
   app.addHook("onError", async (req, _reply, err) => {
     if ((err.statusCode ?? 500) >= 500) req.log.error({ err }, "request failed");

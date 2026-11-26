@@ -14,10 +14,12 @@ RUN npm install -g pnpm@${PNPM_VERSION}
 WORKDIR /repo
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY hub/package.json hub/
-# web/ is a workspace member; only its manifest is needed so the lockfile still matches.
 COPY web/package.json web/
+# The hub serves the SAME React dashboard as the local factory, so the web app is built here too (build-only deps; none reach the runtime image).
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile --filter software-factory-hub...
+    pnpm install --frozen-lockfile --filter software-factory-hub... --filter software-factory-web...
+COPY web/ web/
+RUN pnpm --filter software-factory-web build
 COPY hub/ hub/
 RUN pnpm --filter software-factory-hub build \
  && pnpm --filter software-factory-hub --prod deploy /out   # /out: prod node_modules + built dist (incl. migrations)
@@ -35,6 +37,7 @@ WORKDIR /app
 COPY --from=build --chown=nonroot:nonroot /out/node_modules ./node_modules
 COPY --from=build --chown=nonroot:nonroot /out/package.json ./package.json
 COPY --from=build --chown=nonroot:nonroot /out/dist ./dist
+COPY --from=build --chown=nonroot:nonroot /repo/web/dist ./dist/web
 USER nonroot
 EXPOSE 8080
 # `node` is the distroless entrypoint, so this runs `node dist/cli.js serve`. Node is PID 1 and handles

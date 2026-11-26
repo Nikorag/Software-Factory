@@ -17,7 +17,7 @@ export function publicDir(): string {
 }
 
 export const SECURITY_HEADERS = {
-  "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "x-frame-options": "DENY",
   "strict-transport-security": "max-age=31536000", "permissions-policy": "publickey-credentials-get=(self), publickey-credentials-create=(self)",
 };

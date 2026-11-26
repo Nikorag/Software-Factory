@@ -4,11 +4,11 @@ import { CommandService } from "./commands.js";
 import type { Config } from "./config.js";
 import type { Db } from "./db.js";
 import type { HubState } from "./health.js";
-import type { Bus, DispatchQueue, RateLimiter } from "./infra.js";
+import type { Bus, DispatchQueue, RateLimiter, Tunnel } from "./infra.js";
 import { pendingMigrations } from "./migrate.js";
 import { buildServer } from "./server.js";
 
-export interface Infra { db: Db; bus: Bus; queue: DispatchQueue; limiter: RateLimiter }
+export interface Infra { db: Db; bus: Bus; tunnel: Tunnel; queue: DispatchQueue; limiter: RateLimiter }
 
 /** Composition root: wires services, background loops and shutdown. Infra is injected (tests use fakes). */
 export function createHub(cfg: Config, infra: Infra, log: Logger) {

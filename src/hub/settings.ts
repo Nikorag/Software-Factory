@@ -21,22 +21,23 @@ export function normalizeHubUrl(input: string): string {
   return new URL(input).origin;
 }
 
-export interface HubSettings { enabled: boolean; url: string; reportIntervalSeconds: number }
+export interface HubSettings { enabled: boolean; url: string; reportIntervalSeconds: number; remoteAccess: boolean }
 
 /** Read fresh (not from the startup snapshot) so `factory hub connect` takes effect in a running service without a restart. */
 export function readHubSettings(configDir?: string): HubSettings {
   const dir = configDir && resolve(configDir) !== resolve(BUNDLED_CONFIG_DIR) ? configDir : defaultConfigDir();
   const { hub } = loadConfig(dir).factory;
-  return { enabled: hub.enabled, url: hub.url, reportIntervalSeconds: hub.reportIntervalSeconds };
+  return { enabled: hub.enabled, url: hub.url, reportIntervalSeconds: hub.reportIntervalSeconds, remoteAccess: hub.remoteAccess };
 }
 
 /** Writes the hub block of the user's own factory.yaml (seeding it from the shipped defaults first), keeping comments. */
-export function writeHubSettings(patch: { enabled: boolean; url?: string }, configDir: string): string {
+export function writeHubSettings(patch: { enabled?: boolean; url?: string; remoteAccess?: boolean }, configDir: string): string {
   const dir = resolve(configDir) === resolve(BUNDLED_CONFIG_DIR) ? seedHomeConfig() : configDir;
   const file = join(dir, "factory.yaml");
   const doc = parseDocument(existsSync(file) ? readFileSync(file, "utf8") : "");
   if (!isMap(doc.contents)) doc.contents = doc.createNode({}) as never;
-  doc.setIn(["hub", "enabled"], patch.enabled);
+  if (patch.enabled !== undefined) doc.setIn(["hub", "enabled"], patch.enabled);
+  if (patch.remoteAccess !== undefined) doc.setIn(["hub", "remoteAccess"], patch.remoteAccess);
   if (patch.url !== undefined) doc.setIn(["hub", "url"], patch.url);
   writeFileSync(file, doc.toString());
   return dir;

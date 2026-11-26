@@ -18,3 +18,6 @@ A central hub at `factory.nikorag.co.uk` must run as several Kubernetes replicas
 
 ## Consequences
 Latency is bounded by the poll/wake path, not a held socket. Delivery is at-least-once with execute-at-most-once enforced by lease + ack semantics, and the `repeatable` flag is the caller's declaration of safety.
+
+## Addendum: one frontend, tunnelled
+The hub serves the same built `web/` app as the local factory rather than maintaining a second dashboard; `api.ts` prefixes calls with a base the hub injects via a `<meta>` tag (empty locally). Dashboard calls are relayed to the factory over a Redis-only, execute-now-or-fail tunnel (the factory long-polls), deliberately *not* the durable command queue: a stale control action executing hours later is worse than a failed one. The factory, not the hub, decides what is remotely reachable (default-deny policy, separate opt-in, secrets and process control blocked).

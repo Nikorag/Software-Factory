@@ -50,6 +50,9 @@ const schema = z.object({
   OUTBOX_INTERVAL_MS: int(1_000, 50),
   SHUTDOWN_DRAIN_MS: int(5_000),
   SHUTDOWN_TIMEOUT_MS: int(25_000, 1000),
+  WEB_DIST_DIR: z.string().optional(), // built web/ dashboard to serve per factory; default: <app>/web
+  TUNNEL_TIMEOUT_SECONDS: int(25, 1),
+  TUNNEL_RATE_LIMIT_PER_MINUTE: int(1500, 1),
   RUN_BACKGROUND: bool.default(true), // false = API-only replica (no outbox relay / workers)
 });
 

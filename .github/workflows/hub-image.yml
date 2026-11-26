@@ -2,9 +2,9 @@ name: Hub image
 on:
   push:
     branches: [main]
-    paths: ["hub/**", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".dockerignore", ".github/workflows/hub-image.yml"]
+    paths: ["hub/**", "web/**", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".dockerignore", ".github/workflows/hub-image.yml"]
   pull_request:
-    paths: ["hub/**", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".dockerignore", ".github/workflows/hub-image.yml"]
+    paths: ["hub/**", "web/**", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".dockerignore", ".github/workflows/hub-image.yml"]
   workflow_dispatch:
 
 permissions:

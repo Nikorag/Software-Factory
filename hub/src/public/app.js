@@ -68,17 +68,18 @@ async function listScreen() {
     const [label, cls] = presence(f);
     nodes.push(h("div", { class: "card link", onclick: () => go({ name: "factory", id: f.id }) }, h("div", { class: "row" },
       h("div", { class: "grow" }, h("strong", {}, f.name), h("div", { class: "muted small" }, `v${f.version || "?"} · last seen ${ago(f.lastSeenAt)}`)),
-      h("span", { class: "muted small" }, `${f.activeJobs} active / ${f.jobCount} jobs`), badge(label, cls))));
+      h("span", { class: "muted small" }, `${f.activeJobs} active / ${f.jobCount} jobs`), badge(label, cls),
+      f.remoteAccess ? h("a", { class: "openlink", href: `/f/${f.id}/`, onclick: (e) => e.stopPropagation() }, "Open dashboard →") : h("span", { class: "muted small" }, "remote access off"))));
   }
   nodes.push(addFactoryForm());
   show(...nodes);
 }
 
 function keyBox(token, name) {
-  const cmd = `software-factory hub connect --url ${me.publicUrl}`;
+  const cmd = `software-factory hub connect --url ${me.publicUrl} --remote-access`;
   return h("div", { class: "card" }, h("strong", {}, `API key for ${name}`),
     h("p", { class: "muted small" }, "Copy it now: it is shown once. On the machine that runs your factory, run this and paste the key when asked (it keeps the key out of your shell history):"),
-    h("pre", {}, cmd), h("pre", {}, token),
+    h("pre", {}, cmd), h("p", { class: "muted small" }, "--remote-access lets you open this factory's full dashboard from here. Leave it off to only report progress."), h("pre", {}, token),
     h("div", { class: "row" },
       h("button", { class: "ghost", onclick: (e) => { navigator.clipboard?.writeText(token); e.target.textContent = "Key copied"; } }, "Copy key"),
       h("button", { class: "ghost", onclick: (e) => { navigator.clipboard?.writeText(cmd); e.target.textContent = "Command copied"; } }, "Copy command")));
@@ -105,6 +106,9 @@ async function factoryScreen(id) {
     h("p", {}, h("a", { onclick: () => go({ name: "list" }) }, "← Factories")),
     h("div", { class: "row" }, h("h1", { class: "grow" }, f.name), badge(label, cls), rotate, disable),
     h("p", { class: "muted small" }, `v${f.version || "?"} · last seen ${ago(f.lastSeenAt)} · registered ${ago(f.createdAt)}`), err, out,
+    f.remoteAccess
+      ? h("div", { class: "card" }, h("div", { class: "row" }, h("div", { class: "grow" }, h("strong", {}, "Full dashboard"), h("div", { class: "muted small" }, "The same dashboard you get locally, running against this factory.")), h("a", { class: "btn", href: `/f/${f.id}/` }, "Open dashboard")))
+      : h("div", { class: "card" }, h("strong", {}, "Remote dashboard is off"), h("p", { class: "muted small" }, "Reporting is on, but this factory has not allowed remote access. To open the full dashboard from here, run this on the factory's machine:"), h("pre", {}, "software-factory hub remote-access on")),
     h("h2", {}, "Jobs"), table(["Job", "Project", "Stage", "Status", "Updated"], d.jobs.map((j) => h("tr", {}, h("td", {}, j.title || j.id), h("td", {}, j.project || "–"), h("td", {}, j.stage || "–"), h("td", {}, j.status || "–"), h("td", { class: "muted" }, ago(j.updatedAt))))),
     h("h2", {}, "Recent activity"), table(["When", "Event", "Job", "Detail"], d.events.map((e) => h("tr", {}, h("td", { class: "muted" }, ago(e.occurredAt)), h("td", {}, e.type), h("td", {}, e.jobId || "–"), h("td", { class: "muted small" }, Object.entries(e.payload || {}).map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`).join(" ").slice(0, 160))))),
     h("h2", {}, "Projects & workflows"), h("p", { class: "muted" }, `${d.projects.map((p) => p.name).join(", ") || "no projects"} · ${d.workflows.map((w) => w.name).join(", ") || "no workflows"}`));

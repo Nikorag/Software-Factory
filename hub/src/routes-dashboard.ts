@@ -19,7 +19,7 @@ export function registerDashboardRoutes(app: FastifyInstance, d: Deps, requireUs
 
   app.get("/v1/factories", { preHandler: requireUser }, async (req) => {
     const rows = (await db.query(
-      `SELECT f.id, f.org_id AS "orgId", f.name, f.status, f.version, f.last_seen_at AS "lastSeenAt",
+      `SELECT f.id, f.org_id AS "orgId", f.name, f.status, f.version, f.last_seen_at AS "lastSeenAt", COALESCE((f.metadata->>'remoteAccess')::boolean, false) AS "remoteAccess",
               (SELECT count(*)::int FROM jobs j WHERE j.factory_id = f.id) AS "jobCount",
               (SELECT count(*)::int FROM jobs j WHERE j.factory_id = f.id AND j.status IS DISTINCT FROM 'done' AND j.status IS DISTINCT FROM 'failed' AND j.status IS DISTINCT FROM 'cancelled') AS "activeJobs"
          FROM factories f
@@ -33,7 +33,7 @@ export function registerDashboardRoutes(app: FastifyInstance, d: Deps, requireUs
     const id = fid(req);
     if (!(await can(db, req.user!.userId, id, "view"))) return reply.code(404).send({ error: "not_found" });
     const one = async (sql: string) => (await db.query(sql, [id])).rows;
-    const [factory] = await one(`SELECT id, org_id AS "orgId", name, status, version, last_seen_at AS "lastSeenAt", created_at AS "createdAt" FROM factories WHERE id=$1`);
+    const [factory] = await one(`SELECT id, org_id AS "orgId", name, status, version, last_seen_at AS "lastSeenAt", COALESCE((metadata->>'remoteAccess')::boolean, false) AS "remoteAccess", created_at AS "createdAt" FROM factories WHERE id=$1`);
     return {
       factory, serverTime: new Date().toISOString(),
       projects: await one(`SELECT external_id AS id, name, updated_at AS "updatedAt" FROM projects WHERE factory_id=$1 ORDER BY name`),
