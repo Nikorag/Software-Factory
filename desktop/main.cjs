@@ -1,6 +1,6 @@
 // The Software Factory desktop app: a window onto a profile's dashboard. It is deliberately thin: the factory itself runs as a
 // background service (started by `software-factory start`) and keeps working when this window is closed.
-const { app, BrowserWindow, Menu, Notification, Tray, shell, dialog, session, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, Menu, Notification, Tray, shell, dialog, session, nativeImage } = require("electron");
 const { summarise, pollPlan } = require("./tray-model.cjs");
 const { newInterruptions, unexpectedStops } = require("./notify-model.cjs");
 const fs = require("node:fs");
@@ -238,8 +238,11 @@ function createWindow() {
       ? { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 16, y: 20 } }
       : { titleBarStyle: "hidden", titleBarOverlay: { color: "#121214", symbolColor: "#A1A1AA", height: 52 } }),
     icon: fs.existsSync(ICON) ? ICON : undefined,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, spellcheck: false, preload: path.join(__dirname, "preload.cjs") },
+    // Windows/Linux: the native menu bar would be a white strip. Hide it (Alt still shows it) and offer the menu from a button in the dashboard instead.
+    ...(process.platform === "darwin" ? {} : { autoHideMenuBar: true }),
   });
+  if (process.platform !== "darwin") win.setMenuBarVisibility(false);
   // The page is our own loopback dashboard. It may navigate between our own profiles; links out go to the browser, and only https GitHub ones (plus the Atlassian sign-in).
   const external = (u) => { try { const x = new URL(u); if (x.protocol === "https:" && ["github.com", "auth.atlassian.com"].includes(x.hostname)) void shell.openExternal(u); /* GitHub links, and the Atlassian sign-in for connecting Jira */ } catch { /* ignore */ } };
   win.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: "deny" }; });
@@ -253,6 +256,11 @@ function createWindow() {
   });
   void show(current);
 }
+
+ipcMain.on("app-menu", (e, x, y) => { // only our own window may ask, and only for the menu it already has
+  if (!win || e.sender !== win.webContents) return;
+  Menu.getApplicationMenu()?.popup({ window: win, x: Math.round(x), y: Math.round(y) });
+});
 
 if (!SMOKE && !app.requestSingleInstanceLock()) { app.quit(); }
 else {

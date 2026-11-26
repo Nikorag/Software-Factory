@@ -1,8 +1,8 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { Activity, Columns3, GitBranch, Settings as SettingsIcon, Plus } from "lucide-react";
+import { Activity, Columns3, GitBranch, Menu as MenuIcon, Settings as SettingsIcon, Plus } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { inHubMode } from "@/lib/api";
-import { electronMac } from "@/lib/platform";
+import { desktopMenu, electronMac } from "@/lib/platform";
 import { bucketOf, initialOf, lastTab, projectMeta, stageName, swatch, toneOf, TONE, type Bucket } from "@/lib/projects";
 import { ago } from "@/lib/format";
 import type { Job, Overview, Project, ProfileInfo } from "@/lib/types";
@@ -24,6 +24,7 @@ export function ProjectRail({ overview: o, projects, jobs, projectId, jobId, pro
   return (
     <aside aria-label="Projects and jobs" className="flex max-h-[60vh] min-h-0 w-full shrink-0 flex-col border-b border-line bg-rail md:max-h-none md:w-[264px] md:border-b-0 md:border-r">
       <div className={cn("app-drag flex h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3.5", electronMac ? "pl-[84px]" : "pl-4")}>
+        {desktopMenu() ? <button type="button" aria-label="Application menu" title="Menu" className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); desktopMenu()?.showMenu(r.left, r.bottom); }}><MenuIcon className="size-4" aria-hidden /></button> : null}
         {inHubMode() ? <a href="/" className="text-xs text-muted-foreground hover:underline">← Hub</a> : null}
         <NavLink to="/" className="flex-1 truncate text-sm font-semibold">Software Factory</NavLink>
       </div>
