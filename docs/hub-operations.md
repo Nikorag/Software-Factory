@@ -71,7 +71,7 @@ podman build -f hub/Dockerfile \
 podman push ghcr.io/nikorag/software-factory-hub:$VERSION
 ```
 
-Multi-stage build: frozen-lockfile install → `tsc` → `pnpm deploy --prod` → distroless Node runtime (~185 MB), user `nonroot` (uid/gid 65532), no shell. Deploy an explicit version tag, never `latest`. In practice CI does this for you: see the next section.
+Multi-stage build: frozen-lockfile install → `tsc` → `pnpm deploy --prod` → distroless Node runtime (~185 MB), user `nonroot` (uid/gid 65532), no shell. For a reproducible deploy use an explicit `sha-<commit>` tag; `latest` always follows `main`. In practice CI does this for you: see the next section.
 
 The container's default command is `node dist/cli.js serve`. Other commands: `migrate`, `migrate-status`, `vapid-generate`, `healthcheck` (pass as container args, e.g. `dist/cli.js migrate`).
 
@@ -79,7 +79,7 @@ The container's default command is `node dist/cli.js serve`. Other commands: `mi
 
 `.github/workflows/hub-image.yml`:
 - **Pull requests** touching `hub/**` build the image (amd64) to catch breakage; nothing is pushed.
-- **Merge to `main`** builds `linux/amd64` + `linux/arm64` (QEMU/buildx) and pushes one multi-arch manifest to `ghcr.io/nikorag/software-factory-hub` with two tags: `<version>` (from `hub/package.json`; moves with each main build until you bump it) and `sha-<commit>` (immutable). **Pin `sha-<commit>` in Terraform** for reproducible deploys and clean rollbacks.
+- **Merge to `main`** builds `linux/amd64` + `linux/arm64` (QEMU/buildx) and pushes one multi-arch manifest to `ghcr.io/nikorag/software-factory-hub` with three tags: `latest` and `<version>` (from `hub/package.json`) both move to the newest build of `main` (builds run one at a time, in push order, and only the commit at the head of `main` moves them), and `sha-<commit>` is immutable. **Pin `sha-<commit>` in Terraform** for reproducible deploys and clean rollbacks; follow `latest` (or `<version>`) only if you want the newest `main` automatically.
 - It uses the built-in `GITHUB_TOKEN`; no secrets to add. New GHCR packages are **private** by default: either make the package public (Package settings → Change visibility), or give k3s a pull secret (`kubernetes_secret` of type `kubernetes.io/dockerconfigjson` with a GitHub PAT that has `read:packages`, referenced by `image_pull_secrets`).
 
 ## First run (create your user)

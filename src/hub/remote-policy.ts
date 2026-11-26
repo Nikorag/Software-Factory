@@ -33,8 +33,9 @@ export const RULES: readonly Rule[] = [
   ...allow("POST", "/api/jobs/:id/answer", "/api/jobs/:id/archive", "/api/jobs/:id/unarchive", "/api/jobs/:id/cancel", "/api/jobs/:id/retry", "/api/board/start"),
   ...allow("DELETE", "/api/jobs/:id"),
 
-  // The job chat starts an agent on this machine (it burns the user's Claude usage and reads job logs): decide deliberately, on the machine.
-  block("POST", "/api/jobs/:id/chat", "starts an agent on this machine: use it from the local dashboard"),
+  // The job chat: POST starts a read-only agent on this machine and returns at once; GET polls for the reply. (Asynchronous because a
+  // tunnelled request must finish in seconds, and an answer can take minutes.) The agent can only read; it cannot change anything.
+  ...allow("POST", "/api/jobs/:id/chat"), ...allow("GET", "/api/jobs/:id/chat/:cid"),
 
   // ---- settings that carry no secret ----
   ...allow("PUT", "/api/settings/global", "/api/settings/tracker", "/api/jira/mapping", "/api/github-issues/mapping"),

@@ -3,12 +3,34 @@ import { Loader2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { send } from "@/lib/api";
+import { api, send } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface Msg { role: "user" | "assistant"; text: string; error?: boolean }
 const SUGGESTIONS = ["Why did this job fail?", "What is it waiting on?", "Summarise what the factory did so far."];
 const MAX_HISTORY = 20;
+
+const POLL_MS = 1500, GIVE_UP_MS = 4 * 60_000;
+/** Starts the question and polls for the answer: it can take minutes, and a request through the hub must finish in seconds. */
+async function answer(jobId: string, message: string, history: { role: string; text: string }[]): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  const base = `/api/jobs/${encodeURIComponent(jobId)}/chat`;
+  const started = await send<{ id: string }>("POST", base, { message, history });
+  if (!started.ok) return { ok: false, error: started.error };
+  const deadline = Date.now() + GIVE_UP_MS;
+  let misses = 0;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, POLL_MS));
+    try {
+      const c = await api<{ status: "running" | "done" | "error"; reply?: string; error?: string }>(`${base}/${started.data.id}`);
+      misses = 0;
+      if (c.status === "done") return { ok: true, text: c.reply ?? "" };
+      if (c.status === "error") return { ok: false, error: c.error ?? "the assistant could not answer" };
+    } catch (e) {
+      if (++misses >= 5) return { ok: false, error: (e as Error).message }; // a blip is fine; losing the connection for good is not
+    }
+  }
+  return { ok: false, error: "Claude is taking too long. Try again." };
+}
 
 /**
  * Ask Claude about one job ("why did this one fail?"). The conversation lives in this component only: the server is stateless and is sent
@@ -29,9 +51,9 @@ export function JobChat({ jobId }: { jobId: string }) {
     setMsgs((m) => [...m, { role: "user", text: message }]);
     setInput("");
     setBusy(true);
-    const r = await send<{ reply: string }>("POST", `/api/jobs/${encodeURIComponent(jobId)}/chat`, { message, history });
+    const reply = await answer(jobId, message, history);
     setBusy(false);
-    setMsgs((m) => [...m, r.ok ? { role: "assistant", text: r.data.reply } : { role: "assistant", text: r.error, error: true }]);
+    setMsgs((m) => [...m, reply.ok ? { role: "assistant", text: reply.text } : { role: "assistant", text: reply.error, error: true }]);
   };
 
   return (

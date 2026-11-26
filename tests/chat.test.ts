@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import pino from "pino";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { enqueue } from "../src/core/jobs.js";
 import { openDb } from "../src/db/client.js";
 import { decisions, jobs, projects } from "../src/db/schema.js";
@@ -26,6 +26,18 @@ function setup(run?: ChatRun) {
 const chat = (app: ReturnType<typeof setup>["app"], id: string, payload: unknown, headers: Record<string, string> = AUTH) =>
   app.inject({ method: "POST", url: `/api/jobs/${id}/chat`, headers, remoteAddress: "127.0.0.1", payload: payload as object });
 
+const poll = (app: ReturnType<typeof setup>["app"], jobId: string, id: string) =>
+  app.inject({ method: "GET", url: `/api/jobs/${jobId}/chat/${id}`, headers: { host: AUTH.host }, remoteAddress: "127.0.0.1" });
+/** Start a chat and wait for it to finish, as the dashboard does. */
+async function ask(s: ReturnType<typeof setup>, payload: unknown) {
+  const start = await chat(s.app, s.job.id, payload);
+  expect(start.statusCode, start.body).toBe(202);
+  const id = start.json().id as string;
+  let last = await poll(s.app, s.job.id, id);
+  await vi.waitFor(async () => { last = await poll(s.app, s.job.id, id); expect(last.json().status).not.toBe("running"); });
+  return { id, res: last };
+}
+
 describe("job chat", () => {
   it("needs the token, a known job and a valid message", async () => {
     const calls: string[] = [];
@@ -48,9 +60,8 @@ describe("job chat", () => {
     const s = setup(async (r) => { seen = r; return { ok: true, text: "It failed because of the build." }; });
     s.db.update(jobs).set({ status: "failed", lastError: "build failed with token ghp_abcdefghijklmnopqrstuvwxyz0123456789AB" }).where(eq(jobs.id, s.job.id)).run();
     s.db.insert(decisions).values({ jobId: s.job.id, kind: "stage.failed", decision: "give up after 3 attempts", rationale: "tests red", actor: "factory" }).run();
-    const res = await chat(s.app, s.job.id, { message: "Why did it fail?", history: [{ role: "user", text: "hello" }, { role: "assistant", text: "hi there" }] });
-    expect(res.statusCode, res.body).toBe(200);
-    expect(res.json()).toEqual({ reply: "It failed because of the build." });
+    const { res } = await ask(s, { message: "Why did it fail?", history: [{ role: "user", text: "hello" }, { role: "assistant", text: "hi there" }] });
+    expect(res.json()).toEqual({ status: "done", reply: "It failed because of the build." });
     expect(seen!.projectId).toBe("p");
     expect(seen!.prompt).toContain("status=failed");
     expect(seen!.prompt).toContain("give up after 3 attempts");
@@ -61,10 +72,34 @@ describe("job chat", () => {
     expect(seen!.cwd.endsWith("/chat")).toBe(true);
   });
 
-  it("reports an agent failure as a 502 with its reason", async () => {
+  it("returns at once and reports an agent failure, with its reason, when polled", async () => {
     const s = setup(async () => ({ ok: false, text: "", error: "not logged in" }));
-    const res = await chat(s.app, s.job.id, { message: "why?" });
-    expect(res.statusCode).toBe(502);
-    expect(res.json().error).toBe("not logged in");
+    const { res } = await ask(s, { message: "why?" });
+    expect(res.json()).toEqual({ status: "error", error: "not logged in" });
+  });
+
+  it("answers a still-running chat as running, so a slow answer never blocks a request (the hub tunnel allows seconds)", async () => {
+    let release!: () => void;
+    const s = setup(() => new Promise((res) => { release = () => res({ ok: true, text: "done" }); }));
+    const start = await chat(s.app, s.job.id, { message: "why?" });
+    expect(start.statusCode).toBe(202);
+    expect((await poll(s.app, s.job.id, start.json().id)).json()).toEqual({ status: "running" });
+    release();
+    await vi.waitFor(async () => expect((await poll(s.app, s.job.id, start.json().id)).json().status).toBe("done"));
+  });
+
+  it("only polls its own job's chats, and an unknown chat is a 404", async () => {
+    const s = setup(async () => ({ ok: true, text: "hi" }));
+    const { id } = await ask(s, { message: "why?" });
+    const other = enqueue(s.db, { projectId: "p", externalId: "J-2", externalKey: "J-2" }).job;
+    expect((await poll(s.app, other.id, id)).statusCode).toBe(404);
+    expect((await poll(s.app, s.job.id, "00000000-0000-0000-0000-000000000000")).statusCode).toBe(404);
+  });
+
+  it("limits how many answers run at once", async () => {
+    const s = setup(() => new Promise(() => { /* never finishes */ }));
+    expect((await chat(s.app, s.job.id, { message: "one" })).statusCode).toBe(202);
+    expect((await chat(s.app, s.job.id, { message: "two" })).statusCode).toBe(202);
+    expect((await chat(s.app, s.job.id, { message: "three" })).statusCode).toBe(429);
   });
 });
