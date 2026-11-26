@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { and, desc, eq, like } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { artifacts, decisions, stageExecutions } from "../db/schema.js";
 import { createHash } from "node:crypto";
 import type { StageHandler, StageResult } from "../core/engine.js";
@@ -86,9 +86,8 @@ export function createImplementationHandlers(d: ImplDeps) {
 
   /** Latest blocking findings from the most recent stage that asked for remediation. */
   function latestFindings(jobId: string): unknown[] {
-    // The most recent stage that asked for fixing, whichever stage it was: the default workflow's checks and reviews, or a review stage a custom workflow added.
     const row = d.db.select().from(stageExecutions)
-      .where(and(eq(stageExecutions.jobId, jobId), eq(stageExecutions.outcome, "succeeded"), like(stageExecutions.outputJson, '{"remediate"%')))
+      .where(and(eq(stageExecutions.jobId, jobId), eq(stageExecutions.outcome, "succeeded"), inArray(stageExecutions.stage, ["AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW", "CLAUDE_REVIEW", "FINAL_VALIDATION", "CI_VALIDATION"])))
       .orderBy(desc(stageExecutions.id)).limit(1).get();
     const f = ((row?.outputJson ? JSON.parse(row.outputJson) : {}) as { details?: { findings?: { severity: string }[] } }).details?.findings ?? [];
     return f.filter((x) => isBlocking(x.severity));

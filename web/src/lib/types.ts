@@ -1,6 +1,5 @@
-import type { GateRecord, JobWorkflow, RouteRecord } from "./workflows";
 export interface Job {
-  id: string; key: string; project: string; workflow: string; workflowId?: string | null; workflowVersion?: number | null; stage: string; status: string; heldFromStage: string | null;
+  id: string; key: string; project: string; workflow: string; stage: string; status: string; heldFromStage: string | null;
   remediationAttempts: number; stageAttempts: number; autonomous: boolean; dryRun: boolean; prUrl: string | null;
   lastError: string | null; notBefore: number | null; createdAt: number | null; updatedAt: number | null; archivedAt?: number | null;
 }
@@ -18,11 +17,11 @@ export interface Overview {
   counts: { byStatus: Record<string, number>; outbox: { pending: number; failed: number }; recentAgentFailures: { rateLimited: number } };
   active: Job[]; queued: Job[]; recent: Job[]; scheduler: Scheduler | null; system: SystemInfo; health: Health[]; mergeMode: string; dryRun: boolean; projectCount?: number;
 }
-export interface Execution { id: number; stage: string; attempt: number; outcome: string; error: string | null; output: string | null; startedAt: number | null; finishedAt: number | null; /** how the stage's success gate was evaluated */ gate?: GateRecord | null; /** what the engine decided after the attempt (retry, goto, skip, branch, ...) */ route?: RouteRecord | null }
+export interface Execution { id: number; stage: string; attempt: number; outcome: string; error: string | null; output: string | null; startedAt: number | null; finishedAt: number | null }
 export interface Decision { id: number; kind: string; decision: string; rationale: string | null; actor: string; at: number | null }
 export interface Invocation { id: number; stageExecutionId: number | null; agent: string; model: string | null; exitCode: number | null; durationMs: number | null; /** the run is over (exit code, signal, local-model failure or service restart): never "live" */ finished: boolean; usage: { denials?: number } | null; hasLog: boolean; at: number | null }
 export interface JobDetail {
-  job: Job; workflow?: JobWorkflow; remediationCap?: number; stageOrder: string[]; executions: Execution[]; decisions: Decision[]; invocations: Invocation[];
+  job: Job; remediationCap?: number; stageOrder: string[]; executions: Execution[]; decisions: Decision[]; invocations: Invocation[];
   artifacts: { kind: string; path: string; bytes: number | null; at: number | null }[];
   worktree: { path: string; state: string; branch: string } | null;
   outbox: { id: number; kind: string; status: string; attempts: number; lastError: string | null }[];

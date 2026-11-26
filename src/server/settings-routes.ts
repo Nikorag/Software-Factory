@@ -15,7 +15,6 @@ import { syncProjects } from "../repo/registry.js";
 import { listGhAccounts, type GhAccount } from "../github/accounts.js";
 import { ACTIONS, type ActionKind, type ProjectActions } from "../service/actions.js";
 import type { TaskManager } from "../service/tasks.js";
-import { unassign } from "../workflows/library.js";
 
 export interface SettingsDeps {
   db: FactoryDb;
@@ -117,7 +116,7 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
     // a running job needs its project's config: removing it under them fails them with a ConfigError and orphans their worktrees
     const active = d.db.select({ id: jobs.id }).from(jobs).where(and(eq(jobs.projectId, req.params.id), inArray(jobs.status, ["queued", "running", "waiting"]))).all().length;
     if (active) return reply.code(409).send({ error: `${req.params.id} has ${active} active job(s). Finish or cancel them before removing the project.` });
-    try { apply(removeProject(req.params.id, writableDir(d.config))); unassign(d.db, "project", req.params.id); return { ok: true }; } catch (e) { return fail(reply, e); }
+    try { apply(removeProject(req.params.id, writableDir(d.config))); return { ok: true }; } catch (e) { return fail(reply, e); }
   });
 
   // ---- background actions on a project ----

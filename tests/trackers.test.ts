@@ -356,13 +356,5 @@ describe("tracker connections through the dashboard API", () => {
     expect(noHint.statusCode).toBe(404);
   });
 
-  it("lists the labels of every tracker in use, and still answers when one is down", async () => {
-    const s = setup();
-    s.gh.addIssue("acme/b", { labels: ["bug"] });
-    s.gh.repo("acme/b").labels.set("bug", { name: "bug", color: "ff0000" });
-    const r = (await s.req("GET", "/api/workflows/labels", HOST)).json();
-    expect(r.labels.map((l: { name: string }) => l.name)).toContain("bug");
-    expect(r.labels.find((l: { name: string }) => l.name === "bug").teams[0]).toMatch(/acme\/b/);
-  });
 });
 

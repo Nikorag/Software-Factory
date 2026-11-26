@@ -9,7 +9,6 @@ import type { LinearClient, LinearIssue } from "../linear/client.js";
 import { evaluateEligibility } from "../linear/eligibility.js";
 import { enqueueOutbox } from "../linear/outbox.js";
 import { isRunnable, onboardingFor } from "../repo/registry.js";
-import { resolveWorkflow } from "../workflows/resolver.js";
 
 export interface BoardDeps { db: FactoryDb; config: LoadedConfig; /** The client of a tracker connection (default: the profile's default). */ linear: (trackerId?: string) => LinearClient }
 const ACTIVE = ["queued", "running", "waiting"] as const;
@@ -31,12 +30,6 @@ export function projectFor(issue: LinearIssue, projects: ProjectConfig[]): Proje
   const inProjects = issue.projects?.length ? issue.projects : issue.project ? [issue.project] : [];
   return mine.find((p) => inProjects.some((x) => (p.linear!.projectId && p.linear!.projectId === x.id) || (p.linear!.projectName && p.linear!.projectName === x.name)))
     ?? mine.find((p) => !p.linear!.projectId && !p.linear!.projectName) ?? null;
-}
-
-/** Which workflow a ticket would run if started now (the same resolution a started job gets), or why none can run. */
-function workflowPreview(d: BoardDeps, projectId: string, labels: { id: string; name: string }[]) {
-  const r = resolveWorkflow(d.db, { projectId, labels }, d.config.workflows);
-  return r.ok ? { id: r.workflowId, name: r.workflowName, version: r.version, source: r.record.source, reason: r.record.reason } : { error: r.reason, code: r.code };
 }
 
 export function registerBoardRoutes(app: FastifyInstance, d: BoardDeps, requireToken: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>): void {
@@ -79,7 +72,7 @@ export function registerBoardRoutes(app: FastifyInstance, d: BoardDeps, requireT
       else if (!isRunnable(d.db, p.id)) reason = "the project has not passed validation (Settings → Projects → Validate)";
       else if (onboardingFor(d.db, p).status !== "ready") reason = "the project is not onboarded yet (Settings → Projects)";
       return [{ id: i.id, key: i.identifier, title: i.title, url: i.url, state: i.state.name, stateType: i.state.type, labels: i.labels.map((l) => l.name), linearProject: i.project?.name ?? null,
-        projectId: p.id, projectName: p.name, mode: pickupModeOf(p, d.config.factory), job, canStart: reason === null, reason, workflow: workflowPreview(d, p.id, i.labels) }];
+        projectId: p.id, projectName: p.name, mode: pickupModeOf(p, d.config.factory), job, canStart: reason === null, reason }];
     });
     items.sort((a, b) => (RANK[a.stateType] ?? 9) - (RANK[b.stateType] ?? 9) || a.state.localeCompare(b.state) || a.key.localeCompare(b.key, undefined, { numeric: true }));
     return { mode: d.config.factory.pickupMode, query: req.query.q ?? "", items, ...(errors.length ? { warnings: errors } : {}), projects: bound().map((p) => ({ id: p.id, name: p.name, mode: pickupModeOf(p, d.config.factory) })) };
@@ -104,11 +97,8 @@ export function registerBoardRoutes(app: FastifyInstance, d: BoardDeps, requireT
     if (!v.eligible) return reply.code(409).send({ error: `${issue.identifier}: ${v.reasons.join("; ")}` });
     const ob = onboardingFor(d.db, project);
     if (ob.status !== "ready") return reply.code(409).send({ error: `${project.name} is not onboarded yet (still to do: ${ob.steps.filter((s) => !s.ok).map((s) => s.label.toLowerCase()).join("; ")})` });
-    const wf = resolveWorkflow(d.db, { projectId: project.id, labels: issue.labels }, d.config.workflows);
-    if (!wf.ok) return reply.code(409).send({ error: `${issue.identifier}: no workflow can run it: ${wf.reason}` });
-    const { job, created } = enqueue(d.db, { projectId: project.id, externalId: issue.id, externalKey: issue.identifier, workflow: v.workflow, autonomous: v.autonomous, dryRun: d.config.factory.dryRun, manual: true, resolved: { workflowId: wf.workflowId, workflowVersion: wf.version, definition: wf.definition, entryStage: wf.entryStage, record: wf.record } });
+    const { job, created } = enqueue(d.db, { projectId: project.id, externalId: issue.id, externalKey: issue.identifier, workflow: v.workflow, autonomous: v.autonomous, dryRun: d.config.factory.dryRun, manual: true });
     if (!created) return reply.code(409).send({ error: `${issue.identifier} already has an active job` });
-    d.db.insert(decisions).values({ jobId: job.id, kind: "workflow.resolve", decision: `workflow "${wf.workflowName}" v${wf.version} (${wf.record.source})`, rationale: wf.record.reason, actor: "dashboard" }).run();
     d.db.insert(decisions).values({ jobId: job.id, kind: "manual.start", decision: `started ${issue.identifier} from the board as ${v.workflow}`, rationale: issue.url, actor: "dashboard" }).run();
     if (!d.config.factory.dryRun) enqueueOutbox(d.db, job.id, issue.id, { kind: "comment", body: `**Software factory** was asked to work on this ticket (\`${v.workflow}\`).` }, `${job.id}:pickup`);
     return { ok: true, jobId: job.id };

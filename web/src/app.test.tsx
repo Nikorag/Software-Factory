@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { Shell } from "@/components/Shell";
+import { deriveFlow } from "@/lib/pipeline";
 import { JobDetail } from "@/pages/JobDetail";
 import { Settings } from "@/pages/Settings";
 import { Setup } from "@/pages/Setup";
@@ -10,7 +11,6 @@ import { Board } from "@/pages/Board";
 import { Overview } from "@/pages/Overview";
 import { HealthPage } from "@/pages/Health";
 import type { Execution, Job, JobDetail as D, Overview as O } from "@/lib/types";
-import { defaultDefinition } from "@/test-fixtures";
 
 const XSS = `<img src=x onerror="window.__pwned=1"><script>window.__pwned=1</script>`;
 const job = (o: Partial<Job> = {}): Job => ({ id: "j1", key: "JAM-1", project: "p", workflow: "default", stage: "CLAUDE_REVIEW", status: "running", heldFromStage: null, remediationAttempts: 0, stageAttempts: 0, autonomous: false, dryRun: false, prUrl: null, lastError: null, notBefore: null, createdAt: 1000, updatedAt: 2000, ...o });
@@ -20,7 +20,7 @@ const overview = (o: Partial<O> = {}): O => ({
   active: [job()], queued: [], recent: [], scheduler: null, mergeMode: "pr-only", dryRun: false, health: [{ name: "sandbox", status: "ok", detail: "ready", checkedAt: 1 }],
   system: { memory: { availableBytes: 8 * 2 ** 30, totalBytes: 16 * 2 ** 30, freePercent: 50, pressure: "ok" }, disk: { freeBytes: 2 ** 40, totalBytes: 2 ** 41 }, load: [1, 1, 1] }, ...o,
 });
-const detail = (j: Job, executions: Execution[] = [], extra: Partial<D> = {}): D => ({ job: j, workflow: { id: "default", version: 1, name: "Default Workflow", definition: defaultDefinition(), resolution: { source: "default", reason: "no assignment applies: the global default \"Default Workflow\"", matchedLabels: [] }, valid: true }, stageOrder: [], executions, decisions: [], invocations: [], artifacts: [], worktree: null, outbox: [], ...extra });
+const detail = (j: Job, executions: Execution[] = [], extra: Partial<D> = {}): D => ({ job: j, stageOrder: [], executions, decisions: [], invocations: [], artifacts: [], worktree: null, outbox: [], ...extra });
 
 let routes: Record<string, unknown>;
 let calls: { url: string; method: string; headers?: Record<string, string>; body?: string }[];
@@ -39,6 +39,35 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const app = (path: string) => render(
   <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="board" element={<Board />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
 );
+
+describe("flow derivation (from the stage history the factory already stores)", () => {
+  it("marks finished steps, the running step, and counts a fix route only when a fix stage actually ran", () => {
+    const f = deriveFlow(job({ stage: "CLAUDE_REVIEW" }), [exec("AUTOMATED_TESTING", "succeeded", 1), exec("LOCAL_MODEL_REVIEW", "succeeded", 2), exec("REMEDIATION", "succeeded", 3), exec("AUTOMATED_TESTING", "succeeded", 4)], []);
+    expect(f.state["test"]).toBe("done"); expect(f.state["crev"]).toBe("run");
+    expect(f.attempts["test"]).toBe(2);
+    expect(f.loopsUsed.has("hrev>fix")).toBe(true); expect(f.loopsUsed.has("fix>test")).toBe(true);
+    expect(f.loopsUsed.has("ci>fix")).toBe(false);
+  });
+  it("marks the step a held job stopped at, not the held state", () => {
+    const f = deriveFlow(job({ stage: "NEEDS_ATTENTION", status: "waiting", heldFromStage: "FINAL_VALIDATION", remediationAttempts: 3 }), [exec("FINAL_VALIDATION", "failed")], []);
+    expect(f.state["fval"]).toBe("fail"); expect(f.active).toBe("fval");
+  });
+  it("a spec review that sends work to Fix spec skips the direct route to validation", () => {
+    const f = deriveFlow(job({ stage: "SPECIFICATION_VALIDATION" }), [exec("SPECIFICATION_REVIEW", "succeeded", 1), exec("SPECIFICATION_REMEDIATION", "succeeded", 2)], []);
+    expect(f.loopsUsed.has("srev>sfix")).toBe(true); expect(f.skipped.has("srev>sval")).toBe(true);
+  });
+});
+
+describe("flow derivation: waiting", () => {
+  it("does not count re-checks while waiting as attempts or time on the step", () => {
+    const waits = Array.from({ length: 12 }, (_, i) => exec("MERGING", "waiting", 100 + i));
+    const f = deriveFlow(job({ stage: "MERGING", status: "queued" }), [exec("PULL_REQUEST_CREATION"), ...waits], []);
+    expect(f.attempts["hm"]).toBeUndefined();
+    expect(f.duration["hm"]).toBeUndefined();
+    expect(f.state["hm"]).toBe("wait");
+    expect(f.attempts["pr"]).toBe(1);
+  });
+});
 
 describe("dashboard", () => {
   it("renders the overview: state, mode, counts, system and dependency health", async () => {
@@ -85,8 +114,8 @@ describe("dashboard", () => {
     app("/jobs/j1");
     const a = await screen.findByRole("link", { name: /pull request/ });
     expect(a).toHaveAttribute("rel", expect.stringContaining("noopener")); expect(a).toHaveAttribute("target", "_blank");
-    expect(screen.getByRole("img", { name: "Default Workflow flow chart" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Claude review: blocked" })).toBeInTheDocument(); // marked where it stopped (waiting for a person)
+    expect(screen.getByRole("img", { name: "Pipeline flow chart" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Claude review: fail" })).toBeInTheDocument(); // marked where it stopped
     expect(screen.getByRole("button", { name: "Discovered: done" })).toBeInTheDocument();
     expect(screen.getByText(/Retry resumes there/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Answer & resume/ })).toBeDisabled(); // nothing typed yet

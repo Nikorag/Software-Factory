@@ -1,5 +1,5 @@
-import { stageLabel, stageText, type StageNames } from "./format";
-import { stageNames } from "./pipeline";
+import { stageText } from "./format";
+import { nodeOfStage } from "./pipeline";
 import type { Decision, Execution, Invocation, JobDetail } from "./types";
 
 export type Tone = "ok" | "fail" | "run" | "wait" | "loop" | "info";
@@ -17,12 +17,7 @@ export interface TimelineEntry {
   events: TimelineEvent[]; runs: Invocation[];
 }
 
-/** Stages a failure route sends work back to (the fix steps). Without a workflow on hand: the built-in ones. */
-function fixStagesOf(d: JobDetail): Set<string> {
-  const def = d.workflow?.definition;
-  if (!def) return new Set(["REMEDIATION", "SPECIFICATION_REMEDIATION"]);
-  return new Set([...def.stages.flatMap((s) => s.onFailure.flatMap((r) => (r.action === "goto" && r.target ? [r.target] : []))), ...d.executions.flatMap((e) => (e.route?.action === "goto" && e.route.to ? [e.route.to] : []))]);
-}
+const FIX_STAGES = new Set(["REMEDIATION", "SPECIFICATION_REMEDIATION"]);
 const HELD = new Set(["BLOCKED", "FAILED", "NEEDS_ATTENTION", "PAUSED", "CANCELLED"]);
 const clip = (s: string, n = 200) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -69,14 +64,13 @@ export function summarise(output: Record<string, unknown> | null): string | unde
  * One decision as a line of text. A human answer is stored as "answered while held at <stage>\n\n<questions>" with the answer as the
  * rationale: show only the first line plus the answer, so a long list of questions cannot push the answer out (old rows are one line).
  */
-export function decisionText(x: Pick<Decision, "kind" | "decision" | "rationale">, names?: StageNames): string {
+export function decisionText(x: Pick<Decision, "kind" | "decision" | "rationale">): string {
   const decision = x.kind === "human.answer" ? (x.decision ?? "").split("\n")[0]!.trim() : x.decision;
-  return stageText(clip([decision, x.rationale].filter(Boolean).join(" — "), 260), names);
+  return stageText(clip([decision, x.rationale].filter(Boolean).join(" — "), 260));
 }
 
 export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
   const seen = new Map<string, number>();
-  const names = stageNames(d.workflow?.definition), FIX_STAGES = fixStagesOf(d), label = (id: string) => stageLabel(id, names);
   // A retry resets the fix budget, so cycles are counted since the last time a person retried the job.
   const retries = d.decisions.filter((x) => x.kind === "job.retry").map((x) => x.at ?? 0).sort((a, b) => a - b);
   let cycle = 0, lastReset = -1;
@@ -91,6 +85,7 @@ export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
   for (const group of groups) {
     const e = group.at(-1)!;
     const waits = group.filter((x) => x.outcome === "waiting").length;
+    const node = nodeOfStage(e.stage);
     const run = (seen.get(e.stage) ?? 0) + 1;
     seen.set(e.stage, run);
     const out = parse(e.output) ?? undefined;
@@ -111,10 +106,10 @@ export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
     }
     if (waits && e.outcome !== "waiting") summary = summary ? `${summary} (after waiting, ${plural(waits, "check")})` : `after waiting, ${plural(waits, "check")}`;
     entries.push({
-      key: `e${e.id}`, at: group[0]!.startedAt ?? 0, end: e.finishedAt, tone, run, stage: e.stage, nodeId: e.stage,
+      key: `e${e.id}`, at: group[0]!.startedAt ?? 0, end: e.finishedAt, tone, run, stage: e.stage, nodeId: node?.id,
       ...(e.outcome === "waiting" ? { checks: waits, lastCheckAt: e.finishedAt ?? e.startedAt } : {}),
-      title: fix ? `${label(e.stage)}${cycle ? ` · cycle ${cycle} of ${cap}` : ""}` : label(e.stage),
-      cycle: fix && cycle ? cycle : undefined, summary: stageText(summary, names), detail: e.error && e.outcome !== "failed" ? e.error : undefined,
+      title: fix ? `${node?.label ?? e.stage}${cycle ? ` · cycle ${cycle} of ${cap}` : ""}` : (node?.label ?? e.stage),
+      cycle: fix && cycle ? cycle : undefined, summary: stageText(summary), detail: e.error && e.outcome !== "failed" ? e.error : undefined,
       events: [], runs: d.invocations.filter((i) => group.some((x) => x.id === i.stageExecutionId)),
     });
   }
@@ -123,18 +118,18 @@ export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
     const at = x.at ?? 0;
     const home = [...entries].reverse().find((en) => en.stage && at >= en.at - 1000 && at <= (en.end ?? Number.MAX_SAFE_INTEGER) + 3000); // standalone entries (no stage, no end) must not swallow everything after them
     if (!home) return false;
-    home.events.push({ at, label: eventLabel(x.kind), text: decisionText(x, names) });
+    home.events.push({ at, label: eventLabel(x.kind), text: decisionText(x) });
     return true;
   };
   for (const x of [...d.decisions].sort((a, b) => a.id - b.id)) {
     if (x.kind === "worktree.create") continue; // plumbing, not a story
-    if (!attach(x)) entries.push({ key: `d${x.id}`, at: x.at ?? 0, end: null, tone: "info", title: eventLabel(x.kind), run: 1, summary: decisionText(x, names), events: [], runs: [] });
+    if (!attach(x)) entries.push({ key: `d${x.id}`, at: x.at ?? 0, end: null, tone: "info", title: eventLabel(x.kind), run: 1, summary: decisionText(x), events: [], runs: [] });
   }
   // a held job's current state is the most recent thing that happened
   if (HELD.has(d.job.stage)) {
     entries.push({ key: "held", at: d.job.updatedAt ?? Date.now(), end: null, tone: d.job.stage === "FAILED" ? "fail" : "wait", run: 1, events: [], runs: [],
       title: d.job.stage === "NEEDS_ATTENTION" ? "Needs your attention" : d.job.stage === "BLOCKED" ? "Waiting for you" : d.job.stage === "PAUSED" ? "Paused" : d.job.stage === "CANCELLED" ? "Cancelled" : "Failed",
-      summary: d.job.lastError ? stageText(clip(d.job.lastError.split("\n")[0]!, 260), names) : undefined, stage: d.job.heldFromStage ?? undefined, nodeId: d.job.heldFromStage ?? undefined });
+      summary: d.job.lastError ? stageText(clip(d.job.lastError.split("\n")[0]!, 260)) : undefined, stage: d.job.heldFromStage ?? undefined, nodeId: d.job.heldFromStage ? nodeOfStage(d.job.heldFromStage)?.id : undefined });
   }
   return entries.sort((a, b) => a.at - b.at);
 }

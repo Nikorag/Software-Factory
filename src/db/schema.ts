@@ -34,11 +34,6 @@ export const jobs = sqliteTable(
     dryRun: integer("dry_run", { mode: "boolean" }).notNull().default(false),
     manual: integer("manual", { mode: "boolean" }).notNull().default(false), // a person picked this ticket on the Board (no label or status required)
     prUrl: text("pr_url"),
-    // The workflow this job runs, frozen when the job was created: later edits, renames, disabling or re-assignment never touch a job in flight.
-    workflowId: text("workflow_id"),
-    workflowVersion: integer("workflow_version"),
-    workflowSnapshotJson: text("workflow_snapshot_json"), // the complete validated WorkflowDefinition (null only for jobs created before workflows existed)
-    workflowResolutionJson: text("workflow_resolution_json"), // why this workflow was chosen: { source, reason, matchedLabels, conflict }
     lastError: text("last_error"),
     archivedAt: ts("archived_at"), // hidden from lists by default; only finished jobs can be archived
     createdAt: ts("created_at").notNull().default(now),
@@ -65,8 +60,6 @@ export const stageExecutions = sqliteTable(
     inputJson: text("input_json"),
     outputJson: text("output_json"),
     error: text("error"),
-    gateJson: text("gate_json"), // the success gate's evaluation: { passed, trace }
-    routeJson: text("route_json"), // what the workflow decided after this attempt: { action, to, rule, reason }
     idempotencyKey: text("idempotency_key").notNull(),
     startedAt: ts("started_at").notNull().default(now),
     finishedAt: ts("finished_at"),
@@ -155,60 +148,3 @@ export const artifacts = sqliteTable(
   },
   (t) => [uniqueIndex("artifacts_job_path_sha").on(t.jobId, t.path, t.sha256), index("artifacts_job_idx").on(t.jobId)],
 );
-
-// ---- Workflow library: reusable processes. Assignments (below) say which one applies to a project or a Linear label. ----
-export const workflows = sqliteTable(
-  "workflows",
-  {
-    id: text("id").primaryKey(), // stable: never changes on rename
-    name: text("name").notNull(),
-    description: text("description").notNull().default(""),
-    version: integer("version").notNull().default(1), // bumped whenever the definition changes
-    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-    builtin: integer("builtin", { mode: "boolean" }).notNull().default(false), // the shipped Default Workflow: read-only and undeletable
-    category: text("category"),
-    tagsJson: text("tags_json").notNull().default("[]"),
-    definitionJson: text("definition_json").notNull(),
-    createdAt: ts("created_at").notNull().default(now),
-    updatedAt: ts("updated_at").notNull().default(now),
-  },
-  (t) => [uniqueIndex("workflows_name_unique").on(t.name)],
-);
-
-// Append-only: every saved version of every workflow, so what a job ran can always be shown.
-export const workflowVersions = sqliteTable(
-  "workflow_versions",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    workflowId: text("workflow_id").notNull().references(() => workflows.id),
-    version: integer("version").notNull(),
-    name: text("name").notNull(),
-    definitionJson: text("definition_json").notNull(),
-    createdAt: ts("created_at").notNull().default(now),
-  },
-  (t) => [uniqueIndex("workflow_versions_unique").on(t.workflowId, t.version)],
-);
-
-// Routing rules, kept apart from the workflows they point at. A label is identified by its stable tracker id, never its name.
-export const workflowAssignments = sqliteTable(
-  "workflow_assignments",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    scope: text("scope", { enum: ["project", "label"] }).notNull(),
-    targetId: text("target_id").notNull(), // project id, or the tracker's label id
-    targetName: text("target_name"), // the label's name when it was assigned (display only: names change and repeat across teams)
-    workflowId: text("workflow_id").notNull().references(() => workflows.id),
-    priority: integer("priority").notNull().default(100), // labels only: lower number wins when a ticket carries several assigned labels
-    createdAt: ts("created_at").notNull().default(now),
-    updatedAt: ts("updated_at").notNull().default(now),
-  },
-  (t) => [uniqueIndex("workflow_assignments_target").on(t.scope, t.targetId), index("workflow_assignments_workflow").on(t.workflowId)],
-);
-
-// Singleton: the global fallback workflow and what to do when a ticket's labels point at different workflows with no clear priority.
-export const workflowSettings = sqliteTable("workflow_settings", {
-  id: integer("id").primaryKey(),
-  defaultWorkflowId: text("default_workflow_id").notNull().default("default"),
-  labelConflictPolicy: text("label_conflict_policy", { enum: ["block", "project", "tiebreak"] }).notNull().default("block"),
-  updatedAt: ts("updated_at").notNull().default(now),
-});
