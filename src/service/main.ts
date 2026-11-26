@@ -88,7 +88,12 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
       return { name: me.name };
     },
   };
-  const app = buildServer({ shutdown: opts.requestShutdown, db: ctx.handle.db, logger, config, engine: ctx.engine, worktrees: ctx.worktrees, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: jiraStoreFor(config, "jira"), storeFor: (id) => jiraStoreFor(config, id), port }, updates: new UpdateChecker(), profiles: {
+  // The job chat: a read-only agent in an empty directory, told about one job. It records nothing against the job (no jobId).
+  const chat = { run: async (r: { projectId: string; prompt: string; cwd: string; timeoutMs: number }) => {
+    const res = await ctx.runner.run({ projectId: r.projectId, task: "final_review", role: "assistant", prompt: r.prompt, cwd: r.cwd, timeoutMs: r.timeoutMs });
+    return { ok: res.ok, text: res.text, error: res.error };
+  } };
+  const app = buildServer({ chat, shutdown: opts.requestShutdown, db: ctx.handle.db, logger, config, engine: ctx.engine, worktrees: ctx.worktrees, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: jiraStoreFor(config, "jira"), storeFor: (id) => jiraStoreFor(config, id), port }, updates: new UpdateChecker(), profiles: {
     current: process.env.FACTORY_PROFILE ?? DEFAULT_PROFILE, list: () => listProfiles(), add: (n) => addProfile(n), remove: (n) => removeProfile(n),
     start: (p) => launchService(p, factoryRoot()), isUp: (p) => isUp(p),
   } });

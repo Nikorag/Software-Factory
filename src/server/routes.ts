@@ -23,6 +23,7 @@ import { registerGithubIssuesRoutes } from "./github-issues-routes.js";
 import { registerTrackersRoutes } from "./trackers-routes.js";
 import { registerJiraRoutes } from "./jira-routes.js";
 import { registerProfileRoutes } from "./profile-routes.js";
+import { registerChatRoutes, type ChatRun } from "./chat.js";
 
 export interface ApiDeps {
   db: FactoryDb;
@@ -41,6 +42,8 @@ export interface ApiDeps {
   githubIssues?: { gh?: import("../github/client.js").GhExec };
   updates?: { status(): Promise<import("../service/versions.js").UpdateStatus>; refresh(): Promise<import("../service/versions.js").UpdateStatus> };
   settings?: Omit<import("./settings-routes.js").SettingsDeps, "db" | "config">;
+  /** Runs one read-only assistant turn for the job chat. Absent: the chat endpoint answers 503. */
+  chat?: { run: ChatRun };
   /** Begins a graceful shutdown of this service (how `software-factory shutdown` stops it without signalling a pid). */
   shutdown?: () => void;
 }
@@ -281,5 +284,6 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   if (d.config) registerGithubIssuesRoutes(app, { config: d.config, gh: d.githubIssues?.gh }, requireToken);
   if (d.jira && d.config) registerJiraRoutes(app, { ...d.jira, db, config: d.config }, requireToken);
   if (d.profiles) registerProfileRoutes(app, d.profiles, requireToken);
+  registerChatRoutes(app, { db, dataDir: d.dataDir, chat: d.chat }, requireToken);
   if (d.settings && d.config) registerSettingsRoutes(app, { ...d.settings, db, config: d.config }, requireToken);
 }

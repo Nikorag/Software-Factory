@@ -1,7 +1,7 @@
 /** Provider-neutral agent contract. Claude Code and the local model both implement `Agent`. */
 export type AgentRole =
   | "requirements-analyst" | "spec-writer" | "spec-reviewer" | "implementer"
-  | "qa-reviewer" | "security-reviewer" | "final-reviewer" | "classifier";
+  | "qa-reviewer" | "security-reviewer" | "final-reviewer" | "classifier" | "assistant";
 
 /** What an agent may do. Enforced by the adapter (permission rules) and re-verified by the factory afterwards. */
 export type PermissionProfile = "read-only" | "spec-writer" | "implementer";
