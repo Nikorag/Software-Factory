@@ -10,11 +10,13 @@ import { makeReadiness, type HubState } from "./health.js";
 import { channels, type Bus, type RateLimiter, type Tunnel } from "./infra.js";
 import { registerAuthRoutes } from "./routes-auth.js";
 import { registerDashboardRoutes } from "./routes-dashboard.js";
+import { registerPushRoutes } from "./routes-push.js";
+import type { PushSender } from "./push.js";
 import { registerTunnelRoutes } from "./routes-tunnel.js";
 import { registerUi, SECURITY_HEADERS } from "./ui.js";
 import { eventsBody, ingestEvents, syncBody, syncMetadata } from "./ingest.js";
 
-export interface Deps { cfg: Config; db: Db; bus: Bus; tunnel: Tunnel; limiter: RateLimiter; log: Logger; commands: CommandService; state: HubState }
+export interface Deps { cfg: Config; db: Db; bus: Bus; tunnel: Tunnel; limiter: RateLimiter; log: Logger; commands: CommandService; state: HubState; push: PushSender | null }
 
 declare module "fastify" { interface FastifyRequest { factory?: FactoryPrincipal; user?: UserPrincipal } }
 
@@ -202,6 +204,7 @@ export function buildServer(d: Deps): FastifyInstance {
 
   registerAuthRoutes(app as unknown as FastifyInstance, d, requireUser);
   registerDashboardRoutes(app as unknown as FastifyInstance, d, requireUser);
+  registerPushRoutes(app as unknown as FastifyInstance, d, requireUser);
   registerUi(app as unknown as FastifyInstance);
   registerTunnelRoutes(app as unknown as FastifyInstance, d, makeUserGuard("tunnel"), requireFactory);
   return app as unknown as FastifyInstance;

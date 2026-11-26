@@ -70,10 +70,10 @@ export async function seed(db: Db) {
   return { org, admin, viewer, outsider, factory };
 }
 
-export function testHub(db: Db, over: Record<string, string> = {}) {
+export function testHub(db: Db, over: Record<string, string> = {}, push?: import("../src/push.js").PushSender | null) {
   const cfg = testConfig(over), bus = new FakeBus(), queue = new FakeQueue(), tunnel = new FakeTunnel();
   const log = pino({ level: "silent" });
-  const hub = createHub(cfg, { db, bus, tunnel, queue, limiter: allowAll }, log);
+  const hub = createHub(cfg, { db, bus, tunnel, queue, limiter: allowAll, ...(push !== undefined ? { push } : {}) }, log);
   hub.state.initialised = true; queue.startWorker((id) => hub.commands.onDispatch(id));
   return { cfg, bus, queue, tunnel, hub, commands: hub.commands, app: hub.app };
 }
