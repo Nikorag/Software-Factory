@@ -15,6 +15,7 @@ import { DeleteJobButton } from "@/components/JobsTable";
 import { Pager } from "@/components/Pager";
 import { matches, usePaged } from "@/lib/paging";
 import { Peek } from "@/components/Peek";
+import { JobChat } from "@/components/JobChat";
 import { PeekButton, Timeline } from "@/components/Timeline";
 import { FlowChart, FlowLegend } from "@/components/FlowChart";
 import { StatusBadge, toneOf } from "@/components/StatusBadge";
@@ -133,7 +134,7 @@ export function JobDetail() {
       {peek && peekRuns.length ? <Peek jobId={j.id} runs={peekRuns} activeId={peek.id} onActive={(id) => setPeek({ ids: peek.ids, id })} onClose={() => setPeek(null)} wrap={wrap} onWrap={setWrapPref} ctx={{ key: j.key, branch: d.worktree?.branch }} /> : null}
 
       <Tabs defaultValue="session">
-        <TabsList><TabsTrigger value="session">Session</TabsTrigger><TabsTrigger value="history">Stage history</TabsTrigger><TabsTrigger value="agents" id="agent-runs-tab">Agent runs</TabsTrigger><TabsTrigger value="decisions">Decisions</TabsTrigger><TabsTrigger value="more">Artifacts &amp; write-back</TabsTrigger></TabsList>
+        <TabsList><TabsTrigger value="session">Session</TabsTrigger><TabsTrigger value="history">Stage history</TabsTrigger><TabsTrigger value="agents" id="agent-runs-tab">Agent runs</TabsTrigger><TabsTrigger value="decisions">Decisions</TabsTrigger><TabsTrigger value="chat">Ask Claude</TabsTrigger><TabsTrigger value="more">Artifacts &amp; write-back</TabsTrigger></TabsList>
         <TabsContent value="session">
           <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
             <div className="min-w-0">
@@ -169,6 +170,7 @@ export function JobDetail() {
           {d.decisions.length ? <div className="mb-3 relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter decisions" className="pl-8" value={fd} onChange={(e) => setFd(e.target.value)} placeholder="Filter decisions" /></div> : null}
           {d.decisions.length ? <><Table><TableBody>{decs.slice.map((x) => <TableRow key={x.id}><TableCell className="font-mono text-xs">{x.kind}</TableCell><TableCell>{stageText(x.decision)}</TableCell><TableCell className="text-muted-foreground">{stageText(x.rationale) || ""}</TableCell><TableCell className="text-muted-foreground">{x.actor}</TableCell></TableRow>)}</TableBody></Table><Pager page={decs.page} pages={decs.pages} pageSize={decs.pageSize} total={decs.total} onPage={decs.setPage} onPageSize={decs.setPageSize} /></> : <p className="text-sm text-muted-foreground">None.</p>}
         </CardContent></Card></TabsContent>
+        <TabsContent value="chat"><JobChat jobId={j.id} /></TabsContent>
         <TabsContent value="more"><Card><CardContent className="grid gap-4 text-sm">
           <div><h4 className="mb-1 font-semibold">Artifacts</h4>{d.artifacts.length ? <ul className="grid gap-1">{d.artifacts.map((a) => <li key={a.path}><b>{a.kind}</b> <span className="font-mono text-xs text-muted-foreground">{a.path}</span></li>)}</ul> : <p className="text-muted-foreground">None.</p>}</div>
           {d.worktree ? <div><h4 className="mb-1 font-semibold">Worktree</h4><div className="font-mono text-xs">{d.worktree.path} ({d.worktree.state}) on {d.worktree.branch}</div></div> : null}

@@ -33,6 +33,9 @@ export const RULES: readonly Rule[] = [
   ...allow("POST", "/api/jobs/:id/answer", "/api/jobs/:id/archive", "/api/jobs/:id/unarchive", "/api/jobs/:id/cancel", "/api/jobs/:id/retry", "/api/board/start"),
   ...allow("DELETE", "/api/jobs/:id"),
 
+  // The job chat starts an agent on this machine (it burns the user's Claude usage and reads job logs): decide deliberately, on the machine.
+  block("POST", "/api/jobs/:id/chat", "starts an agent on this machine: use it from the local dashboard"),
+
   // ---- settings that carry no secret ----
   ...allow("PUT", "/api/settings/global", "/api/settings/tracker", "/api/jira/mapping", "/api/github-issues/mapping"),
   // Tracker connections: create/rename/remove a NAMED connection. No credential is involved (those are set up separately, and blocked here).

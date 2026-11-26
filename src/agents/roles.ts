@@ -5,6 +5,7 @@ import type { AgentRole, PermissionProfile } from "./types.js";
 /** Role -> permission profile. A role can never exceed its profile; there is no per-call override. */
 export const ROLE_PROFILE: Record<AgentRole, PermissionProfile> = {
   classifier: "read-only",
+  assistant: "read-only",
   "requirements-analyst": "read-only",
   "spec-writer": "spec-writer",
   "spec-reviewer": "read-only",
