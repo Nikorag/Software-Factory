@@ -36,7 +36,8 @@ describe.skipIf(!sandboxAvailable())("implementation pipeline (real engine, git,
     const out = (stage: string) => JSON.parse(h.ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.stage, stage)).get()!.outputJson!);
     expect(typeof out("IMPLEMENTATION").commentary).toBe("string");
     expect(out("IMPLEMENTATION").commentary.length).toBeGreaterThan(0);
-    expect(out("IMPLEMENTATION").summary).toBeDefined(); // the implementer's summary (used for the PR body) is still recorded
+    expect(out("IMPLEMENTATION").commentary).toBe(out("IMPLEMENTATION").summary); // the implementer's, not the converge check's
+    expect(out("IMPLEMENTATION").summary).toBeDefined(); // still recorded for the PR body
     expect(out("IMPLEMENTATION_PREPARATION").commentary).toBeUndefined();
   });
   it("ran the project's real checks in the sandbox (baseline, tests, final) and recorded the evidence", async () => {
