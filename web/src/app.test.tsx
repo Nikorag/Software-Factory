@@ -58,6 +58,39 @@ describe("flow derivation (from the stage history the factory already stores)", 
   });
 });
 
+describe("job page layout follows the screen", () => {
+  const mobile = (on: boolean) => {
+    window.matchMedia = ((q: string) => ({ matches: on && q.includes("max-width"), media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false })) as never;
+  };
+  afterEach(() => { delete (window as { matchMedia?: unknown }).matchMedia; });
+  it("desktop shows every section as a tile, with no tab strip", async () => {
+    mobile(false);
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [exec("AUTOMATED_TESTING", "succeeded", 1)]) };
+    app("/jobs/j1");
+    for (const name of ["Session", "Stage history", "Agent runs", "Decisions", "Ask Claude", "Artifacts & write-back"]) expect(await screen.findByRole("region", { name })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Agent runs" })).toBeNull();
+  });
+  it("mobile shows the same sections as tabs, one at a time", async () => {
+    mobile(true);
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [exec("AUTOMATED_TESTING", "succeeded", 1)]) };
+    app("/jobs/j1");
+    const agents = await screen.findByRole("tab", { name: "Agent runs" });
+    expect(screen.queryByRole("region", { name: "Agent runs" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Session" })).toHaveAttribute("aria-selected", "true");
+    await userEvent.click(agents);
+    expect(agents).toHaveAttribute("aria-selected", "true");
+  });
+  it("mobile puts a project's open jobs in one dropdown next to Overview instead of a tab each", async () => {
+    mobile(true);
+    routes = { "/api/overview": { ...overview(), active: [job({ id: "j1" }), job({ id: "j2", key: "JAM-2" })] }, "/api/jobs/j1": detail(job(), []), "/api/projects": { projects: [proj] } };
+    app("/jobs/j1");
+    const nav = await screen.findByRole("navigation", { name: "Project tabs" });
+    expect(within(nav).getByRole("link", { name: /Overview/ })).toBeInTheDocument();
+    expect(within(nav).getByRole("combobox", { name: "Open jobs" })).toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: /JAM-2/ })).toBeNull(); // not a tab any more
+  });
+});
+
 describe("flow chart follows the planning mode", () => {
   const haiku = (o = {}) => job({ planningMode: "haiku_prompt", ...o });
   it("haiku_prompt draws no Spec Kit steps at all (not skipped ones), and the prompt step replaces them", () => {
@@ -186,7 +219,7 @@ describe("dashboard", () => {
     app("/jobs/j1");
     await userEvent.click(await screen.findByRole("button", { name: /Run checks: done/ }));
     expect(screen.getByText(/runs build, typecheck, lint and tests itself/)).toBeInTheDocument();
-    expect(screen.getByText("Showing Run checks only.")).toBeInTheDocument();
+    expect(screen.getAllByText("Showing Run checks only.").length).toBeGreaterThan(0);
     expect(screen.queryByText("LOCAL_MODEL_REVIEW")).toBeNull();
   });
   it("controls work with no token and no read-only mode, sending the same-origin header", async () => {
@@ -211,6 +244,22 @@ const proj = { id: "my-app", name: "My App", enabled: true, autonomy: "supervise
 const setupInfo = { tracker: { kind: "linear", name: "Linear", connected: true }, configDir: null, homeConfigDir: "~/.software-factory/config", usingDefaults: true, projectCount: 1, linear: { keyPresent: true, env: "LINEAR_API_KEY", keychainService: "svc" } };
 
 describe("settings and setup", () => {
+  it("on a phone the project list sits behind its own burger button, and picking a project closes it", async () => {
+    // (jsdom applies no breakpoint CSS: the button and the drawer are both in the DOM; what matters is the wiring)
+    const user = userEvent.setup();
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj, { ...proj, id: "bare", name: "Bare", githubRepo: "me/bare", commands: {} }] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] } };
+    app("/settings");
+    const burger = await screen.findByRole("button", { name: "Open projects menu" });
+    expect(burger).toHaveAttribute("aria-expanded", "false");
+    await user.click(burger);
+    expect(screen.getByRole("button", { name: "Open projects menu" })).toHaveAttribute("aria-expanded", "true");
+    await user.click(screen.getByRole("button", { name: "Close projects menu" }));
+    expect(screen.getByRole("button", { name: "Open projects menu" })).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getByRole("button", { name: "Open projects menu" }));
+    await user.click(within(await screen.findByRole("navigation", { name: "Projects" })).getByRole("button", { name: /Bare/ }));
+    expect(screen.getByRole("button", { name: "Open projects menu" })).toHaveAttribute("aria-expanded", "false"); // chose one: the drawer closed
+    expect(await screen.findByLabelText("Name")).toHaveValue("Bare");
+  });
   it("shows projects in a list on the left and the selected one in a full editor", async () => {
     routes = { "/api/overview": overview(), "/api/projects": { projects: [proj, { ...proj, id: "bare", name: "Bare", githubRepo: "me/bare", commands: {} }] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] } };
     app("/settings");
@@ -375,7 +424,6 @@ describe("settings and setup", () => {
       { kind: "prompt", text: "Implement the due-date feature\nline two\nline three\nline four" }, { kind: "session", model: "claude-opus-5-5", tools: 6 }, { kind: "text", text: "I'll start by reading the tests." },
       { kind: "tool", id: "t1", name: "Bash", input: "npm test" }, { kind: "tool_result", id: "t1", text: "12 passed\n3 skipped\nDone in 4s", error: false }, { kind: "usage", tokens: 50_000 }, { kind: "result", ok: true, text: "Done", turns: 3 } ] } };
     app("/jobs/j1");
-    await userEvent.click(await screen.findByRole("tab", { name: "Agent runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Conversation" }));
     expect(await screen.findByText("I'll start by reading the tests.")).toBeInTheDocument();
     expect(screen.getByText("Prompt sent to Claude")).toBeInTheDocument();
@@ -397,7 +445,6 @@ describe("settings and setup", () => {
       { kind: "session", model: "claude-opus-5-5", tools: 7 }, { kind: "tool", id: "a", name: "Read", input: "/x/y.ts" }, { kind: "tool", id: "b", name: "Bash", input: "ls" },
       { kind: "usage", tokens: 48_000 }, { kind: "result", ok: true, text: "ok", turns: 2 } ] } };
     app("/jobs/j1");
-    await userEvent.click(await screen.findByRole("tab", { name: "Agent runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Conversation" }));
     const bar = within(await screen.findByRole("status", { name: "run status" }));
     expect(bar.getByText("JAM-419")).toBeInTheDocument();
@@ -525,7 +572,6 @@ describe("settings and setup", () => {
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [run] }), "/api/jobs/j1/invocations/8/conversation?after=0": { offset: 1, done: true, agent: "x", model: null, turns: [
       { kind: "text", text: XSS }, { kind: "tool", id: "a", name: XSS, input: XSS }, { kind: "tool_result", id: "a", text: XSS, error: false } ] } };
     const { container } = app("/jobs/j1");
-    await userEvent.click(await screen.findByRole("tab", { name: "Agent runs" }));
     await userEvent.click(await screen.findByRole("button", { name: "Conversation" }));
     await screen.findAllByText(/<img src=x onerror=/);
     expect(container.querySelectorAll("img, script, iframe, object, embed").length).toBe(0);
@@ -845,8 +891,7 @@ describe("reliability: live state, lost connections and double clicks", () => {
     const live = { ...stopped, id: 4, agent: "anthropic/reviewer", durationMs: null, finished: false };
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [stopped, live] }) };
     app("/jobs/j1");
-    await userEvent.click(await screen.findByRole("tab", { name: "Agent runs" }));
-    const rows = screen.getAllByRole("row");
+    const rows = await screen.findAllByRole("row");
     const row = (agent: string) => within(rows.find((r) => within(r).queryByText(agent))!);
     expect(row("anthropic/implementer").getByRole("button", { name: "Conversation" })).toBeInTheDocument();
     expect(row("anthropic/implementer").getByText("stopped")).toBeInTheDocument();

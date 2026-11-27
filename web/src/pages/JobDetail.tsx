@@ -21,6 +21,7 @@ import { FlowChart, FlowLegend } from "@/components/FlowChart";
 import { StatusBadge, toneOf } from "@/components/StatusBadge";
 import { api, apiText, deleteJobRequest, post, send, type DeleteOptions, type SendResult } from "@/lib/api";
 import { ago, dur, HELD, safeUrl, stageLabel, stageText } from "@/lib/format";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { deriveFlow, modeOfJob, nodesFor } from "@/lib/pipeline";
 import type { Invocation, Job, JobDetail as D } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
@@ -43,6 +44,7 @@ export function JobDetail() {
   const nav = useNavigate();
   const [fh, setFh] = useState(""), [fa, setFa] = useState(""), [fd, setFd] = useState("");
   const execAll = d?.executions ?? [];
+  const isMobile = useIsMobile(); // phones get tabs, wider screens get every section as a tile
   const mode = modeOfJob(d?.job ?? ({} as Job), d?.executions ?? []);
   const NODES = nodesFor(mode), NODE = Object.fromEntries(NODES.map((x) => [x.id, x]));
   const nodeStage = sel ? NODE[sel]?.stage : null;
@@ -72,6 +74,62 @@ export function JobDetail() {
   const deleteIt = async (o: DeleteOptions): Promise<SendResult> => { const r = await deleteJobRequest(j.id, o); if (r.ok) nav(`/p/${encodeURIComponent(j.project)}`); return r; };
   const finished = ["done", "failed", "cancelled"].includes(j.status);
   const cycles = j.remediationAttempts, cap = d.remediationCap ?? 3;
+
+  const sections = [
+    { id: "session", tab: "Session", wide: true, tabId: undefined, node: (<>
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+            <div className="min-w-0">
+              <Timeline detail={d} cap={cap} selected={sel} onSelect={setSel} onPeek={(runs) => openPeek(runs)} />
+            </div>
+            <Card><CardHeader><CardTitle className="text-xs font-semibold text-muted-foreground">Details</CardTitle></CardHeader><CardContent>
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3.5 gap-y-2 text-[12.5px]">
+                <dt className="text-dim">Workflow</dt><dd>{j.workflow}</dd>
+                <dt className="text-dim">Branch</dt><dd className="break-all font-mono text-xs">{d.worktree?.branch ?? "not created"}</dd>
+                <dt className="text-dim">Worktree</dt><dd>{d.worktree ? d.worktree.state : "not created"}</dd>
+                <dt className="text-dim">Mode</dt><dd>PR-only{j.autonomous ? ", autonomous" : ""}{j.dryRun ? ", dry run" : ""}</dd>
+                <dt className="text-dim">Started</dt><dd>{j.createdAt ? ago(j.createdAt) : "not started"}</dd>
+              </dl>
+            </CardContent></Card>
+          </div>
+        
+    </>) },
+    { id: "history", tab: "Stage history", wide: false, tabId: undefined, node: (<>
+<Card><CardContent>
+          <div className="mb-3 flex flex-wrap items-center gap-2"><div className="relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter stage history" className="pl-8" value={fh} onChange={(e) => setFh(e.target.value)} placeholder="Filter by stage, outcome or error" /></div>{node ? <span className="text-xs text-muted-foreground">Showing {node.label} only.</span> : null}</div>
+          <Table><TableHeader><TableRow>{["Stage", "#", "Outcome", "Took", "Detail"].map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
+            <TableBody>{hist.slice.map((e) => <TableRow key={e.id}><TableCell className="text-xs" title={e.stage}>{stageLabel(e.stage)}</TableCell><TableCell>{e.attempt}</TableCell><TableCell className={toneOf(e.outcome)}>{e.outcome}</TableCell><TableCell>{e.finishedAt && e.startedAt ? dur(e.finishedAt - e.startedAt) : "…"}</TableCell><TableCell className={e.error ? "text-destructive" : "text-muted-foreground"}>{stageText((e.error || "").slice(0, 200))}</TableCell></TableRow>)}</TableBody></Table>
+          <Pager page={hist.page} pages={hist.pages} pageSize={hist.pageSize} total={hist.total} onPage={hist.setPage} onPageSize={hist.setPageSize} />
+        </CardContent></Card>
+    </>) },
+    { id: "agents", tab: "Agent runs", wide: true, tabId: "agent-runs-tab", node: (<>
+<Card><CardContent>
+          <div className="mb-3 relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter agent runs" className="pl-8" value={fa} onChange={(e) => setFa(e.target.value)} placeholder="Filter by agent or model" /></div>
+          <Table><TableHeader><TableRow>{["Agent", "Model", "Took", "Exit", "Denied", "", "Log"].map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
+            <TableBody>{agents.slice.map((a) => <TableRow key={a.id}><TableCell>{a.agent}</TableCell><TableCell>{a.model || ""}</TableCell><TableCell>{dur(a.durationMs)}</TableCell><TableCell>{a.exitCode ?? (a.finished ? <span className="text-muted-foreground" title="The run ended without an exit code: it was stopped (timeout, cancel, emergency stop), failed to start, or the service restarted mid-run.">stopped</span> : "")}</TableCell><TableCell className={a.usage?.denials ? "text-loop" : "text-muted-foreground"}>{a.usage?.denials ?? ""}</TableCell>
+              <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={() => openPeek(a.stageExecutionId === null ? [a] : d.invocations.filter((i) => i.stageExecutionId === a.stageExecutionId), a.id)}>{a.finished ? "Conversation" : "Watch live"}</Button> : ""}</TableCell>
+              <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={async () => { try { setLog(await apiText(`/api/jobs/${j.id}/invocations/${a.id}/log?tail=30000`)); } catch (e) { setLog(`No log: ${(e as Error).message}`); } }}>view</Button> : ""}</TableCell></TableRow>)}</TableBody></Table>
+          <Pager page={agents.page} pages={agents.pages} pageSize={agents.pageSize} total={agents.total} onPage={agents.setPage} onPageSize={agents.setPageSize} />
+          {log !== null ? <pre className="mt-3 max-h-96 overflow-auto rounded-md border bg-muted/40 p-3 text-xs whitespace-pre-wrap">{log}</pre> : null}
+        </CardContent></Card>
+    </>) },
+    { id: "decisions", tab: "Decisions", wide: false, tabId: undefined, node: (<>
+<Card><CardContent>
+          {d.decisions.length ? <div className="mb-3 relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter decisions" className="pl-8" value={fd} onChange={(e) => setFd(e.target.value)} placeholder="Filter decisions" /></div> : null}
+          {d.decisions.length ? <><Table><TableBody>{decs.slice.map((x) => <TableRow key={x.id}><TableCell className="font-mono text-xs">{x.kind}</TableCell><TableCell>{stageText(x.decision)}</TableCell><TableCell className="text-muted-foreground">{stageText(x.rationale) || ""}</TableCell><TableCell className="text-muted-foreground">{x.actor}</TableCell></TableRow>)}</TableBody></Table><Pager page={decs.page} pages={decs.pages} pageSize={decs.pageSize} total={decs.total} onPage={decs.setPage} onPageSize={decs.setPageSize} /></> : <p className="text-sm text-muted-foreground">None.</p>}
+        </CardContent></Card>
+    </>) },
+    { id: "chat", tab: "Ask Claude", wide: true, tabId: undefined, node: (<>
+<JobChat jobId={j.id} />
+    </>) },
+    { id: "more", tab: "Artifacts & write-back", wide: false, tabId: undefined, node: (<>
+<Card><CardContent className="grid gap-4 text-sm">
+          <div><h4 className="mb-1 font-semibold">Artifacts</h4>{d.artifacts.length ? <ul className="grid gap-1">{d.artifacts.map((a) => <li key={a.path}><b>{a.kind}</b> <span className="font-mono text-xs text-muted-foreground">{a.path}</span></li>)}</ul> : <p className="text-muted-foreground">None.</p>}</div>
+          {d.worktree ? <div><h4 className="mb-1 font-semibold">Worktree</h4><div className="font-mono text-xs">{d.worktree.path} ({d.worktree.state}) on {d.worktree.branch}</div></div> : null}
+          <div><h4 className="mb-1 font-semibold">Linear write-back</h4>{d.outbox.length ? <div className="flex flex-wrap gap-2">{d.outbox.map((o) => <Badge key={o.id} variant="outline" title={o.lastError || ""} className={o.status === "done" ? "text-ok" : o.status === "failed" ? "text-destructive" : "text-loop"}>{o.kind} {o.status}</Badge>)}</div> : <p className="text-muted-foreground">None.</p>}</div>
+          <div className="text-xs text-muted-foreground">Updated {ago(j.updatedAt)} · {NODES.length} pipeline steps</div>
+        </CardContent></Card>
+    </>) },
+  ];
 
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
@@ -135,51 +193,21 @@ export function JobDetail() {
 
       {peek && peekRuns.length ? <Peek jobId={j.id} runs={peekRuns} activeId={peek.id} onActive={(id) => setPeek({ ids: peek.ids, id })} onClose={() => setPeek(null)} wrap={wrap} onWrap={setWrapPref} ctx={{ key: j.key, branch: d.worktree?.branch }} /> : null}
 
-      <Tabs defaultValue="session">
-        <TabsList><TabsTrigger value="session">Session</TabsTrigger><TabsTrigger value="history">Stage history</TabsTrigger><TabsTrigger value="agents" id="agent-runs-tab">Agent runs</TabsTrigger><TabsTrigger value="decisions">Decisions</TabsTrigger><TabsTrigger value="chat">Ask Claude</TabsTrigger><TabsTrigger value="more">Artifacts &amp; write-back</TabsTrigger></TabsList>
-        <TabsContent value="session">
-          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-            <div className="min-w-0">
-              <Timeline detail={d} cap={cap} selected={sel} onSelect={setSel} onPeek={(runs) => openPeek(runs)} />
-            </div>
-            <Card><CardHeader><CardTitle className="text-xs font-semibold text-muted-foreground">Details</CardTitle></CardHeader><CardContent>
-              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3.5 gap-y-2 text-[12.5px]">
-                <dt className="text-dim">Workflow</dt><dd>{j.workflow}</dd>
-                <dt className="text-dim">Branch</dt><dd className="break-all font-mono text-xs">{d.worktree?.branch ?? "not created"}</dd>
-                <dt className="text-dim">Worktree</dt><dd>{d.worktree ? d.worktree.state : "not created"}</dd>
-                <dt className="text-dim">Mode</dt><dd>PR-only{j.autonomous ? ", autonomous" : ""}{j.dryRun ? ", dry run" : ""}</dd>
-                <dt className="text-dim">Started</dt><dd>{j.createdAt ? ago(j.createdAt) : "not started"}</dd>
-              </dl>
-            </CardContent></Card>
-          </div>
-        </TabsContent>
-        <TabsContent value="history"><Card><CardContent>
-          <div className="mb-3 flex flex-wrap items-center gap-2"><div className="relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter stage history" className="pl-8" value={fh} onChange={(e) => setFh(e.target.value)} placeholder="Filter by stage, outcome or error" /></div>{node ? <span className="text-xs text-muted-foreground">Showing {node.label} only.</span> : null}</div>
-          <Table><TableHeader><TableRow>{["Stage", "#", "Outcome", "Took", "Detail"].map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
-            <TableBody>{hist.slice.map((e) => <TableRow key={e.id}><TableCell className="text-xs" title={e.stage}>{stageLabel(e.stage)}</TableCell><TableCell>{e.attempt}</TableCell><TableCell className={toneOf(e.outcome)}>{e.outcome}</TableCell><TableCell>{e.finishedAt && e.startedAt ? dur(e.finishedAt - e.startedAt) : "…"}</TableCell><TableCell className={e.error ? "text-destructive" : "text-muted-foreground"}>{stageText((e.error || "").slice(0, 200))}</TableCell></TableRow>)}</TableBody></Table>
-          <Pager page={hist.page} pages={hist.pages} pageSize={hist.pageSize} total={hist.total} onPage={hist.setPage} onPageSize={hist.setPageSize} />
-        </CardContent></Card></TabsContent>
-        <TabsContent value="agents"><Card><CardContent>
-          <div className="mb-3 relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter agent runs" className="pl-8" value={fa} onChange={(e) => setFa(e.target.value)} placeholder="Filter by agent or model" /></div>
-          <Table><TableHeader><TableRow>{["Agent", "Model", "Took", "Exit", "Denied", "", "Log"].map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
-            <TableBody>{agents.slice.map((a) => <TableRow key={a.id}><TableCell>{a.agent}</TableCell><TableCell>{a.model || ""}</TableCell><TableCell>{dur(a.durationMs)}</TableCell><TableCell>{a.exitCode ?? (a.finished ? <span className="text-muted-foreground" title="The run ended without an exit code: it was stopped (timeout, cancel, emergency stop), failed to start, or the service restarted mid-run.">stopped</span> : "")}</TableCell><TableCell className={a.usage?.denials ? "text-loop" : "text-muted-foreground"}>{a.usage?.denials ?? ""}</TableCell>
-              <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={() => openPeek(a.stageExecutionId === null ? [a] : d.invocations.filter((i) => i.stageExecutionId === a.stageExecutionId), a.id)}>{a.finished ? "Conversation" : "Watch live"}</Button> : ""}</TableCell>
-              <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={async () => { try { setLog(await apiText(`/api/jobs/${j.id}/invocations/${a.id}/log?tail=30000`)); } catch (e) { setLog(`No log: ${(e as Error).message}`); } }}>view</Button> : ""}</TableCell></TableRow>)}</TableBody></Table>
-          <Pager page={agents.page} pages={agents.pages} pageSize={agents.pageSize} total={agents.total} onPage={agents.setPage} onPageSize={agents.setPageSize} />
-          {log !== null ? <pre className="mt-3 max-h-96 overflow-auto rounded-md border bg-muted/40 p-3 text-xs whitespace-pre-wrap">{log}</pre> : null}
-        </CardContent></Card></TabsContent>
-        <TabsContent value="decisions"><Card><CardContent>
-          {d.decisions.length ? <div className="mb-3 relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter decisions" className="pl-8" value={fd} onChange={(e) => setFd(e.target.value)} placeholder="Filter decisions" /></div> : null}
-          {d.decisions.length ? <><Table><TableBody>{decs.slice.map((x) => <TableRow key={x.id}><TableCell className="font-mono text-xs">{x.kind}</TableCell><TableCell>{stageText(x.decision)}</TableCell><TableCell className="text-muted-foreground">{stageText(x.rationale) || ""}</TableCell><TableCell className="text-muted-foreground">{x.actor}</TableCell></TableRow>)}</TableBody></Table><Pager page={decs.page} pages={decs.pages} pageSize={decs.pageSize} total={decs.total} onPage={decs.setPage} onPageSize={decs.setPageSize} /></> : <p className="text-sm text-muted-foreground">None.</p>}
-        </CardContent></Card></TabsContent>
-        <TabsContent value="chat"><JobChat jobId={j.id} /></TabsContent>
-        <TabsContent value="more"><Card><CardContent className="grid gap-4 text-sm">
-          <div><h4 className="mb-1 font-semibold">Artifacts</h4>{d.artifacts.length ? <ul className="grid gap-1">{d.artifacts.map((a) => <li key={a.path}><b>{a.kind}</b> <span className="font-mono text-xs text-muted-foreground">{a.path}</span></li>)}</ul> : <p className="text-muted-foreground">None.</p>}</div>
-          {d.worktree ? <div><h4 className="mb-1 font-semibold">Worktree</h4><div className="font-mono text-xs">{d.worktree.path} ({d.worktree.state}) on {d.worktree.branch}</div></div> : null}
-          <div><h4 className="mb-1 font-semibold">Linear write-back</h4>{d.outbox.length ? <div className="flex flex-wrap gap-2">{d.outbox.map((o) => <Badge key={o.id} variant="outline" title={o.lastError || ""} className={o.status === "done" ? "text-ok" : o.status === "failed" ? "text-destructive" : "text-loop"}>{o.kind} {o.status}</Badge>)}</div> : <p className="text-muted-foreground">None.</p>}</div>
-          <div className="text-xs text-muted-foreground">Updated {ago(j.updatedAt)} · {NODES.length} pipeline steps</div>
-        </CardContent></Card></TabsContent>
-      </Tabs>
+      {isMobile ? (
+        <Tabs defaultValue="session">
+          <TabsList>{sections.map((s) => <TabsTrigger key={s.id} value={s.id} id={s.tabId}>{s.tab}</TabsTrigger>)}</TabsList>
+          {sections.map((s) => <TabsContent key={s.id} value={s.id}>{s.node}</TabsContent>)}
+        </Tabs>
+      ) : (
+        <div className="grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0">
+          {sections.map((s) => (
+            <section key={s.id} aria-label={s.tab} className={cn("grid min-w-0 gap-2", s.wide && "lg:col-span-2")}>
+              <h3 className="text-[11.5px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{s.tab}</h3>
+              {s.node}
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

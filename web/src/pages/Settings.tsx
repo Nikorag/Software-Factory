@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertTriangle, Plus, Search } from "lucide-react";
+import { AlertTriangle, Menu, Plus, Search, X } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,7 +33,14 @@ function ProjectsPane({ projects, teams, globals, tracker, reload }: { projects:
   const [pending, setPending] = useState<string | null>(null); // a selection waiting on "discard unsaved changes?"
   useEffect(() => { if (sel === null && projects[0]) setSel(projects[0].id); }, [projects, sel]);
   const onDirty = useCallback((d: boolean) => setDirty(d), []);
-  const go = (id: string) => { if (id === sel) return; if (dirty) setPending(id); else setSel(id); };
+  const [menuOpen, setMenuOpen] = useState(false); // below md the project list is a drawer behind its own burger button
+  useEffect(() => {
+    if (!menuOpen) return;
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [menuOpen]);
+  const go = (id: string) => { setMenuOpen(false); if (id === sel) return; if (dirty) setPending(id); else setSel(id); };
   const [filter, setFilter] = useState("");
   const visible = projects.filter((p) => p.id === sel || matches(filter, p.name, p.id, p.githubRepo, p.bitbucketRepo, p.repository));
   const paged = usePaged(visible, 10, filter);
@@ -41,7 +48,14 @@ function ProjectsPane({ projects, teams, globals, tracker, reload }: { projects:
 
   return (
     <div className="grid gap-4 md:grid-cols-[260px_minmax(0,1fr)] [&>*]:min-w-0">
-      <Card className="min-w-0 self-start overflow-hidden"><CardContent className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 p-3">
+      {menuOpen ? <div aria-hidden className="fixed inset-0 z-20 bg-black/55 md:hidden" onClick={() => setMenuOpen(false)} /> : null}
+      <div className="flex min-w-0 items-center gap-2 md:hidden">
+        <Button variant="outline" size="icon" aria-label="Open projects menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}><Menu /></Button>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{sel === NEW ? "Adding a project" : current?.name ?? "Projects"}</span>
+      </div>
+      <aside aria-label="Projects" className={cn("min-w-0 overflow-y-auto bg-card text-card-foreground max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-30 max-md:w-[min(300px,85vw)] max-md:border-r max-md:border-line max-md:shadow-xl max-md:transition-transform max-md:duration-200 md:self-start md:overflow-hidden md:rounded-xl md:border", menuOpen ? "max-md:translate-x-0" : "max-md:-translate-x-full max-md:invisible")}>
+        <div className="flex items-center justify-between border-b border-line px-4 py-3 md:hidden"><span className="text-sm font-semibold">Projects</span><Button variant="ghost" size="icon" aria-label="Close projects menu" onClick={() => setMenuOpen(false)}><X /></Button></div>
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 p-3">
         <Button size="sm" onClick={() => go(NEW)}><Plus />Add project</Button>
         {projects.length > 5 ? <div className="relative"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter projects" className="pl-8" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter projects" /></div> : null}
         <nav aria-label="Projects" className="grid grid-cols-[minmax(0,1fr)] gap-1">
@@ -58,7 +72,8 @@ function ProjectsPane({ projects, teams, globals, tracker, reload }: { projects:
           {projects.length === 0 ? <p className="px-1 text-sm text-muted-foreground">No projects yet. <Link className="underline" to="/setup">Run the setup wizard</Link> or add one.</p> : null}
         </nav>
         <Pager page={paged.page} pages={paged.pages} pageSize={paged.pageSize} total={paged.total} onPage={paged.setPage} />
-      </CardContent></Card>
+        </div>
+      </aside>
       <Card className="min-w-0 overflow-hidden"><CardContent className="min-w-0 p-5">
         {sel === null && projects.length === 0 ? <p className="text-sm text-muted-foreground">Add a project to get started.</p> : (
           <ProjectEditor key={sel ?? "none"} project={current} teams={teams} globals={globals} tracker={tracker} onDirty={onDirty}
