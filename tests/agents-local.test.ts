@@ -188,6 +188,10 @@ describe("ModelRouter + config", () => {
     expect(bad({ provider: "local", model: "m", baseUrl: "https://x.test/v1", apiKeyEnv: "sk-live key" })).toBe(false);
     expect(bad({ provider: "anthropic", model: "haiku", baseUrl: "https://x.test/v1" })).toBe(false);
     expect(bad({ provider: "local", model: "m", baseUrl: "https://x.test/v1", apiKeyEnv: "MY_KEY" })).toBe(true);
+    // a key is never sent over plain http, except to loopback
+    expect(bad({ provider: "local", model: "m", baseUrl: "http://api.example.test/v1", apiKeyEnv: "MY_KEY" })).toBe(false);
+    expect(bad({ provider: "local", model: "m", baseUrl: "http://127.0.0.1:1234/v1", apiKeyEnv: "MY_KEY" })).toBe(true);
+    expect(bad({ provider: "local", model: "m", baseUrl: "http://192.168.1.5:1234/v1" })).toBe(true); // no key, nothing to leak
   });
   it("rejects configs that put specification or implementation on the local model", () => {
     const bad = (k: string) => ModelsConfig.safeParse({ routes: { ...routes.routes, [k]: { provider: "local", model: "q" } } }).success;

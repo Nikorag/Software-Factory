@@ -85,7 +85,8 @@ const ModelRoute = z.object({
 export const ReviewerRoute = ModelRoute.extend({
   baseUrl: z.string().url().optional(),
   apiKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "an environment variable name").max(100).optional(),
-}).refine((r) => r.provider === "local" || (!r.baseUrl && !r.apiKeyEnv), { message: "baseUrl and apiKeyEnv only apply to provider `local` (an OpenAI-compatible endpoint)" });
+}).refine((r) => !(r.apiKeyEnv && r.baseUrl) || validHubUrl(r.baseUrl), { message: "baseUrl must be https (http only for localhost) when an API key is configured, so the key is never sent in cleartext" })
+  .refine((r) => r.provider === "local" || (!r.baseUrl && !r.apiKeyEnv), { message: "baseUrl and apiKeyEnv only apply to provider `local` (an OpenAI-compatible endpoint)" });
 export type ReviewerRoute = z.infer<typeof ReviewerRoute>;
 export const ModelsConfig = z
   .object({
