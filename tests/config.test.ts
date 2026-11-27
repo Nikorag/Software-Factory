@@ -23,6 +23,20 @@ describe("loadConfig", () => {
     expect(c.factory.maxRemediationAttempts).toBe(3);
     expect(c.factory.server.host).toBe("127.0.0.1");
   });
+  it("leaves the independent reviewer unset in the bundled default, so a Claude-only setup skips the step", () => {
+    expect(loadConfig("config").models.routes.independent_review).toBeUndefined();
+  });
+  it("loads models.yaml with no independent reviewer, a null one, or one with an endpoint and key variable name", () => {
+    const without = MODELS.replace(/  independent_review:.*\n/, "");
+    expect(loadConfig(dir({ "models.yaml": without })).models.routes.independent_review).toBeUndefined();
+    expect(loadConfig(dir({ "models.yaml": `${without}  independent_review: null\n` })).models.routes.independent_review).toBeNull();
+    const ep = loadConfig(dir({ "models.yaml": `${without}  independent_review: { provider: local, model: m, baseUrl: "https://api.example.test/v1", apiKeyEnv: REVIEW_KEY }\n` }));
+    expect(ep.models.routes.independent_review).toEqual({ provider: "local", model: "m", baseUrl: "https://api.example.test/v1", apiKeyEnv: "REVIEW_KEY" });
+  });
+  it("rejects an independent reviewer with an invalid URL", () => {
+    const bad = MODELS.replace(/  independent_review:.*\n/, "  independent_review: { provider: local, model: m, baseUrl: nonsense }\n");
+    expect(() => loadConfig(dir({ "models.yaml": bad }))).toThrow(ConfigError);
+  });
   it("applies defaults and expands ~", () => {
     const c = loadConfig(dir({ "models.yaml": MODELS }));
     expect(c.factory.dataDir.startsWith("~")).toBe(false);

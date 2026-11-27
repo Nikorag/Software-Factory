@@ -4,6 +4,35 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PRESETS, type RouteCfg } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 
+/**
+ * The independent reviewer: any OpenAI-compatible endpoint (base URL, model, optional NAME of the environment variable that holds the key),
+ * or nothing, which skips the step. A route that still points at Claude is shown with the usual picker.
+ */
+export function ReviewerPicker({ value, onChange, label }: { value: RouteCfg | null | undefined; onChange: (v: RouteCfg | null) => void; label: string }) {
+  if (!value) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm text-muted-foreground">Not set: the independent review is skipped.</span>
+        <Button type="button" size="sm" variant="outline" onClick={() => onChange({ provider: "local", model: "", baseUrl: "" })}>Set a reviewer</Button>
+      </div>
+    );
+  }
+  const clear = <Button type="button" size="sm" variant="outline" onClick={() => onChange(null)}>Clear (skip this step)</Button>;
+  if (value.provider === "anthropic") {
+    return <div className="flex flex-wrap items-center gap-2"><ModelPicker label={label} allowLocal={false} value={value} onChange={onChange} />
+      <Button type="button" size="sm" variant="outline" onClick={() => onChange({ provider: "local", model: "", baseUrl: "" })}>Use an endpoint</Button>{clear}</div>;
+  }
+  const set = (patch: Partial<RouteCfg>) => { const n = { ...value, ...patch }; if (!n.apiKeyEnv) delete n.apiKeyEnv; onChange(n); };
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Input aria-label={`${label} base URL`} className="h-8 w-64 font-mono text-xs" value={value.baseUrl ?? ""} onChange={(e) => set({ baseUrl: e.target.value })} placeholder="https://api.openai.com/v1" />
+      <Input aria-label={`${label} model`} className="h-8 w-44 font-mono text-xs" value={value.model} onChange={(e) => set({ model: e.target.value })} placeholder="model id" />
+      <Input aria-label={`${label} key variable`} className="h-8 w-44 font-mono text-xs" value={value.apiKeyEnv ?? ""} onChange={(e) => set({ apiKeyEnv: e.target.value })} placeholder="API key env var (optional)" />
+      {clear}
+    </div>
+  );
+}
+
 /** Provider + model. Claude Code takes an alias (default, haiku, sonnet, opus: tracks the latest) or a full model id to pin one. */
 export function ModelPicker({ value, onChange, allowLocal, label }: { value: RouteCfg; onChange: (v: RouteCfg) => void; allowLocal: boolean; label: string }) {
   return (

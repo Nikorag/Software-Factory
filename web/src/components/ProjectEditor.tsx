@@ -15,7 +15,7 @@ import { BUILTIN_ENTRIES, WORDS, withTracker } from "@/lib/trackers";
 import type { GhAccounts } from "@/lib/types";
 import type { BitbucketCredential, Project, TeamAudit, TrackerEntry } from "@/lib/types";
 import { DEFAULT_PROMPT_ROUTE, TASKS, type GlobalSettings, type Routes, type RouteCfg, type TaskId } from "@/lib/tasks";
-import { ModelPicker } from "./ModelPicker";
+import { ModelPicker, ReviewerPicker } from "./ModelPicker";
 import { startAction, TaskOutput } from "./TaskRunner";
 
 const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
@@ -225,12 +225,15 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         </div>
         <div className="grid gap-3">
           {TASKS.map((t) => {
+            const reviewer = t.id === "independent_review";
             const own = f.models[t.id], glob = globals?.routes[t.id] ?? (t.id === "prompt_generation" ? DEFAULT_PROMPT_ROUTE : undefined);
+            const overridden = reviewer ? own !== undefined : Boolean(own); // for the reviewer, null is an override too: this project skips the step
             return (
               <div key={t.id} className="grid gap-1.5"><div className="flex flex-wrap items-baseline gap-x-3"><Label>{t.label} model</Label>
-                {own ? <button type="button" className="text-xs underline" onClick={() => { const m = { ...f.models }; delete m[t.id]; set("models", m); }}>use global ({glob?.model ?? "…"})</button> : <span className="text-xs text-muted-foreground">global: {glob?.model ?? "…"}</span>}</div>
-                {own ? <ModelPicker label={`${t.label} override`} allowLocal={t.local} value={own} onChange={(v: RouteCfg) => set("models", { ...f.models, [t.id as TaskId]: v })} />
-                  : <div><Button type="button" size="sm" variant="outline" onClick={() => set("models", { ...f.models, [t.id]: glob ?? { provider: "anthropic", model: "default" } })}>Override for this project</Button></div>}
+                {overridden ? <button type="button" className="text-xs underline" onClick={() => { const m = { ...f.models }; delete m[t.id]; set("models", m); }}>use global ({glob?.model ?? (reviewer ? "not set" : "…")})</button> : <span className="text-xs text-muted-foreground">global: {glob?.model ?? (reviewer && globals ? "not set (skipped)" : "…")}</span>}</div>
+                {reviewer && overridden ? <ReviewerPicker label={`${t.label} override`} value={own as RouteCfg | null} onChange={(v) => set("models", { ...f.models, independent_review: v })} />
+                  : own ? <ModelPicker label={`${t.label} override`} allowLocal={t.local} value={own as RouteCfg} onChange={(v: RouteCfg) => set("models", { ...f.models, [t.id as TaskId]: v })} />
+                  : <div><Button type="button" size="sm" variant="outline" onClick={() => set("models", { ...f.models, [t.id]: glob ?? (reviewer ? null : { provider: "anthropic", model: "default" }) })}>Override for this project</Button></div>}
               </div>
             );
           })}

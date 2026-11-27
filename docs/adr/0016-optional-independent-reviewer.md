@@ -1,0 +1,6 @@
+# ADR 0016: The independent reviewer is optional (supersedes the default in ADR 0005)
+Supersedes the *default* part of [ADR 0005](0005-claude-haiku-for-independent-review.md); the rest of 0005 (classification on Haiku, the `local` provider behind the same router) stands.
+
+With only Claude in use, a Haiku "independent" review adds cost and time without real independence. `independent_review` is now **unset by default**, and an unset reviewer means the step is skipped: the stage passes with no findings, a `review.skipped` decision records why, and no model is called. The security review and the Claude review are separate and still run.
+
+To get a real second opinion, set `independent_review` to any OpenAI-compatible endpoint: `baseUrl`, `model`, and an optional `apiKeyEnv`, the *name* of an environment variable holding the key (sent as a bearer token; never stored in config or the database, never logged or returned by an API). It stays read-only and reuses `LocalModelClient`; `independentReviewFallback` still governs an unavailable endpoint. An explicit `provider: anthropic` route keeps working, so existing setups are unchanged. `doctor` still warns when the reviewer matches `specification`.

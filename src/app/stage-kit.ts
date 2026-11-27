@@ -113,7 +113,12 @@ export function createStageKit(d: StageKitDeps) {
    */
   async function independent<T extends z.ZodType>(
     ctx: { job: { id: string; projectId?: string } }, run: (task: TaskKind) => Promise<AgentOutcome<T>>,
-  ): Promise<{ ok: true; data: z.infer<T>; reviewer: string } | { ok: false; stop: StageResult }> {
+  ): Promise<{ ok: true; skipped?: false; data: z.infer<T>; reviewer: string } | { ok: true; skipped: true } | { ok: false; stop: StageResult }> {
+    // No independent reviewer configured (Claude-only setups): the step is skipped and no model is called.
+    if (!d.router.reviewer(ctx.job.projectId)) {
+      record(ctx.job.id, "review.skipped", "independent review skipped", "no independent reviewer is configured (Settings > Workflow > Models > Independent review)");
+      return { ok: true, skipped: true };
+    }
     let provider: "local" | "anthropic" = "anthropic";
     let r: AgentOutcome<T>;
     try {

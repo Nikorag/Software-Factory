@@ -7,16 +7,21 @@
 #   If you route to it, the model id must match what `pnpm factory doctor` reports.
 # specification and implementation must stay `anthropic` (they need file and shell tools).
 #
-# independent_review should be a DIFFERENT model from `specification` so the reviewer is not marking its own work;
-# `pnpm factory doctor` warns if they match.
+# independent_review is OPTIONAL and unset by default: with no independent reviewer the spec review and the independent code review
+# are skipped (a Claude-only setup does not need them; the Claude review and security review still run). To use one, set any
+# OpenAI-compatible endpoint, a different model from `specification` so the reviewer is not marking its own work:
+#   independent_review: { provider: local, model: gpt-4o-mini, baseUrl: https://api.openai.com/v1, apiKeyEnv: OPENAI_API_KEY }
+# apiKeyEnv is the NAME of an environment variable holding the key; the key itself is never stored here. Omit it for no auth header.
+# Older setups that route it to Claude (`{ provider: anthropic, model: haiku }`) keep working.
+# `pnpm factory doctor` warns if the reviewer matches `specification`.
 local:
   baseUrl: http://127.0.0.1:1234/v1
   requestTimeoutSeconds: 300
-independentReviewFallback: claude   # only applies if independent_review is routed to a local model that is unavailable
+independentReviewFallback: claude   # only applies if the independent_review endpoint is unavailable
 routes:
   classification:     { provider: anthropic, model: haiku }
   specification:      { provider: anthropic, model: default }
   implementation:     { provider: anthropic, model: default }
-  independent_review: { provider: anthropic, model: haiku }
+  # independent_review: unset = skipped (see above)
   final_review:       { provider: anthropic, model: default }
   prompt_generation:  { provider: anthropic, model: haiku }   # haiku_prompt mode: writes the implementer's prompt (must be anthropic)

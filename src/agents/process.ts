@@ -44,8 +44,9 @@ export function runProcess(o: RunOptions): Promise<RunResult> {
       settled = true;
       clearTimeout(timer); clearTimeout(killTimer);
       o.signal?.removeEventListener("abort", onAbort);
-      log?.end();
-      resolve({ exitCode: null, stdout, stderr, timedOut, cancelled, durationMs: Date.now() - started, ...r });
+      const result = { exitCode: null, stdout, stderr, timedOut, cancelled, durationMs: Date.now() - started, ...r };
+      // Resolve once the log is flushed, so a caller reading the log file straight away sees all of it.
+      if (log) { log.once("close", () => resolve(result)); log.end(); } else resolve(result);
     };
 
     let child: ReturnType<typeof spawn>;

@@ -42,8 +42,14 @@ describe("checkLocalRoutes / local checks", () => {
 });
 
 describe("reviewerIndependence", () => {
-  it("is ok when the reviewer is a different model from the author (shipped config: haiku vs default)", () => {
+  it("is ok, not a failure, when no reviewer is set (the shipped default): the step is skipped", () => {
     const [r] = reviewerIndependence(fixtureConfig());
+    expect(r).toMatchObject({ status: "ok", detail: expect.stringContaining("skipped") });
+  });
+  it("is ok when the reviewer is a different model from the author (haiku vs default)", () => {
+    const c = fixtureConfig();
+    c.models.routes.independent_review = { provider: "anthropic", model: "haiku" };
+    const [r] = reviewerIndependence(c);
     expect(r).toMatchObject({ status: "ok" });
     expect(r!.detail).toContain("haiku");
   });

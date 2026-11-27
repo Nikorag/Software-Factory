@@ -7,7 +7,11 @@ export class LocalModelError extends Error {
   }
 }
 
-export interface LocalModelOptions { baseUrl: string; fetch?: typeof fetch }
+export interface LocalModelOptions {
+  baseUrl: string; fetch?: typeof fetch;
+  /** NAME of the environment variable holding a bearer token for a hosted endpoint. Read per request; the value is never logged or stored. */
+  apiKeyEnv?: string; env?: NodeJS.ProcessEnv;
+}
 
 /** `<think>…</think>` blocks (Qwen-style reasoning) are not part of the answer. */
 export const stripReasoning = (s: string): string => s.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
@@ -51,11 +55,20 @@ export class LocalModelClient implements Agent {
 
   constructor(private readonly o: LocalModelOptions) { this.doFetch = o.fetch ?? fetch; }
 
+  /** Request headers; `undefined` when a key is configured but its variable is not set. */
+  private headers(): Record<string, string> | undefined {
+    const h: Record<string, string> = { "Content-Type": "application/json" };
+    if (!this.o.apiKeyEnv) return h;
+    const key = (this.o.env ?? process.env)[this.o.apiKeyEnv];
+    if (!key) return undefined;
+    return { ...h, Authorization: `Bearer ${key}` };
+  }
+
   status() { return { active: this.active, queued: this.waiting }; }
 
   async listModels(timeoutMs = 5000): Promise<string[]> {
     try {
-      const res = await this.doFetch(`${this.o.baseUrl}/models`, { signal: AbortSignal.timeout(timeoutMs) });
+      const res = await this.doFetch(`${this.o.baseUrl}/models`, { headers: this.headers(), signal: AbortSignal.timeout(timeoutMs) });
       if (!res.ok) throw new LocalModelError(`GET /models -> HTTP ${res.status}`, "http");
       return ((await res.json()) as { data?: { id: string }[] }).data?.map((m) => m.id) ?? [];
     } catch (e) {
@@ -87,7 +100,7 @@ export class LocalModelClient implements Agent {
     const body: Record<string, unknown> = { model: req.model, messages, stream: false, temperature: 0.1 };
     if (req.jsonSchema && useSchema) body.response_format = { type: "json_schema", json_schema: { name: "result", strict: true, schema: req.jsonSchema } };
     const res = await this.doFetch(`${this.o.baseUrl}/chat/completions`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
+      method: "POST", headers: this.headers(), body: JSON.stringify(body), signal,
     });
     const text = await res.text();
     return { status: res.status, ok: res.ok, text };
@@ -99,6 +112,7 @@ export class LocalModelClient implements Agent {
     if (!model || /^UNCONFIGURED/i.test(model)) {
       return this.fail("error", "no local model configured: set a real model id in config/models.yaml (see `factory doctor`)", 0);
     }
+    if (!this.headers()) return this.fail("error", `the API key environment variable ${this.o.apiKeyEnv} is not set`, 0);
     const signal = AbortSignal.any([AbortSignal.timeout(req.timeoutMs), ...(req.signal ? [req.signal] : [])]);
     const messages: { role: string; content: string }[] = [
       ...(req.systemPrompt ? [{ role: "system", content: req.systemPrompt }] : []),

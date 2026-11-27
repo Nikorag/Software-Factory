@@ -352,9 +352,9 @@ export function createImplementationHandlers(d: ImplDeps) {
       const prompt = codeReviewPrompt({ ticket: p.ticket, spec: requirementsFor(ctx.job.id, p.cwd, p.featureDir), stat: diff.stat, diff: diff.text, results: latestResults(ctx.job.id), history: await reviewHistory(ctx.job.id, p.cwd) });
       const r = await independent(ctx, (task) => agent(ctx, { task, role: "qa-reviewer", prompt, cwd: p.cwd, schema: CodeReview, timeoutMs: 15 * MIN }));
       if (!r.ok) return r.stop;
-      findings = [...r.data.findings];
-      reviewer = r.reviewer;
-      record(ctx.job.id, "code-review.independent", `${r.data.verdict}: ${r.data.findings.length} finding(s)`, r.reviewer);
+      findings = r.skipped ? [] : [...r.data.findings];
+      reviewer = r.skipped ? "skipped" : r.reviewer;
+      if (!r.skipped) record(ctx.job.id, "code-review.independent", `${r.data.verdict}: ${r.data.findings.length} finding(s)`, r.reviewer);
       if (isSecuritySensitive(diff.files, diff.text)) {
         const s = await agent(ctx, { task: "final_review", role: "security-reviewer", prompt: securityReviewPrompt(diff.text, diff.files), cwd: p.cwd, schema: SecurityReview, timeoutMs: 15 * MIN });
         if (!s.ok) return s.stop;

@@ -107,6 +107,7 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
     const prompt = reviewPrompt(p.ticket, readSpecBundle(p.cwd, p.featureDir));
     const r = await independent(ctx, (task) => agent(ctx, { task, role: "spec-reviewer", prompt, cwd: p.cwd, schema: Review, timeoutMs: 15 * MIN }));
     if (!r.ok) return r.stop;
+    if (r.skipped) return { kind: "ok", output: { findings: [], skipped: true } };
     const must = r.data.findings.filter((f) => blocking(f.severity));
     record(ctx.job.id, "review.result", `${r.data.verdict}: ${r.data.findings.length} finding(s), ${must.length} blocking`, r.reviewer);
     if (must.length > 0) return { kind: "remediate", reason: `${must.length} blocking finding(s) in the specification review`, output: { findings: r.data.findings, reviewer: r.reviewer } };
