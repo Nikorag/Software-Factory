@@ -3,6 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir } from "../config/load.js";
 import { advancedSettingsOf, updateAdvancedSettings, applyGlobal, applyProjects, globalSettingsOf, ProjectSettings, removeProject, seedHomeConfig, updateGlobalSettings, upsertProject } from "../config/store.js";
+import { refreshRepoFile } from "../config/repo-file.js";
 import { trackerIdOf, type LoadedConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { jobs } from "../db/schema.js";
@@ -133,7 +134,9 @@ export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, re
     try {
       const body = ProjectSettings.parse({ ...(req.body as object), id: req.params.id });
       apply(upsertProject(body, writableDir(d.config)));
-      return { ok: true };
+      const saved = d.config.projects.projects.find((p) => p.id === body.id);
+      const file = saved ? await refreshRepoFile(saved) : { status: "none" as const }; // the repo's committed file still wins over what was just saved
+      return { ok: true, ...(file.status === "error" ? { repoFileError: file.error } : {}) };
     } catch (e) { return fail(reply, e); }
   });
   app.delete<{ Params: { id: string } }>("/api/settings/projects/:id", { preHandler: requireToken }, async (req, reply) => {

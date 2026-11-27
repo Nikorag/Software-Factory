@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import type { ProjectConfig } from "../config/schema.js";
 import { runProjectCommand, type CommandKind, type CommandResult } from "../exec/commands.js";
+import { refreshRepoFile } from "../config/repo-file.js";
 import { git as realGit, type GitFn } from "./git.js";
 import { gitAuthEnv } from "./gh.js";
 import type { Hosts } from "../host/index.js";
@@ -28,6 +29,7 @@ export async function checkProject(
   }
   // Test what is on the remote *now* (a fix pushed since the last fetch must count), as a job's worktree would.
   await git(repo, ["fetch", "--quiet", "origin", project.defaultBranch], { env: d.hosts ? await d.hosts.gitAuth(project).catch(() => undefined) : await gitAuthEnv(project.github.account), timeoutMs: 120_000 }).catch(() => undefined);
+  await refreshRepoFile(project, git); // the default branch was just fetched: pick up its committed .software-factory.yml (commands used below)
   const base = await git(repo, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${project.defaultBranch}`]).then(() => `origin/${project.defaultBranch}`, () => project.defaultBranch);
   await git(repo, ["worktree", "add", "--detach", wt, base]); // detached: no branch is created in the user's repo
   const results: CommandResult[] = [];
