@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { carryRepoFiles, mergeRepoFile, parseRepoFile, readRepoFileText, refreshRepoFile } from "../src/config/repo-file.js";
 import { ConfigError } from "../src/config/load.js";
 import { ProjectConfig } from "../src/config/schema.js";
+import { checkProject } from "../src/repo/check.js";
 import { onboardingOf } from "../src/repo/readiness.js";
 import { GitError, type GitFn } from "../src/repo/git.js";
 import { makeRepo, sh } from "./helpers/git-fixture.js";
@@ -167,5 +168,17 @@ describe("readRepoFileText / refreshRepoFile (real git)", () => {
     carryRepoFiles([old], [fresh]);
     expect(fresh.commands).toMatchObject({ test: "pnpm test", lint: "saved lint" });
     expect(fresh.allowLoopback).toBe(true);
+  });
+});
+
+describe("checkProject with a file that moves the default branch", () => {
+  it("fetches the new branch and builds the worktree from origin/<it>", async () => {
+    const { repo, base } = makeRepo({ "README.md": "hi\n", ".software-factory.yml": "id: p\ndefaultBranch: trunk\n" });
+    sh(repo, "push", "-q", "origin", "HEAD:refs/heads/trunk");
+    sh(repo, "update-ref", "-d", "refs/remotes/origin/trunk"); // trunk exists only on origin until fetched
+    const p = project({ repository: repo });
+    const report = await checkProject(p, { dataDir: join(base, "data"), sandbox: { required: false }, timeoutMs: 10_000, skipInstall: true });
+    expect(report.baseRef).toBe("origin/trunk");
+    expect(p.defaultBranch).toBe("trunk");
   });
 });
