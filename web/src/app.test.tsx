@@ -383,6 +383,14 @@ describe("dashboard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() => expect(calls.some((c) => c.url === "/api/jobs/j1/gate/confirm" && c.method === "POST")).toBe(true));
   });
+  it("a job waiting at a gate can still be retried", async () => {
+    const j = job({ stage: "AWAITING_CONFIRMATION", status: "waiting", heldFromStage: "REQUIREMENTS_ANALYSIS", lastError: "Waiting for your confirmation: the generated prompt gate." });
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j), "/api/jobs/j1/retry": { ok: true } };
+    app("/jobs/j1");
+    await screen.findByRole("heading", { name: /Review before continuing/ });
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/jobs/j1/retry" && c.method === "POST")).toBe(true));
+  });
   it("offers no change requests before a PR exists", async () => {
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ stage: "IMPLEMENTATION" })) };
     app("/jobs/j1");

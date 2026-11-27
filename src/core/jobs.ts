@@ -141,6 +141,7 @@ export function answerJob(db: FactoryDb, id: string, text: string, actor: string
   if (answer.length > 8000) throw new JobError("answer too long (max 8000 characters)");
   const job = getJob(db, id);
   if (!job) throw new JobError(`no such job ${id}`);
+  if (job.stage === "AWAITING_CONFIRMATION" && (job.lastError ?? "").startsWith("Waiting for your confirmation:")) throw new JobError("this job is waiting at a gate: use Confirm or Ask for changes (/gate/confirm, /gate/return)");
   const heldAt = job.heldFromStage ?? job.stage;
   const resumeAt = job.heldFromStage === "SPECIFICATION_VALIDATION" ? "SPECIFICATION_REMEDIATION" as StageName : undefined;
   const questions = askedQuestions(job.lastError); // read before retryJob clears lastError

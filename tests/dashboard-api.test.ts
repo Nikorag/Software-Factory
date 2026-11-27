@@ -54,6 +54,14 @@ describe("gate routes", () => {
     expect(getJob(s.db, j.id)).toMatchObject({ stage: "REQUIREMENTS_ANALYSIS", status: "queued" });
     expect(s.db.select().from(decisions).where(eq(decisions.kind, "gate.returned")).all()).toMatchObject([{ rationale: "more detail" }]);
   });
+  it("answer is refused for a job at a gate (409) and leaves it waiting", async () => {
+    const s = setup(); const j = atGate(s);
+    const r = await body(s, `/api/jobs/${j.id}/answer`, { answer: "just go" });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toMatch(/gate/);
+    expect(getJob(s.db, j.id)!.stage).toBe("AWAITING_CONFIRMATION");
+    expect(s.db.select().from(decisions).where(eq(decisions.kind, "human.answer")).all()).toEqual([]);
+  });
   it("confirm continues at the next stage; a job not at a gate gets 409", async () => {
     const s = setup(); const j = atGate(s); const other = s.job("JAM-2");
     expect((await post(s.app, `/api/jobs/${other.id}/gate/confirm`)).statusCode).toBe(409);

@@ -23,6 +23,12 @@ describe("interruption notifications", () => {
     expect(out[0]!.body).toBe("Which port?");
     expect(newInterruptions("home", [blocked, failed], seen, true)).toEqual([]);
   });
+  it("notifies when a job waits at a human gate", () => {
+    const seen = new Set<string>();
+    newInterruptions("home", [], seen, false);
+    const gated: J = { id: "g", key: "JAM-5", stage: "AWAITING_CONFIRMATION", status: "waiting", lastError: "Waiting for your confirmation: the generated prompt gate." };
+    expect(newInterruptions("home", [gated], seen, true).map((n) => n.title)).toEqual(["JAM-5 needs your confirmation"]);
+  });
   it("notifies again when a job is retried and stops again", () => {
     const seen = new Set<string>();
     newInterruptions("home", [], seen, false);

@@ -170,7 +170,8 @@ export function JobDetail() {
           <Approvals jobId={j.id} requests={asks} locked={locked} onDecided={reload} />
         </NeedsYou>
       ) : gated ? (
-        <NeedsYou tone="wait" label="Your move" title={`Review before continuing: ${stageLabel(j.heldFromStage ?? j.stage)}`}>
+        <NeedsYou tone="wait" label="Your move" title={`Review before continuing: ${stageLabel(j.heldFromStage ?? j.stage)}`}
+          actions={<Button variant="outline" disabled={locked} onClick={() => void run("retry", `/api/jobs/${j.id}/retry`)}>{pending === "retry" ? <Loader2 className="animate-spin" /> : <RotateCcw />}Retry</Button>}>
           <p className="max-w-2xl text-sm text-muted-foreground">This project asks you to check the generated prompt before the implementation starts. Confirm to continue, or ask for changes: the step runs again with your note. No agent runs while this waits.</p>
           <GatePanel jobId={j.id} plan={d.plan ?? null} locked={locked} onDecided={reload} />
         </NeedsYou>
