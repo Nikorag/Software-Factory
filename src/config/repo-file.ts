@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { parse } from "yaml";
 import { z } from "zod";
 import { git as realGit, type GitFn } from "../repo/git.js";
@@ -22,7 +23,8 @@ const MAX_BYTES = 64 * 1024;
 export const RepoFile = z.strictObject({
   id: ProjectId,
   name: ProjectConfig.shape.name.optional(),
-  defaultBranch: z.string().min(1).max(100).optional(),
+  // Repo content is lower trust than projects.yaml and this value reaches git arguments: no leading `-`, no `..`, no odd characters.
+  defaultBranch: z.string().min(1).max(100).regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/, "not a valid branch name").refine((b) => !b.includes("..") && !b.endsWith("/") && !b.endsWith(".lock"), "not a valid branch name").optional(),
   github: ProjectGithub.strict().optional(),
   commands: ProjectCommands.strict().optional(),
   allowLoopback: z.boolean().optional(),
@@ -59,15 +61,21 @@ export function mergeRepoFile(base: Settable, file: RepoFile): Settable {
   };
 }
 
-/** The committed text of the file on the default branch, or null when there is none (or no such branch yet). Never reads the working copy. */
+/**
+ * The committed text of the file on the default branch, or null when it is genuinely absent (no checkout, no such branch, no file).
+ * Never reads the working copy. A git failure (timeout, lock...) THROWS, so the caller keeps the previous settings instead of treating it as "absent".
+ */
 export async function readRepoFileText(project: Pick<ProjectConfig, "repository" | "defaultBranch">, git: GitFn = realGit): Promise<string | null> {
   const repo = project.repository, b = project.defaultBranch;
+  if (!existsSync(repo)) return null;
   let ref: string | null = null;
   for (const c of [`refs/remotes/origin/${b}`, `refs/heads/${b}`]) {
-    if (await git(repo, ["rev-parse", "--verify", "--quiet", c]).then(() => true, () => false)) { ref = c; break; }
+    // `rev-parse --verify --quiet` exits 1 for a ref that does not exist; anything else is a real failure
+    const found = await git(repo, ["rev-parse", "--verify", "--quiet", c]).then(() => true, (e: { code?: number | string }) => { if (e.code === 1) return false; throw e; });
+    if (found) { ref = c; break; }
   }
   if (!ref) return null;
-  const listed = await git(repo, ["ls-tree", "--name-only", ref, "--", REPO_FILE]).catch(() => "");
+  const listed = await git(repo, ["ls-tree", "--name-only", ref, "--", REPO_FILE]);
   if (!listed) return null;
   const text = await git(repo, ["cat-file", "blob", `${ref}:${REPO_FILE}`]);
   if (Buffer.byteLength(text) > MAX_BYTES) throw new ConfigError(`${REPO_FILE}: larger than ${MAX_BYTES / 1024} KB`);
@@ -94,8 +102,10 @@ export async function refreshRepoFile(project: ProjectConfig, git: GitFn = realG
   const s = states.get(project) ?? {};
   states.set(project, s);
   try {
-    const text = await readRepoFileText(project, git);
-    if (text === null) { delete s.overlay; delete s.error; applyState(project, s); return { status: "none" }; }
+    // Read from the projects.yaml branch, never the one the file itself set: otherwise the source would change between refreshes.
+    const text = await readRepoFileText({ repository: project.repository, defaultBranch: s.base?.defaultBranch ?? project.defaultBranch }, git);
+    // No file: settings stay as they are (a file that was applied before and later disappears is kept until restart or an explicit change).
+    if (text === null) { delete s.error; applyState(project, s); return { status: "none" }; }
     s.overlay = parseRepoFile(text, project.id);
     delete s.error;
     applyState(project, s);

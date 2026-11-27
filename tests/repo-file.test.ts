@@ -5,6 +5,7 @@ import { carryRepoFiles, mergeRepoFile, parseRepoFile, readRepoFileText, refresh
 import { ConfigError } from "../src/config/load.js";
 import { ProjectConfig } from "../src/config/schema.js";
 import { onboardingOf } from "../src/repo/readiness.js";
+import { GitError, type GitFn } from "../src/repo/git.js";
 import { makeRepo, sh } from "./helpers/git-fixture.js";
 
 const FILE = `id: p
@@ -119,6 +120,43 @@ describe("readRepoFileText / refreshRepoFile (real git)", () => {
     sh(repo, "commit", "-qam", "edit"); sh(repo, "push", "-q");
     await refreshRepoFile(p);
     expect(p.commands).toEqual({ lint: "repo lint" });
+  });
+
+  it("a defaultBranch set by the file does not change where the file is read from", async () => {
+    const { repo } = makeRepo({ "README.md": "hi\n", ".software-factory.yml": "id: p\ndefaultBranch: trunk\ncommands: { test: pnpm test }\n" });
+    const p = project({ repository: repo });
+    for (let i = 0; i < 3; i++) {
+      expect(await refreshRepoFile(p)).toEqual({ status: "applied" });
+      expect(p.defaultBranch).toBe("trunk");
+      expect(p.commands.test).toBe("pnpm test");
+    }
+  });
+
+  it("keeps the applied settings when the file later disappears", async () => {
+    const { repo } = makeRepo({ "README.md": "hi\n", ".software-factory.yml": FILE });
+    const p = project({ repository: repo });
+    await refreshRepoFile(p);
+    sh(repo, "rm", "-q", ".software-factory.yml"); sh(repo, "commit", "-qm", "rm"); sh(repo, "push", "-q");
+    expect(await refreshRepoFile(p)).toEqual({ status: "none" });
+    expect(p.commands.test).toBe("pnpm test");
+    expect(p.repoFileError).toBeUndefined();
+  });
+
+  it("a git failure keeps the previous settings and reports an error, instead of reading as 'no file'", async () => {
+    const { repo } = makeRepo({ "README.md": "hi\n", ".software-factory.yml": FILE });
+    const p = project({ repository: repo });
+    await refreshRepoFile(p);
+    const broken: GitFn = async () => { throw new GitError("git failed: index.lock", [], "", 128); };
+    const r = await refreshRepoFile(p, broken);
+    expect(r.status).toBe("error");
+    expect(p.commands.test).toBe("pnpm test");
+    expect(p.allowLoopback).toBe(true);
+    expect(p.repoFileError).toMatch(/could not be read/);
+  });
+
+  it("rejects a defaultBranch that could be read as a git option", () => {
+    for (const b of ["-D", "--upload-pack=x", "a..b", "x.lock", "a b"]) expect(() => parseRepoFile(`id: p\ndefaultBranch: "${b}"\n`, "p")).toThrow(/defaultBranch/);
+    expect(parseRepoFile("id: p\ndefaultBranch: release/1.x\n", "p").defaultBranch).toBe("release/1.x");
   });
 
   it("keeps winning after projects.yaml is re-read (settings save)", async () => {
