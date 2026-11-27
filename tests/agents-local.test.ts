@@ -188,6 +188,7 @@ describe("ModelRouter + config", () => {
     expect(bad({ provider: "local", model: "m", baseUrl: "https://x.test/v1", apiKeyEnv: "sk-live key" })).toBe(false);
     expect(bad({ provider: "anthropic", model: "haiku", baseUrl: "https://x.test/v1" })).toBe(false);
     expect(bad({ provider: "local", model: "m", baseUrl: "https://x.test/v1", apiKeyEnv: "MY_KEY" })).toBe(true);
+    expect(bad({ provider: "local", model: "m", apiKeyEnv: "MY_KEY" })).toBe(false); // a key needs its own endpoint: it would be silently dropped
     // a key is never sent over plain http, except to loopback
     expect(bad({ provider: "local", model: "m", baseUrl: "http://api.example.test/v1", apiKeyEnv: "MY_KEY" })).toBe(false);
     expect(bad({ provider: "local", model: "m", baseUrl: "http://127.0.0.1:1234/v1", apiKeyEnv: "MY_KEY" })).toBe(true);
