@@ -6,7 +6,7 @@ const { newInterruptions, unexpectedStops } = require("./notify-model.cjs");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, execFile } = require("node:child_process");
 
 const ROOT = process.env.FACTORY_ROOT || path.join(os.homedir(), ".software-factory");
 const ICON = path.join(__dirname, "icon.png");
@@ -154,6 +154,35 @@ async function pollInterruptions() {
   clearTimeout(interruptionsTimer); interruptionsTimer = setTimeout(() => void pollInterruptions(), plan().interruptionsMs);
 }
 
+// ---- delivering a system notification ----
+// macOS refuses notifications from an app it has not authorised ("Notifications are not allowed for this application"), which is
+// what an ad-hoc signed app like this one gets unless the person switches it on in System Settings → Notifications. Electron reports
+// that as a "failed" event and shows nothing, so every notification was silently lost. When that happens, the same notification is
+// shown through macOS's own AppleScript notifier (always allowed; clicking it cannot open the job), and the app menu offers to open
+// the notification settings. Notifications are also kept referenced until they close: a collected one loses its click handler.
+const liveNotes = new Set();
+let notificationsBlocked = false;
+const NOTIFICATION_SETTINGS = "x-apple.systempreferences:com.apple.Notifications-Settings.extension";
+function osascriptNotify(title, body) {
+  // The text goes in as arguments, never into the script source, so a ticket title cannot break out of it.
+  execFile("/usr/bin/osascript", ["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", title, body], () => { /* best effort */ });
+}
+function notify(title, body, onClick) {
+  if (process.platform === "darwin" && notificationsBlocked) return osascriptNotify(title, body);
+  if (!Notification.isSupported()) return;
+  const note = new Notification({ title, body, silent: false });
+  liveNotes.add(note);
+  note.on("click", () => { liveNotes.delete(note); onClick?.(); });
+  note.on("close", () => liveNotes.delete(note));
+  note.on("failed", () => {
+    liveNotes.delete(note);
+    if (process.platform !== "darwin") return;
+    if (!notificationsBlocked) { notificationsBlocked = true; void buildMenu(); }
+    osascriptNotify(title, body);
+  });
+  note.show();
+}
+
 // ---- system notifications for interruptions: a job that stops and needs you (a question, a fix-cycle limit, a failure) ----
 const seenInterruptions = new Set(), seededProfiles = new Set();
 async function checkInterruptions() {
@@ -167,11 +196,7 @@ async function checkInterruptions() {
     } catch { continue; }
     const fresh = newInterruptions(p.name, jobs, seenInterruptions, seededProfiles.has(p.name));
     seededProfiles.add(p.name);
-    for (const n of fresh) {
-      const note = new Notification({ title: n.title, body: n.body, silent: false });
-      note.on("click", () => { openWindow(find(n.profile)); if (win) win.loadURL(`${urlOf(find(n.profile) ?? current)}#/jobs/${encodeURIComponent(n.jobId)}`); });
-      note.show();
-    }
+    for (const n of fresh) notify(n.title, n.body, () => { openWindow(find(n.profile)); if (win) win.loadURL(`${urlOf(find(n.profile) ?? current)}#/jobs/${encodeURIComponent(n.jobId)}`); });
   }
 }
 
@@ -180,11 +205,7 @@ const lastUp = new Map();
 function notifyStops(profs, status) {
   if (SMOKE || quitting || !Notification.isSupported()) return;
   const fresh = unexpectedStops(status.map((s) => ({ name: s.name, up: s.up, stoppedOnPurpose: stoppedOnPurpose(profs.find((p) => p.name === s.name)) })), lastUp);
-  for (const n of fresh) {
-    const note = new Notification({ title: n.title, body: n.body, silent: false });
-    note.on("click", () => openWindow(find(n.profile)));
-    note.show();
-  }
+  for (const n of fresh) notify(n.title, n.body, () => openWindow(find(n.profile)));
 }
 
 function createTray() {
@@ -204,6 +225,7 @@ async function buildMenu(m) {
     { label: app.name, submenu: [
       { role: "about" },
       { label: "Check for Updates…", click: () => { if (win) win.loadURL(`${urlOf(current)}#/settings?tab=system`); } },
+      ...(process.platform === "darwin" ? [{ label: notificationsBlocked ? "Notifications Are Blocked: Allow in Settings…" : "Notification Settings…", click: () => void shell.openExternal(NOTIFICATION_SETTINGS) }] : []),
       { type: "separator" },
       { label: "Stop the Factory and Quit…", click: () => void stopAll() },
       { label: "Quit (the factory keeps running)", accelerator: "CmdOrCtrl+Q", click: () => { quitting = true; app.quit(); } },

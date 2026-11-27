@@ -1,5 +1,5 @@
 import { sendNotification } from "web-push";
-import type { Config } from "./config.js";
+import { vapidConfigProblem, type Config } from "./config.js";
 import type { Db, Queryable } from "./db.js";
 
 // Web Push (VAPID). Three parts: choosing who to tell about an event (enqueueEventNotifications, run inside the
@@ -31,6 +31,7 @@ export function allowedPushEndpoint(raw: string): boolean {
 
 export function createWebPushSender(cfg: Config): PushSender | null {
   if (!cfg.VAPID_PUBLIC_KEY || !cfg.VAPID_PRIVATE_KEY || !cfg.VAPID_SUBJECT) return null;
+  if (vapidConfigProblem(cfg)) return null; // unusable keys: push off, the reason is logged at start-up and shown in the UI
   const vapidDetails = { subject: cfg.VAPID_SUBJECT, publicKey: cfg.VAPID_PUBLIC_KEY, privateKey: cfg.VAPID_PRIVATE_KEY };
   return {
     async send(sub, payload) {

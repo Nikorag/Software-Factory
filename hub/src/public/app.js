@@ -161,7 +161,7 @@ async function notificationsCard() {
   const note = (t) => h("p", { class: "muted small" }, t);
   if (!pushSupported()) { say(note(iosNeedsInstall() ? "On iPhone and iPad, add this site to your Home Screen (Share, then Add to Home Screen) and open it from there to turn on notifications." : "This browser doesn't support push notifications.")); return card; }
   const cfg = await api("GET", "/v1/push/config").catch(() => ({ enabled: false }));
-  if (!cfg.enabled) { say(note("Push notifications aren't set up on this hub yet (the server needs its VAPID keys).")); return card; }
+  if (!cfg.enabled) { say(note(cfg.problem ? `Push notifications are off: this hub's VAPID keys can't be used (${cfg.problem}). Fix them in the server's environment and restart it.` : "Push notifications aren't set up on this hub yet (the server needs its VAPID keys).")); return card; }
   const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(() => r(null), 3000))]);
   if (!reg) { say(note("Still starting up. Reload in a moment.")); return card; }
   const sub = await reg.pushManager.getSubscription().catch(() => null);

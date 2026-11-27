@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { ingestEvents } from "../src/ingest.js";
 import { allowedPushEndpoint, deliverPending, notificationFor, type PushResult, type PushSender, type PushSubscriptionRow } from "../src/push.js";
 import { SoftAuthenticator } from "./authenticator.js";
-import { FakeBus, freshDb, seed, testHub } from "./helpers.js";
+import { FakeBus, freshDb, seed, testHub, TEST_VAPID } from "./helpers.js";
 
 const FCM = "https://fcm.googleapis.com/fcm/send/abc";
 const mozilla = "https://updates.push.services.mozilla.com/wpush/v2/xyz";
@@ -135,7 +135,7 @@ describe("HTTP API", () => {
   const RP = "factory.example.test", ORIGIN = "https://factory.example.test";
   const json = { "content-type": "application/json" };
   async function signedIn(push: PushSender | null) {
-    const h = testHub(db, { VAPID_PUBLIC_KEY: "P".repeat(87), VAPID_PRIVATE_KEY: "K".repeat(43), VAPID_SUBJECT: "mailto:a@example.test" }, push);
+    const h = testHub(db, { VAPID_PUBLIC_KEY: TEST_VAPID.publicKey, VAPID_PRIVATE_KEY: TEST_VAPID.privateKey, VAPID_SUBJECT: "mailto:a@example.test" }, push);
     const a = new SoftAuthenticator(RP, ORIGIN);
     const o = (await h.app.inject({ method: "POST", url: "/auth/setup/options", headers: json, payload: { setupToken: "setup-token-for-tests-1234567", email: "me@example.test", displayName: "Me" } })).json();
     const v = await h.app.inject({ method: "POST", url: "/auth/setup/verify", headers: json, payload: { challengeId: o.challengeId, response: a.register(o.options) } });
@@ -154,7 +154,7 @@ describe("HTTP API", () => {
 
   it("hands the browser the public key when it is configured", async () => {
     const on = await signedIn(new FakePush());
-    expect((await on.call("GET", "/v1/push/config")).json()).toEqual({ enabled: true, publicKey: "P".repeat(87) });
+    expect((await on.call("GET", "/v1/push/config")).json()).toEqual({ enabled: true, publicKey: TEST_VAPID.publicKey });
   });
 
   it("stores a subscription, refuses unknown push hosts, and a test notification is delivered through the normal path", async () => {

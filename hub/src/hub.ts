@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Logger } from "pino";
 import { CommandService } from "./commands.js";
-import type { Config } from "./config.js";
+import { vapidConfigProblem, type Config } from "./config.js";
 import type { Db } from "./db.js";
 import type { HubState } from "./health.js";
 import type { Bus, DispatchQueue, RateLimiter, Tunnel } from "./infra.js";
@@ -16,6 +16,8 @@ export function createHub(cfg: Config, infra: Infra, log: Logger) {
   const state: HubState = { shuttingDown: false, initialised: false };
   const commands = new CommandService(cfg, infra.db, infra.queue, infra.bus, log);
   const push = infra.push !== undefined ? infra.push : createWebPushSender(cfg);
+  const vapid = vapidConfigProblem(cfg);
+  if (vapid) log.error({ problem: vapid }, "push notifications are off: the VAPID keys can't be used (the hub runs on without them)");
   const app: FastifyInstance = buildServer({ cfg, ...infra, log, commands, state, push });
   const timers: NodeJS.Timeout[] = [];
   let stopped = false;

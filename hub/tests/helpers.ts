@@ -6,11 +6,13 @@ import type { Bus, DispatchQueue, RateLimiter, Tunnel, TunnelRequest, TunnelResp
 import { createHub } from "../src/hub.js";
 import { migrate } from "../src/migrate.js";
 
+/** A real P-256 pair, for tests only (the hub checks the keys at start-up). */
+export const TEST_VAPID = { publicKey: "BL1Hcq4oXKTe3BKRhlAwthi5aoFDlcXnEtHBNbZeqPS5GynvFPAth2fS5f-2wDEHfSXFwC8IH25FqUuG1uq1xYs", privateKey: "VT6G_8--hGSUpl5vS9twcZDNcHW_rhs70_xcBJ3D9o0" };
 export const TEST_ENV = {
   NODE_ENV: "test", PUBLIC_URL: "https://factory.example.test", DATABASE_URL: "postgres://unused", REDIS_URL: "redis://unused",
   SETUP_TOKEN: "setup-token-for-tests-1234567",
   SESSION_SECRET: "s".repeat(40), FACTORY_TOKEN_PEPPER: "p".repeat(40), WEBAUTHN_RP_ID: "factory.example.test",
-  WEBAUTHN_ORIGIN: "https://factory.example.test", VAPID_PUBLIC_KEY: "pub", VAPID_PRIVATE_KEY: "priv", VAPID_SUBJECT: "mailto:ops@example.test",
+  WEBAUTHN_ORIGIN: "https://factory.example.test", VAPID_PUBLIC_KEY: TEST_VAPID.publicKey, VAPID_PRIVATE_KEY: TEST_VAPID.privateKey, VAPID_SUBJECT: "mailto:ops@example.test",
   LOG_LEVEL: "silent", SHUTDOWN_DRAIN_MS: "0", COMMAND_LEASE_SECONDS: "60",
 };
 export const testConfig = (over: Record<string, string> = {}): Config => loadConfig({ ...TEST_ENV, ...over });

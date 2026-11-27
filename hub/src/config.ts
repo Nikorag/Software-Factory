@@ -1,3 +1,4 @@
+import { createECDH } from "node:crypto";
 import { z } from "zod";
 
 // All configuration comes from the environment (ConfigMap + Secret in Kubernetes).
@@ -59,6 +60,33 @@ const schema = z.object({
 }).refine((c) => [c.VAPID_PUBLIC_KEY, c.VAPID_PRIVATE_KEY, c.VAPID_SUBJECT].filter(Boolean).length % 3 === 0, {
   path: ["VAPID_PUBLIC_KEY"], message: "set VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY and VAPID_SUBJECT together, or none of them",
 });
+
+/** Why the configured VAPID keys cannot be used (push then stays off; the hub runs on), or null when they are fine or not set. */
+export const vapidConfigProblem = (c: Pick<Config, "VAPID_PUBLIC_KEY" | "VAPID_PRIVATE_KEY">): string | null =>
+  c.VAPID_PUBLIC_KEY && c.VAPID_PRIVATE_KEY ? vapidProblem(c.VAPID_PUBLIC_KEY, c.VAPID_PRIVATE_KEY) : null;
+
+const b64url = (s: string): Buffer | null => (/^[A-Za-z0-9_-]+={0,2}$/.test(s) ? Buffer.from(s, "base64url") : null);
+
+/**
+ * Why a VAPID key pair is unusable, or null. Browsers reject a bad public key only when someone turns notifications on, with
+ * "Invalid raw ECDSA P-256 public key", so the hub checks it itself and says why (push stays off; nothing else is affected): base64url, a 65-byte uncompressed P-256 point for the public
+ * key, 32 bytes for the private key, and the two belonging together. Never echoes the values.
+ */
+export function vapidProblem(publicKey: string, privateKey: string): string | null {
+  const pub = b64url(publicKey.trim()), priv = b64url(privateKey.trim());
+  if (publicKey !== publicKey.trim() || privateKey !== privateKey.trim()) return "a VAPID key has spaces or a line break around it (or quotes inside the value): remove them";
+  if (!pub) return "VAPID_PUBLIC_KEY is not base64url (quotes, or standard base64 with + and /?)";
+  if (!priv) return "VAPID_PRIVATE_KEY is not base64url (quotes, or standard base64 with + and /?)";
+  if (pub.length === 32 && priv.length === 65) return "VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY look swapped (the public key is 65 bytes, the private key 32)";
+  if (pub.length !== 65 || pub[0] !== 4) return `VAPID_PUBLIC_KEY must be an uncompressed P-256 public key (65 bytes starting 0x04), but it is ${pub.length} bytes: generate a pair with \`node dist/cli.js vapid-generate\``;
+  if (priv.length !== 32) return `VAPID_PRIVATE_KEY must be a 32-byte P-256 private key, but it is ${priv.length} bytes`;
+  try {
+    const ecdh = createECDH("prime256v1");
+    ecdh.setPrivateKey(priv);
+    if (!ecdh.getPublicKey().equals(pub)) return "VAPID_PUBLIC_KEY does not belong to VAPID_PRIVATE_KEY: set both from the same `vapid-generate` run";
+  } catch { return "VAPID_PRIVATE_KEY is not a valid P-256 private key"; }
+  return null;
+}
 
 export type Config = z.infer<typeof schema>;
 

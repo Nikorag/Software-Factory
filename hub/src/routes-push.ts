@@ -1,3 +1,4 @@
+import { vapidConfigProblem } from "./config.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { allowedPushEndpoint, NOTIFICATION_LABELS, NOTIFICATION_TYPES, type NotificationPayload } from "./push.js";
@@ -16,7 +17,8 @@ export function registerPushRoutes(app: FastifyInstance, d: Deps, requireUser: (
   const off = (reply: FastifyReply) => reply.code(503).send({ error: "push_not_configured" });
 
   // The browser needs the public key to subscribe. `enabled: false` (no VAPID keys set) lets the UI say so instead of failing.
-  app.get("/v1/push/config", { preHandler: requireUser }, async () => ({ enabled: !!d.push, publicKey: d.push ? cfg.VAPID_PUBLIC_KEY : null }));
+  // `problem`: keys are set but unusable (wrong format, swapped, not a pair), so the UI can say what to fix. Never the keys themselves.
+  app.get("/v1/push/config", { preHandler: requireUser }, async () => { const problem = d.push ? null : vapidConfigProblem(cfg); return { enabled: !!d.push, publicKey: d.push ? cfg.VAPID_PUBLIC_KEY : null, ...(problem ? { problem } : {}) }; });
 
   app.post("/v1/push/subscribe", { preHandler: requireUser }, async (req, reply) => {
     if (!d.push) return off(reply);
