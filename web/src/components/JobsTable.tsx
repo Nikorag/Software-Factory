@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, type DeleteOptions, type SendResult } from "@/lib/api";
 import { ago, stageLabel, stageText } from "@/lib/format";
+import { effectiveStatus } from "@/lib/projects";
 import type { Job } from "@/lib/types";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { ProgressStrip } from "./ProgressStrip";
@@ -82,7 +83,7 @@ export function JobsTable({ jobs, actions, disabled }: { jobs: Job[]; actions?: 
             <TableCell>{j.project}</TableCell>
             <TableCell><ProgressStrip job={j} /></TableCell>
             <TableCell>{stageLabel(j.stage)}{j.heldFromStage ? <small className="text-muted-foreground"> ← {stageLabel(j.heldFromStage)}</small> : null}</TableCell>
-            <TableCell><StatusBadge status={j.status} /></TableCell>
+            <TableCell><StatusBadge status={effectiveStatus(j)} /></TableCell>
             <TableCell className="text-muted-foreground">{ago(j.updatedAt)}</TableCell>
             <TableCell className={j.lastError ? "text-destructive" : "text-muted-foreground"}>{stageText((j.lastError || (j.prUrl ? "PR raised" : "")).split("\n")[0]!.slice(0, 90))}</TableCell>
             {actions ? (
@@ -115,7 +116,7 @@ function JobCards({ jobs, actions, disabled }: { jobs: Job[]; actions?: JobActio
             <Link to={`/jobs/${j.id}`} className="grid gap-1.5 p-3 active:bg-accent/50">
               <span className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-semibold">{j.key}{j.dryRun ? <span className="font-normal text-muted-foreground"> (dry)</span> : null}{j.archivedAt ? <span className="font-normal text-muted-foreground"> (archived)</span> : null}</span>
-                <StatusBadge status={j.status} />
+                <StatusBadge status={effectiveStatus(j)} />
               </span>
               {j.title ? <span className="line-clamp-2 text-sm leading-snug">{j.title}</span> : null}
               <span className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
