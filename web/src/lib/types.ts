@@ -23,7 +23,7 @@ export interface Overview {
   claudeUsage?: ClaudeUsage;
 }
 export interface LimitWindow { utilization: number; resetsAt: number | null; status: string | null }
-export interface ClaudeUsage { limits: { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null; status: string | null; capturedAt: number } | null; estimatedListCostUsd: { last24h: number; last7d: number } }
+export interface ClaudeUsage { limits: { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null; status: string | null; capturedAt: number } | null; /** The plan window blocking new jobs, when exhausted. */ exhausted?: { window: "fiveHour" | "sevenDay"; resetsAt: number } | null; estimatedListCostUsd: { last24h: number; last7d: number } }
 export interface Execution { id: number; stage: string; attempt: number; outcome: string; error: string | null; output: string | null; startedAt: number | null; finishedAt: number | null }
 export interface Decision { id: number; kind: string; decision: string; rationale: string | null; actor: string; at: number | null }
 export interface Invocation { id: number; stageExecutionId: number | null; agent: string; model: string | null; exitCode: number | null; durationMs: number | null; /** the run is over (exit code, signal, local-model failure or service restart): never "live" */ finished: boolean; usage: { denials?: number } | null; hasLog: boolean; at: number | null }

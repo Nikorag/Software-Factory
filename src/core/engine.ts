@@ -4,6 +4,7 @@ import type { Logger } from "pino";
 import type { StageName, LoadedConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { decisions, jobs, stageExecutions } from "../db/schema.js";
+import { exhaustedLimit, type ClaudeLimits } from "../agents/usage.js";
 import { getControl } from "./control.js";
 import { effectiveStageTimeoutSeconds } from "../config/stage-budgets.js";
 import { fixCycleHistory, inCiPhase, lifetimeNote, type FixPhase } from "./fix-cycles.js";
@@ -47,6 +48,8 @@ export interface EngineOptions {
   backoffBaseMs?: number;
   /** After an abort (cancel, stop, timeout...), how long to wait for the stage's handler (and its agent process) to actually stop before the job is released. */
   abortSettleMs?: number;
+  /** Latest Claude plan-limit reading, injected so the engine does no file I/O. While a window is exhausted no new job starts. Default: none. */
+  claudeLimits?: () => ClaudeLimits | null;
 }
 
 type AbortReason = "timeout" | "cancel" | "estop" | "lease-lost" | "shutdown";
@@ -64,7 +67,7 @@ export class Engine {
 
   constructor(opts: EngineOptions) {
     this.owner = opts.owner ?? `factory-${process.pid}-${randomUUID().slice(0, 8)}`;
-    this.o = { now: () => new Date(), leaseMs: 60_000, heartbeatMs: 15_000, backoffBaseMs: 5_000, abortSettleMs: 15_000, ...opts };
+    this.o = { now: () => new Date(), leaseMs: 60_000, heartbeatMs: 15_000, backoffBaseMs: 5_000, abortSettleMs: 15_000, claudeLimits: () => null, ...opts };
   }
 
   /** Ids of jobs this engine is executing right now. */
@@ -112,6 +115,8 @@ export class Engine {
     recoverExpired(db, now, [...this.running, ...this.unsettled.keys()]);
     const ctl = getControl(db);
     if (ctl.paused || ctl.emergencyStop) return 0;
+    // Like pause: claim nothing while the Claude plan is out (queued jobs stay queued, running ones are untouched). Clears itself at the reset time.
+    if (exhaustedLimit(this.o.claudeLimits(), now.getTime())) return 0;
     this.resumePaused();
     let started = 0;
     while (this.inflight.size < this.o.config.factory.maxConcurrentJobs) {

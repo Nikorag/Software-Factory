@@ -111,6 +111,16 @@ describe("dashboard API security", () => {
 });
 
 describe("dashboard API data (real persisted state, nothing mocked)", () => {
+  it("overview claudeUsage says which window blocks new jobs, and nothing when there is no reading or the reset has passed", async () => {
+    const s = setup();
+    expect((await get(s.app, "/api/overview")).json().claudeUsage.exhausted).toBeNull();
+    const reset = Date.now() + 3_600_000;
+    const file = join(s.dataDir, "claude-usage.json");
+    writeFileSync(file, JSON.stringify({ fiveHour: { utilization: 1, resetsAt: reset, status: "rejected" }, sevenDay: null, status: "rejected", capturedAt: Date.now() }));
+    expect((await get(s.app, "/api/overview")).json().claudeUsage.exhausted).toEqual({ window: "fiveHour", resetsAt: reset });
+    writeFileSync(file, JSON.stringify({ fiveHour: { utilization: 1, resetsAt: Date.now() - 1000, status: "rejected" }, sevenDay: null, status: null, capturedAt: 0 }));
+    expect((await get(s.app, "/api/overview")).json().claudeUsage.exhausted).toBeNull();
+  });
   it("overview reports control state, counts, queues, system and health", async () => {
     const s = setup(); s.job("JAM-1"); s.job("JAM-2");
     s.db.update(jobs).set({ status: "done", stage: "COMPLETED" }).where(eq(jobs.externalKey, "JAM-2")).run();

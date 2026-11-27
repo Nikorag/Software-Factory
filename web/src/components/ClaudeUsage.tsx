@@ -1,3 +1,5 @@
+import { Gauge } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { TONE } from "@/lib/projects";
 import type { ClaudeUsage, LimitWindow } from "@/lib/types";
 
@@ -12,6 +14,17 @@ export function resetsIn(at: number | null, now = Date.now()): string {
   return `in ${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`;
 }
 const ago = (t: number) => { const m = Math.round((Date.now() - t) / 60_000); return m < 1 ? "just now" : m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`; };
+
+/** Shown on every page while the plan limit blocks new jobs. The server decides when (`exhausted`); nothing renders without it. */
+export function UsageLimitBanner({ usage }: { usage?: ClaudeUsage }) {
+  const ex = usage?.exhausted;
+  if (!ex) return null;
+  return (
+    <Alert variant="destructive" role="alert" data-testid="usage-limit"><Gauge /><AlertDescription>
+      <span><b>Claude usage limit reached.</b> New jobs won't start until the limit resets ({resetsIn(ex.resetsAt)}). Running jobs continue.</span>
+    </AlertDescription></Alert>
+  );
+}
 
 function Bar({ label, w }: { label: string; w: LimitWindow | null }) {
   return (

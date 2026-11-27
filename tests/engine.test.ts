@@ -9,6 +9,7 @@ import { Engine, type HandlerRegistry, type StageHandler } from "../src/core/eng
 import { cancelJob, enqueue, getJob, recoverExpired, retryJob, claimNext } from "../src/core/jobs.js";
 import { simulatedHandlers } from "../src/core/simulation.js";
 import { STAGES } from "../src/config/schema.js";
+import type { ClaudeLimits } from "../src/agents/usage.js";
 
 let h: DbHandle;
 beforeEach(() => { h = openDb(":memory:"); h.db.insert(projects).values({ id: "p", configJson: "{}" }).run(); });
@@ -164,6 +165,41 @@ describe("cancellation", () => {
     expect(sawAbort).toBe(true);
     expect(getJob(h.db, job.id)).toMatchObject({ stage: "CANCELLED", status: "cancelled", heldFromStage: "ELIGIBILITY_CHECK" });
     expect(history(job.id)).toContain("ELIGIBILITY_CHECK:cancelled");
+  });
+});
+
+describe("Claude usage limit", () => {
+  const reading = (over = {}): ClaudeLimits => ({ fiveHour: { utilization: 1, resetsAt: Date.parse("2030-01-01T05:00:00Z"), status: "rejected" }, sevenDay: null, status: "rejected", capturedAt: 0, ...over });
+  it("starts nothing while exhausted, leaves jobs queued untouched, and runs them once the reset passes", async () => {
+    const job = add();
+    let clock = Date.parse("2030-01-01T00:00:00Z");
+    const e = engine(simulatedHandlers(), config(), { claudeLimits: () => reading(), now: () => new Date(clock) });
+    expect(e.start()).toBe(0);
+    expect(await e.tick()).toBe(0);
+    expect(getJob(h.db, job.id)).toMatchObject({ stage: "DISCOVERED", status: "queued" });
+    expect(history(job.id)).toEqual([]);
+    expect(h.db.select().from(decisions).all()).toEqual([]);
+    clock = Date.parse("2030-01-01T05:00:01Z"); // past the reset: no manual action needed
+    await e.tick();
+    expect(getJob(h.db, job.id)!.stage).toBe("COMPLETED");
+  });
+  it("a window with an unknown reset does not gate", async () => {
+    const job = add();
+    await engine(simulatedHandlers(), config(), { claudeLimits: () => reading({ fiveHour: { utilization: 1, resetsAt: null, status: "rejected" } }) }).tick();
+    expect(getJob(h.db, job.id)!.stage).toBe("COMPLETED");
+  });
+  it("does not abort a job that is already running when the limit is reached", async () => {
+    const job = add();
+    let limited = false, aborted = false;
+    const hang: StageHandler = ({ signal }) => new Promise((res) => {
+      limited = true; // the limit is hit mid-run
+      signal.addEventListener("abort", () => { aborted = true; });
+      setTimeout(() => res({ kind: "ok" }), 60);
+    });
+    const e = engine({ ...simulatedHandlers(), IMPLEMENTATION: hang }, config(), { claudeLimits: () => (limited ? reading({ fiveHour: { utilization: 1, resetsAt: Date.now() + 3_600_000, status: "rejected" } }) : null) });
+    await e.tick();
+    expect(aborted).toBe(false);
+    expect(getJob(h.db, job.id)!.stage).toBe("COMPLETED");
   });
 });
 

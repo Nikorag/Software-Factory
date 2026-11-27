@@ -36,3 +36,21 @@ export function readLimits(file: string): ClaudeLimits | null {
 }
 /** A window whose reset time has passed no longer describes the plan: show it as unknown rather than as still full. */
 export const windowIsCurrent = (w: LimitWindow | null, now = Date.now()): boolean => !!w && (w.resetsAt === null || w.resetsAt > now);
+
+/** The status Claude Code reports on a window that has refused requests (others seen: "allowed", "allowed_warning"). */
+const REJECTED = "rejected";
+export interface ExhaustedLimit { window: "fiveHour" | "sevenDay"; resetsAt: number }
+/**
+ * Pure: the plan window that blocks new work right now, or null. A window blocks only when it is current, full (or rejected) and its
+ * reset is known and in the future: with no known reset nothing would ever clear the gate, as no agent runs while it is set.
+ * When both block, the later reset wins (work can only resume once both have reset).
+ */
+export function exhaustedLimit(l: ClaudeLimits | null | undefined, now = Date.now()): ExhaustedLimit | null {
+  if (!l) return null;
+  let out: ExhaustedLimit | null = null;
+  for (const [name, w] of [["fiveHour", l.fiveHour], ["sevenDay", l.sevenDay]] as const) {
+    if (!w || w.resetsAt === null || w.resetsAt <= now || !windowIsCurrent(w, now)) continue;
+    if ((w.utilization >= 1 || w.status === REJECTED) && (!out || w.resetsAt > out.resetsAt)) out = { window: name, resetsAt: w.resetsAt };
+  }
+  return out;
+}
