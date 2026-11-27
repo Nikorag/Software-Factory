@@ -7,6 +7,7 @@
     "typecheck": "tsc --noEmit && pnpm --filter software-factory-web typecheck",
     "lint": "eslint .",
     "test": "pnpm web:build && vitest run && pnpm web:test",
+    "test:sandboxed": "pnpm web:build && pnpm web:test && vitest run --exclude 'tests/{approvals,children,delivery-flow,deps,exec,haiku-flow,implement-flow,implement-units,launch,pr-feedback,project-check,service}.test.ts' && pnpm --filter software-factory-hub typecheck && pnpm --filter software-factory-hub test",
     "db:generate": "drizzle-kit generate",
     "factory": "tsx src/cli.ts",
     "web:dev": "pnpm --filter software-factory-web dev",
