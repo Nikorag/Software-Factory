@@ -7,7 +7,7 @@ import { ModelRouter } from "../agents/router.js";
 import { AgentRunner } from "../agents/runner.js";
 import { usageFile } from "../agents/usage.js";
 import { ConfigError } from "../config/load.js";
-import { planningModeOf, type LoadedConfig, type ProjectConfig } from "../config/schema.js";
+import { effectiveProtectedPaths, planningModeOf, type LoadedConfig, type ProjectConfig } from "../config/schema.js";
 import { openDb, type DbHandle } from "../db/client.js";
 import { Engine, type HandlerRegistry } from "../core/engine.js";
 import type { LinearClient } from "../linear/client.js";
@@ -58,7 +58,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     anthropic: new ClaudeCodeAgent({ bin: opts.claudeBin }),
     local: new LocalModelClient({ baseUrl: config.models.local.baseUrl }),
   }, (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.models);
-  const runner = new AgentRunner({ db: handle.db, router, logDir: join(dataDir, "logs", "agents"), protectedPaths: config.factory.protectedPaths, usageFile: usageFile(dataDir),
+  const runner = new AgentRunner({ db: handle.db, router, logDir: join(dataDir, "logs", "agents"), protectedPaths: effectiveProtectedPaths(config.factory.protectedPaths), usageFile: usageFile(dataDir),
     access: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess,
     projectBashAllow: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAllow ?? [],
     readGrants: (jobId) => readGrants(handle.db, jobId),
@@ -82,7 +82,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     ...specHandlers,
     ...createImplementationHandlers({
       db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger,
-      dataDir, runCommand: opts.runCommand, planningMode, github: (p) => opts.github ?? hosts.pr(p), fetchEnv: (p) => hosts.gitAuth(p), maxConflictResolutions: () => config.factory.workflow.max_conflict_resolutions, agentAccess: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess, maxPasses: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.maxImplementationPasses ?? config.factory.maxImplementationPasses, settings: { protectedPaths: config.factory.protectedPaths, commandTimeoutSeconds: config.factory.commandTimeoutSeconds, sandbox: config.factory.sandbox },
+      dataDir, runCommand: opts.runCommand, planningMode, github: (p) => opts.github ?? hosts.pr(p), fetchEnv: (p) => hosts.gitAuth(p), maxConflictResolutions: () => config.factory.workflow.max_conflict_resolutions, agentAccess: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess, maxPasses: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.maxImplementationPasses ?? config.factory.maxImplementationPasses, settings: { protectedPaths: effectiveProtectedPaths(config.factory.protectedPaths), commandTimeoutSeconds: config.factory.commandTimeoutSeconds, sandbox: config.factory.sandbox },
     }),
     // PR-only delivery: push + open the PR, watch CI, report readiness, wait for a human to merge. The factory never merges.
     ...createDeliveryHandlers({

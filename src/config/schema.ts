@@ -68,9 +68,15 @@ export const FactoryConfig = z.object({
   // and by verifying the worktree diff after every agent run. (The factory itself can never be a project: see loadConfig.)
   protectedPaths: z.array(z.string()).default([".git/**", ".env", ".env.*", "**/*.pem", "**/*.key", "**/id_rsa*", "**/id_ed25519*", "**/secrets/**", ".github/workflows/**",
     // the agents' own instruction set and the scripts they run: never editable by an agent
-    ".claude/**", ".specify/scripts/**", ".specify/templates/**", ".specify/workflows/**", ".specify/integrations/**"]),
+    ".claude/**", ".specify/scripts/**", ".specify/templates/**", ".specify/workflows/**", ".specify/integrations/**",
+    // the project's own factory settings (commands, allowLoopback...): only people change them
+    ".software-factory.yml"]),
 });
 export type FactoryConfig = z.infer<typeof FactoryConfig>;
+
+/** Always protected, even when a user's factory.yaml lists its own protectedPaths: it controls what runs with network access and how loose the sandbox is. */
+export const ALWAYS_PROTECTED_PATHS: readonly string[] = [".software-factory.yml"];
+export const effectiveProtectedPaths = (paths: readonly string[]): string[] => [...paths, ...ALWAYS_PROTECTED_PATHS.filter((p) => !paths.includes(p))];
 
 const Provider = z.enum(["local", "anthropic"]);
 const ModelRoute = z.object({

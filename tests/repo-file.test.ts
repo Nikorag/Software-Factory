@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { carryRepoFiles, mergeRepoFile, parseRepoFile, readRepoFileText, refreshRepoFile } from "../src/config/repo-file.js";
 import { ConfigError } from "../src/config/load.js";
-import { ProjectConfig } from "../src/config/schema.js";
+import { effectiveProtectedPaths, FactoryConfig, ProjectConfig } from "../src/config/schema.js";
 import { checkProject } from "../src/repo/check.js";
 import { onboardingOf } from "../src/repo/readiness.js";
 import { GitError, type GitFn } from "../src/repo/git.js";
@@ -168,6 +168,14 @@ describe("readRepoFileText / refreshRepoFile (real git)", () => {
     carryRepoFiles([old], [fresh]);
     expect(fresh.commands).toMatchObject({ test: "pnpm test", lint: "saved lint" });
     expect(fresh.allowLoopback).toBe(true);
+  });
+});
+
+describe("protected path", () => {
+  it(".software-factory.yml is protected by default and even when a config lists its own paths", () => {
+    expect(FactoryConfig.parse({}).protectedPaths).toContain(".software-factory.yml");
+    expect(effectiveProtectedPaths([".env"])).toEqual([".env", ".software-factory.yml"]);
+    expect(effectiveProtectedPaths([".software-factory.yml"])).toEqual([".software-factory.yml"]);
   });
 });
 
