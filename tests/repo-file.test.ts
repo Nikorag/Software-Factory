@@ -3,13 +3,16 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { carryRepoFiles, mergeRepoFile, parseRepoFile, readRepoFileText, refreshRepoFile } from "../src/config/repo-file.js";
 import { ConfigError } from "../src/config/load.js";
-import { effectiveProtectedPaths, FactoryConfig, ProjectConfig } from "../src/config/schema.js";
+import pino from "pino";
+import { createContext, protectedPathsOf } from "../src/app/context.js";
+import { openDb } from "../src/db/client.js";
+import { BitbucketConfig, effectiveProtectedPaths, FactoryConfig, GithubIssuesConfig, JiraConfig, LinearConfig, ModelsConfig, ProjectConfig, WorkflowsConfig, type LoadedConfig } from "../src/config/schema.js";
 import { findProtectedChanges } from "../src/agents/guard.js";
 import { toolPolicy } from "../src/agents/permissions.js";
 import { checkProject } from "../src/repo/check.js";
 import { onboardingOf } from "../src/repo/readiness.js";
 import { GitError, type GitFn } from "../src/repo/git.js";
-import { makeRepo, sh } from "./helpers/git-fixture.js";
+import { makeRepo, sh, tmp } from "./helpers/git-fixture.js";
 
 const FILE = `id: p
 name: From Repo
@@ -187,6 +190,19 @@ describe("protected path", () => {
     expect(await findProtectedChanges(repo, "HEAD~1", paths)).toEqual([".software-factory.yml"]);
     expect(await findProtectedChanges(repo, "HEAD~1", [".env"])).toEqual([]); // without the helper the customised list would miss it
     expect(toolPolicy("implementer", { protectedPaths: paths, roots: [repo] }).deny.some((r) => r.includes(".software-factory.yml"))).toBe(true);
+  });
+});
+
+describe("protected paths wiring", () => {
+  it("the real context hands the agent runner a list that includes .software-factory.yml, even with a customised factory.yaml", () => {
+    const dataDir = tmp();
+    const config = {
+      factory: FactoryConfig.parse({ dataDir, protectedPaths: [".env"] }), models: ModelsConfig.parse({ routes: { classification: { provider: "local", model: "m" }, specification: { provider: "anthropic", model: "m" }, implementation: { provider: "anthropic", model: "m" }, independent_review: { provider: "local", model: "m" }, final_review: { provider: "anthropic", model: "m" } } }),
+      projects: { projects: [] }, linear: LinearConfig.parse({}), jira: JiraConfig.parse({}), githubIssues: GithubIssuesConfig.parse({}), bitbucket: BitbucketConfig.parse({}), workflows: WorkflowsConfig.parse({}), connections: {},
+    } as unknown as LoadedConfig;
+    expect(protectedPathsOf(config)).toEqual([".env", ".software-factory.yml"]);
+    const ctx = createContext(config, { db: openDb(":memory:"), logger: pino({ level: "silent" }), agents: {} as never });
+    expect((ctx.runner as unknown as { d: { protectedPaths: string[] } }).d.protectedPaths).toEqual([".env", ".software-factory.yml"]);
   });
 });
 
