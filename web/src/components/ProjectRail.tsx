@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 const row = "flex min-h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors hover:bg-accent/70 max-md:min-h-11 max-md:text-sm";
 const GROUPS: { id: Bucket; label: string; color: string }[] = [
   { id: "running", label: "Working", color: TONE.run }, { id: "needs", label: "Needs you", color: TONE.wait }, { id: "queued", label: "Queued", color: "#C4C4CC" },
+  { id: "done", label: "Done", color: TONE.ok }, // open jobs only: a PR awaiting your merge
 ];
 
 export function ProjectRail({ open, onClose, overview: o, projects, jobs, projectId, jobId, profiles, stop, paused, controls }: {

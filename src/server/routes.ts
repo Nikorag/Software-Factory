@@ -130,7 +130,8 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
       counts: counts(db),
       active: all.filter((j) => j.status === "running").map(jobRow),
       queued: all.filter((j) => (j.status === "queued" || j.status === "waiting") && !isAwaitingMerge(j)).slice(0, 30).map(jobRow),
-      recent: all.filter((j) => ["done", "failed", "cancelled"].includes(j.status) || isAwaitingMerge(j)).slice(0, 20).map(jobRow),
+      // Jobs awaiting a human merge are exempt from the cap: they still need an action and must not fall off the list.
+      recent: all.filter((j) => isAwaitingMerge(j) || ["done", "failed", "cancelled"].includes(j.status)).filter((j, i, a) => isAwaitingMerge(j) || a.slice(0, i).filter((x) => !isAwaitingMerge(x)).length < 20).map(jobRow),
       engineActive: d.engine?.activeJobIds() ?? [],
       scheduler: d.scheduler?.status() ?? null,
       system: await systemInfo(d.dataDir ?? "."),

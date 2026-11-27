@@ -28,8 +28,9 @@ describe("jobs awaiting a human merge", () => {
     expect(statusLabel(job({ stage: "CLAUDE_REVIEW", status: "waiting" }))).toBe("Needs you");
     expect(projectMeta([job({ stage: "DISCOVERED" })]).text).toBe("1 queued");
   });
-  it("does not get a job tab", () => {
-    const o = { active: [], queued: [], recent: [job(), job({ id: "k", stage: "DISCOVERED" })] } as unknown as Overview;
-    expect(openJobs(o).map((j) => j.id)).toEqual(["k"]);
+  it("stays open (tab and rail Done group) because it still needs the human to merge; finished jobs do not", () => {
+    const o = { active: [], queued: [], recent: [job(), job({ id: "k", stage: "DISCOVERED" }), job({ id: "d", status: "done", stage: "COMPLETED" })] } as unknown as Overview;
+    expect(openJobs(o).map((j) => j.id)).toEqual(["j", "k"]);
+    expect(bucketOf(openJobs(o)[0]!)).toBe("done");
   });
 });

@@ -16,7 +16,7 @@ export const effectiveStatus = (j: Pick<Job, "stage" | "status">): string => (is
 export function openJobs(o: Overview | null): Job[] {
   if (!o) return [];
   const seen = new Set<string>();
-  return [...o.active, ...o.queued, ...o.recent].filter((j) => { if (seen.has(j.id) || !OPEN.has(effectiveStatus(j)) || j.archivedAt) return false; seen.add(j.id); return true; });
+  return [...o.active, ...o.queued, ...o.recent].filter((j) => { if (seen.has(j.id) || !OPEN.has(j.status) || j.archivedAt) return false; seen.add(j.id); return true; });
 }
 
 export const bucketOf = (j: Job): Bucket => { const s = effectiveStatus(j); return s === "running" ? "running" : s === "queued" ? "queued" : s === "done" ? "done" : "needs"; };
