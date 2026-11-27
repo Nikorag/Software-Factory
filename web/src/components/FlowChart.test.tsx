@@ -73,6 +73,7 @@ describe("FlowChart scrolling and zoom", () => {
     fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, clientX: 300, clientY: 100 });
     fireEvent.pointerMove(canvas, { ...mouse, buttons: 1, clientX: 360, clientY: 100 }); // button then released elsewhere: no pointerup arrives
     wheel(canvas, { ctrlKey: true });
+    expect(scale(inner)).toBeGreaterThan(1); // zoomed, so a stale gesture really could pan
     const before = inner.style.transform;
     fireEvent.pointerMove(canvas, { ...mouse, buttons: 0, clientX: 200, clientY: 100 });
     expect(inner.style.transform).toBe(before);
