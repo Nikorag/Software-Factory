@@ -16,12 +16,12 @@ export function JobTabs({ projectId, jobs, jobId }: { projectId: string; jobs: J
     // A phone has no room for a tab per job: Overview, then one dropdown holding the open jobs.
     return (
       <nav aria-label="Project tabs" className="flex min-w-0 flex-1 basis-0 items-center gap-1.5">
-        <NavLink to={`/p/${encodeURIComponent(projectId)}`} end className={({ isActive }) => cn(tab, "shrink-0", isActive ? "border-input bg-secondary text-foreground" : "border-transparent text-[#C4C4CC] hover:bg-accent/60")}>
-          <LayoutGrid className="size-3.5" aria-hidden />Overview
+        <NavLink to={`/p/${encodeURIComponent(projectId)}`} end className={({ isActive }) => cn(tab, "h-11 shrink-0", isActive ? "border-input bg-secondary text-foreground" : "border-transparent text-[#C4C4CC] hover:bg-accent/60")}>
+          <LayoutGrid className="size-4" aria-hidden /><span className="max-[359px]:sr-only">Overview</span>
         </NavLink>
         {jobs.length ? (
           <Select value={jobId && jobs.some((j) => j.id === jobId) ? jobId : ""} onValueChange={(id) => nav(`/jobs/${id}`)}>
-            <SelectTrigger size="sm" aria-label="Open jobs" className={cn("h-[34px] w-full min-w-[9rem] flex-1 gap-2 overflow-hidden text-[13px] [&>span]:min-w-0 [&>span]:truncate", jobId && "bg-secondary")}><SelectValue placeholder={`Jobs (${jobs.length})`} /></SelectTrigger>
+            <SelectTrigger size="sm" aria-label="Open jobs" className={cn("h-11 w-full min-w-0 flex-1 gap-2 overflow-hidden text-[13px] [&>span]:min-w-0 [&>span]:truncate", jobId && "bg-secondary")}><SelectValue placeholder={`Jobs (${jobs.length})`} /></SelectTrigger>
             <SelectContent>
               {jobs.map((j) => (
                 <SelectItem key={j.id} value={j.id}>

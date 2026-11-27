@@ -95,7 +95,7 @@ export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: 
   const st = (id: string): NodeState => flow.state[id] ?? "idle";
   const NODES = nodesFor(flow.mode), EDGES = edgesFor(flow.mode);
   const pz = usePanZoom();
-  const btn = "flex size-8 items-center justify-center rounded-md border border-input bg-background/90 text-muted-foreground hover:text-foreground";
+  const btn = "flex size-8 max-md:size-11 items-center justify-center rounded-md border border-input bg-background/90 text-muted-foreground hover:text-foreground";
   return (
     <div className="relative">
       <div ref={pz.box} data-testid="flow-canvas" style={{ height: pz.height }} className="relative touch-none select-none overflow-hidden overscroll-contain rounded-lg" {...pz.handlers}>
@@ -170,6 +170,48 @@ export function FlowLegend() {
   return (
     <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
       {item("stroke-ok", "route taken")}{item("stroke-run [stroke-dasharray:6_5]", "running now")}{item("stroke-loop", "sent back for fixes")}{item("stroke-[#52525B] [stroke-dasharray:5_4]", "possible route, not used")}
+    </div>
+  );
+}
+
+/**
+ * Phones: the same pipeline as a vertical list of steps. The chart is 1180px wide, so fitted to a phone its labels are a few pixels tall.
+ * Fix steps only appear once used, and the steps not reached yet fold away behind "show more" (the next one stays visible).
+ */
+export function FlowSteps({ flow, selected, onSelect }: { flow: Flow; selected: string | null; onSelect: (id: string) => void }) {
+  const [all, setAll] = useState(false);
+  const st = (id: string): NodeState => flow.state[id] ?? "idle";
+  const steps = nodesFor(flow.mode).filter((n) => !n.fix || st(n.id) !== "idle");
+  const lastActive = steps.reduce((i, n, k) => (st(n.id) === "idle" ? i : k), -1);
+  const cut = Math.min(steps.length, lastActive + 2);
+  const shown = all ? steps : steps.slice(0, cut);
+  return (
+    <div>
+      <ol className="grid" aria-label="Pipeline steps">
+        {shown.map((n, i) => {
+          const s = st(n.id), att = flow.attempts[n.id] ?? 0, d = flow.duration[n.id], sel = selected === n.id;
+          return (
+            <li key={n.id} className="relative">
+              {i < shown.length - 1 ? <span aria-hidden className={cn("absolute left-[21px] top-8 h-[calc(100%-16px)] w-px", s === "done" ? "bg-ok/50" : "bg-border")} /> : null}
+              <button type="button" aria-pressed={sel} onClick={() => onSelect(n.id)}
+                className={cn("relative flex min-h-12 w-full items-center gap-3 rounded-lg px-2 text-left", sel ? "bg-accent ring-1 ring-foreground/30" : "active:bg-accent/50")}>
+                <svg width="26" height="26" aria-hidden className="shrink-0"><Icon kind={s} cx={13} cy={13} /></svg>
+                <span className="min-w-0 flex-1">
+                  <span className={cn("block truncate text-sm font-medium", s === "idle" && "text-muted-foreground")}>{n.label}{n.fix ? <span className="ml-1.5 text-xs font-normal text-loop">fix</span> : null}</span>
+                  <span className={cn("block truncate text-xs", s === "run" || s === "wait" ? "text-run" : "text-muted-foreground")}>{subtitle(n, s, d)}</span>
+                </span>
+                {att > 1 || (n.fix && att >= 1) ? <span className="shrink-0 rounded-full border border-loop px-2 text-xs font-semibold text-loop">×{att}</span> : null}
+                <span className="sr-only">{({ done: "finished", run: "running now", wait: "waiting", fail: "stopped here", idle: "not reached yet" })[s]}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+      {steps.length > cut ? (
+        <button type="button" onClick={() => setAll(!all)} aria-expanded={all} className="mt-1 flex min-h-11 w-full items-center justify-center rounded-lg text-sm text-muted-foreground active:bg-accent/50">
+          {all ? "Show fewer steps" : `Show ${steps.length - cut} more step${steps.length - cut === 1 ? "" : "s"}`}
+        </button>
+      ) : null}
     </div>
   );
 }

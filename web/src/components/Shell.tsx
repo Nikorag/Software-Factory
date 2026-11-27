@@ -43,7 +43,8 @@ export function Shell() {
     if (!navOpen) return;
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setNavOpen(false); };
     document.addEventListener("keydown", esc);
-    return () => document.removeEventListener("keydown", esc);
+    document.body.style.overflow = "hidden"; // the page behind the drawer must not scroll under a thumb
+    return () => { document.removeEventListener("keydown", esc); document.body.style.overflow = ""; };
   }, [navOpen]);
   const [busy, setBusy] = useState(false);
   // Pause/resume/clear-stop are disabled while one is in flight or the API is unreachable. Emergency stop never is: it is always worth trying.
@@ -74,16 +75,16 @@ export function Shell() {
   return (
     <div className="flex min-h-dvh w-full flex-col md:h-screen md:flex-row">
       {navOpen ? <div aria-hidden className="fixed inset-0 z-20 bg-black/55 md:hidden" onClick={() => setNavOpen(false)} /> : null}
-      <ProjectRail open={navOpen} overview={o} projects={projects} jobs={jobs} projectId={projectId} jobId={jobId} profiles={prof ?? null} stop={Boolean(stop)} paused={Boolean(paused)} controls={mobile ? controls : null} />
+      <ProjectRail open={navOpen} onClose={() => setNavOpen(false)} overview={o} projects={projects} jobs={jobs} projectId={projectId} jobId={jobId} profiles={prof ?? null} stop={Boolean(stop)} paused={Boolean(paused)} controls={mobile ? controls : null} />
       <div className="flex min-w-0 flex-1 flex-col bg-background md:min-h-0">
-        <header className={cn("app-drag flex min-h-[52px] shrink-0 flex-wrap items-center gap-1.5 border-b border-line px-3 py-2", electronOverlay && "md:pr-36")}>
+        <header className={cn("app-drag flex min-h-[52px] shrink-0 flex-wrap items-center gap-1.5 border-b border-line px-3 py-2 max-md:sticky max-md:top-0 max-md:z-10 max-md:flex-nowrap max-md:bg-background/95 max-md:px-2 max-md:pt-[calc(env(safe-area-inset-top)+0.5rem)] max-md:backdrop-blur", electronOverlay && "md:pr-36")}>
           <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open menu" aria-expanded={navOpen} onClick={() => setNavOpen(true)}><Menu /></Button>
-          {projectId ? <JobTabs projectId={projectId} jobs={jobs.filter((j) => j.project === projectId)} jobId={jobId} /> : <h1 className="px-1.5 text-sm font-semibold">{TITLES[pathname] ?? "Software Factory"}</h1>}
+          {projectId ? <JobTabs projectId={projectId} jobs={jobs.filter((j) => j.project === projectId)} jobId={jobId} /> : <h1 className="min-w-0 truncate px-1.5 text-sm font-semibold max-md:text-base">{TITLES[pathname] ?? "Software Factory"}</h1>}
           {mobile ? null : <span className="flex-1" />}
           {mobile ? null : controls}
         </header>
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          <div className="grid gap-3 px-6 empty:hidden [&>*:first-child]:mt-4">
+        <div className="flex min-h-0 flex-1 flex-col md:overflow-y-auto">
+          <div className="grid gap-3 px-6 max-md:px-4 empty:hidden [&>*:first-child]:mt-4">
             {showUpdate ? (
               <Alert role="status"><ArrowUpCircle /><AlertDescription className="flex flex-wrap items-center gap-x-2">
                 <span><b>Update available:</b> {upd!.current} → {upd!.latest}.</span><span>Run <code className="rounded bg-muted px-1.5 py-0.5 text-xs">software-factory update</code> in a terminal, then restart the factory (wait for a quiet moment: a restart redoes any stage in progress).</span>
@@ -93,7 +94,7 @@ export function Shell() {
             {msg ? <Alert variant="destructive" role="alert"><AlertDescription>{msg}</AlertDescription></Alert> : null}
             <ConnectionBanner global error={error} updatedAt={updatedAt} what="dashboard" />
           </div>
-          <main className="min-w-0 flex-1 px-6 pb-7 pt-5"><div className="mx-auto w-full max-w-[1200px]"><Outlet context={{ overview: o, reload, offline }} /></div></main>
+          <main className="min-w-0 flex-1 px-6 pb-7 pt-5 max-md:px-4 max-md:pt-4"><div className="mx-auto w-full max-w-[1200px]"><Outlet context={{ overview: o, reload, offline }} /></div></main>
         </div>
         <StatusBar overview={o} open={jobs.length} />
       </div>

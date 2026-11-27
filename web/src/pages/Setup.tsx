@@ -26,7 +26,7 @@ export function Setup() {
   return (
     <div className="mx-auto grid max-w-3xl gap-4">
       <ol className="flex flex-wrap gap-2 text-sm">
-        {STEPS.map((s, i) => <li key={s}><button type="button" onClick={() => setStep(i)} className={cn("flex items-center gap-2 rounded-full border px-3 py-1", i === step && "border-foreground font-medium", i < step && "text-ok")}>{i < step ? <Check className="size-3.5" /> : <span className="text-xs text-muted-foreground">{i + 1}</span>}{s}</button></li>)}
+        {STEPS.map((s, i) => <li key={s}><button type="button" onClick={() => setStep(i)} className={cn("flex items-center gap-2 rounded-full border px-3 py-1 max-md:min-h-11 max-md:px-4", i === step && "border-foreground font-medium", i < step && "text-ok")}>{i < step ? <Check className="size-3.5" /> : <span className="text-xs text-muted-foreground">{i + 1}</span>}{s}</button></li>)}
       </ol>
       {step === 0 ? (
         <Card><CardHeader><CardTitle>Check your tools</CardTitle><CardDescription>The factory drives tools you already have. Each one is checked live; fix any that are red, then re-check. Spec Kit and a local model are optional here.</CardDescription></CardHeader>

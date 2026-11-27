@@ -16,7 +16,7 @@ const ago = (t: number) => { const m = Math.round((Date.now() - t) / 60_000); re
 function Bar({ label, w }: { label: string; w: LimitWindow | null }) {
   return (
     <div className="grid gap-1">
-      <div className="flex items-baseline justify-between text-sm"><span>{label}</span><span className="tabular-nums">{w ? `${pct(w)}% used` : "no reading"}{w?.resetsAt ? <span className="text-xs text-muted-foreground"> · resets {resetsIn(w.resetsAt)}</span> : null}</span></div>
+      <div className="flex items-baseline justify-between text-sm max-md:flex-wrap max-md:gap-x-2"><span>{label}</span><span className="tabular-nums">{w ? `${pct(w)}% used` : "no reading"}{w?.resetsAt ? <span className="text-xs text-muted-foreground"> · resets {resetsIn(w.resetsAt)}</span> : null}</span></div>
       <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`${label} usage`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={w ? pct(w) : 0}>
         {w ? <div className="h-full rounded-full" style={{ width: `${Math.min(100, pct(w))}%`, background: tone(w) }} /> : null}
       </div>

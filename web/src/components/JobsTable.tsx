@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Archive, ArchiveRestore, Loader2, Trash2 } from "lucide-react";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api, type DeleteOptions, type SendResult } from "@/lib/api";
 import { ago, stageLabel, stageText } from "@/lib/format";
 import type { Job } from "@/lib/types";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { ProgressStrip } from "./ProgressStrip";
 import { StatusBadge } from "./StatusBadge";
 
@@ -68,7 +69,9 @@ export function DeleteJobButton({ job, onDelete, label, disabled }: { job: Job; 
 /** `disabled`: actions are greyed out (an action is in flight, or the API is unreachable). */
 export function JobsTable({ jobs, actions, disabled }: { jobs: Job[]; actions?: JobActions; disabled?: boolean }) {
   const nav = useNavigate();
+  const mobile = useIsMobile();
   if (!jobs.length) return <p className="text-sm text-muted-foreground">None.</p>;
+  if (mobile) return <JobCards jobs={jobs} actions={actions} disabled={disabled} />;
   return (
     <Table>
       <TableHeader><TableRow>{["Ticket", "Project", "Progress", "Stage", "Status", "Updated", "Note", ...(actions ? [""] : [])].map((c, i) => <TableHead key={i}>{c}</TableHead>)}</TableRow></TableHeader>
@@ -96,5 +99,42 @@ export function JobsTable({ jobs, actions, disabled }: { jobs: Job[]; actions?: 
         ))}
       </TableBody>
     </Table>
+  );
+}
+
+const noteOf = (j: Job) => stageText((j.lastError || (j.prUrl ? "PR raised" : "")).split("\n")[0]!.slice(0, 160));
+
+/** Phones: the same jobs as stacked cards. Every column of the table is here, most important first; nothing hides in a sideways scroll. */
+function JobCards({ jobs, actions, disabled }: { jobs: Job[]; actions?: JobActions; disabled?: boolean }) {
+  return (
+    <ul className="grid gap-2" aria-label="Jobs">
+      {jobs.map((j) => {
+        const note = noteOf(j), done = FINISHED.includes(j.status);
+        return (
+          <li key={j.id} className="overflow-hidden rounded-lg border bg-background/40">
+            <Link to={`/jobs/${j.id}`} className="grid gap-1.5 p-3 active:bg-accent/50">
+              <span className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-semibold">{j.key}{j.dryRun ? <span className="font-normal text-muted-foreground"> (dry)</span> : null}{j.archivedAt ? <span className="font-normal text-muted-foreground"> (archived)</span> : null}</span>
+                <StatusBadge status={j.status} />
+              </span>
+              {j.title ? <span className="line-clamp-2 text-sm leading-snug">{j.title}</span> : null}
+              <span className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                <span className="text-foreground/80">{j.project}</span><span aria-hidden>·</span>
+                <span>{stageLabel(j.stage)}{j.heldFromStage ? ` ← ${stageLabel(j.heldFromStage)}` : ""}</span><span aria-hidden>·</span>
+                <span>{ago(j.updatedAt)}</span>
+              </span>
+              <ProgressStrip job={j} />
+              {note ? <span className={j.lastError ? "line-clamp-2 text-xs text-destructive" : "text-xs text-muted-foreground"}>{note}</span> : null}
+            </Link>
+            {actions && done ? (
+              <div className="flex justify-end gap-2 border-t border-line px-3 py-2">
+                <Button size="sm" variant="outline" disabled={disabled} aria-label={`${j.archivedAt ? "restore" : "archive"} ${j.key}`} onClick={() => actions.archive(j, !j.archivedAt)}>{j.archivedAt ? <><ArchiveRestore />Restore</> : <><Archive />Archive</>}</Button>
+                <DeleteJobButton job={j} label="Delete" disabled={disabled} onDelete={(o) => actions.remove(j, o)} />
+              </div>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

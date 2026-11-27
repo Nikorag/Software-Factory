@@ -118,12 +118,12 @@ export function Conversation({ jobId, runId, running, ctx, wrap = true, onWrap, 
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col font-mono text-[13px] leading-relaxed", TERM.bg, TERM.text)}>
-      <div className={cn("flex h-10 items-center gap-2 border-b px-4 text-xs", TERM.line)}>
-        <span className={cn("font-semibold", TERM.coral)}>✻</span><b>Claude Code</b><span className={cn("min-w-0 truncate", TERM.dim)}>{shortPath(meta.cwd) || "agent run"}</span>
+      <div className={cn("flex h-10 items-center gap-2 border-b px-4 text-xs max-md:h-12 max-md:pl-3 max-md:pr-0.5", TERM.line)}>
+        <span className={cn("font-semibold", TERM.coral)}>✻</span><b className="whitespace-nowrap">Claude Code</b><span className={cn("min-w-0 truncate max-md:hidden", TERM.dim)}>{shortPath(meta.cwd) || "agent run"}</span>
         <span className="ml-auto flex shrink-0 items-center gap-3">
-          {onWrap ? <label className={cn("flex cursor-pointer items-center gap-1.5", TERM.dim)}><input type="checkbox" className="accent-[#d97757]" checked={wrap} onChange={(e) => onWrap(e.target.checked)} />Wrap lines</label> : null}
+          {onWrap ? <label className={cn("flex cursor-pointer items-center gap-1.5 max-md:min-h-11", TERM.dim)}><input type="checkbox" aria-label="Wrap lines" className="accent-[#d97757]" checked={wrap} onChange={(e) => onWrap(e.target.checked)} /><span>Wrap<span className="max-md:hidden"> lines</span></span></label> : null}
           {liveNow ? <span className={TERM.coral}>● live</span> : <span className={TERM.dim}>finished</span>}
-          <DialogClose aria-label="Close" className="grid size-6 place-items-center rounded text-[#8b8f97] outline-none hover:bg-[#2a2c31] hover:text-[#dcdcdc] focus-visible:ring-2 focus-visible:ring-[#d97757]"><X className="size-4" /></DialogClose>
+          <DialogClose aria-label="Close" className="grid size-6 max-md:size-11 place-items-center rounded text-[#8b8f97] outline-none hover:bg-[#2a2c31] hover:text-[#dcdcdc] focus-visible:ring-2 focus-visible:ring-[#d97757]"><X className="size-4" /></DialogClose>
         </span>
       </div>
       {tabs}

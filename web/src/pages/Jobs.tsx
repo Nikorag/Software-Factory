@@ -38,14 +38,14 @@ export function Jobs() {
   };
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
-      <div className="flex flex-wrap gap-2">
-        <div className="relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+      <div className="flex flex-wrap gap-2 max-md:grid max-md:grid-cols-2">
+        <div className="relative w-full max-w-xs max-md:col-span-2 max-md:max-w-none"><Search className="pointer-events-none absolute left-2.5 top-2.5 max-md:top-3.5 size-4 text-muted-foreground" />
           <Input aria-label="Search jobs" className="pl-8" value={text} onChange={(e) => setText(e.target.value)} placeholder="Ticket, project, stage or error" /></div>
-        <Select value={status} onValueChange={setStatus}><SelectTrigger className="w-40" aria-label="status filter"><SelectValue /></SelectTrigger>
+        <Select value={status} onValueChange={setStatus}><SelectTrigger className="w-40 max-md:w-full" aria-label="status filter"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value={ALL}>any status</SelectItem>{["running", "queued", "waiting", "done", "failed", "cancelled"].map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
-        <Select value={proj} onValueChange={setProj}><SelectTrigger className="w-48" aria-label="project filter"><SelectValue /></SelectTrigger>
+        <Select value={proj} onValueChange={setProj}><SelectTrigger className="w-48 max-md:w-full" aria-label="project filter"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value={ALL}>any project</SelectItem>{(data?.projects ?? []).map((p) => <SelectItem key={p.id} value={p.id}>{p.id}</SelectItem>)}</SelectContent></Select>
-        <Select value={archived} onValueChange={setArchived}><SelectTrigger className="w-44" aria-label="archive filter"><SelectValue /></SelectTrigger>
+        <Select value={archived} onValueChange={setArchived}><SelectTrigger className="w-44 max-md:w-full" aria-label="archive filter"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="hide">not archived</SelectItem><SelectItem value="only">archived only</SelectItem><SelectItem value="all">everything</SelectItem></SelectContent></Select>
       </div>
       <ConnectionBanner error={error} updatedAt={updatedAt} what="job list" />

@@ -16,7 +16,7 @@ function NumberField({ id, value, min, max, onChange }: { id: string; value: num
   const [text, setText] = useState(String(value));
   useEffect(() => { setText(String(value)); }, [value]);
   return (
-    <Input id={id} type="number" min={min} max={max} className="w-28" value={text}
+    <Input id={id} type="number" inputMode="numeric" min={min} max={max} className="w-28" value={text}
       onChange={(e) => { const raw = e.target.value; if (raw === "") return setText(""); const n = Math.min(max, Math.max(min, Math.trunc(Number(raw)))); if (Number.isNaN(n)) return; setText(String(n)); onChange(n); }}
       onBlur={() => setText(String(value))} />
   );
@@ -39,7 +39,7 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
           <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Ticket pickup">
             {([["automatic", "Automatic", "Tickets labelled factory:enabled in the pickup status are started on their own."], ["manual", "Manual", "Nothing starts by itself. You pick tickets on the Board."]] as const).map(([v, label, hint]) => (
               <button key={v} type="button" role="radio" aria-checked={(g.pickupMode ?? "automatic") === v} onClick={() => { setSaved(false); setG({ ...g, pickupMode: v }); }}
-                className={`grid max-w-sm flex-1 gap-0.5 rounded-md border p-3 text-left text-sm transition-colors hover:bg-accent ${(g.pickupMode ?? "automatic") === v ? "border-foreground bg-accent" : ""}`}><b>{label}</b><span className="text-xs text-muted-foreground">{hint}</span></button>
+                className={`grid max-w-sm flex-1 gap-0.5 rounded-md border p-3 max-md:max-w-none max-md:basis-full text-left text-sm transition-colors hover:bg-accent ${(g.pickupMode ?? "automatic") === v ? "border-foreground bg-accent" : ""}`}><b>{label}</b><span className="text-xs text-muted-foreground">{hint}</span></button>
             ))}
           </div>
           <p className="text-xs text-muted-foreground">A project can override this in its own settings. In either mode you can start any ticket yourself from the Board (it needs no label or status), and a project must be fully onboarded first.</p>
@@ -49,7 +49,7 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
           <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Planning mode">
             {([["haiku_prompt", "Haiku prompt", "Claude Haiku reads the ticket and the repository and writes one concise prompt for the implementer. Fast, no spec files. The default."], ["speckit", "Spec Kit", "The full Spec Kit flow: specify, clarify, plan, tasks, independent spec review and validation, and a completeness check after implementing. Needs .specify/ in each repository."]] as const).map(([v, label, hint]) => (
               <button key={v} type="button" role="radio" aria-checked={(g.planningMode ?? "haiku_prompt") === v} onClick={() => { setSaved(false); setG({ ...g, planningMode: v }); }}
-                className={`grid max-w-sm flex-1 gap-0.5 rounded-md border p-3 text-left text-sm transition-colors hover:bg-accent ${(g.planningMode ?? "haiku_prompt") === v ? "border-foreground bg-accent" : ""}`}><b>{label}</b><span className="text-xs text-muted-foreground">{hint}</span></button>
+                className={`grid max-w-sm flex-1 gap-0.5 rounded-md border p-3 max-md:max-w-none max-md:basis-full text-left text-sm transition-colors hover:bg-accent ${(g.planningMode ?? "haiku_prompt") === v ? "border-foreground bg-accent" : ""}`}><b>{label}</b><span className="text-xs text-muted-foreground">{hint}</span></button>
             ))}
           </div>
           <p className="text-xs text-muted-foreground">Takes effect at each job's next stage. Also set as <code>workflow.planning_mode</code> in this profile's factory.yaml.</p>
@@ -84,9 +84,9 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
           {g.routes.independent_review.model === g.routes.specification.model && g.routes.independent_review.provider === g.routes.specification.provider
             ? <Alert><AlertDescription>Independent review uses the same model as Specification, so it is partly marking its own work. Pick a different one for a genuinely independent review.</AlertDescription></Alert> : null}
         </CardContent></Card>
-      <div className="flex flex-wrap items-center gap-3">
-        {err ? <p role="alert" className="flex-1 text-sm text-destructive">{err}</p> : <p className="flex-1 text-sm text-muted-foreground">{saved && !dirty ? "Saved. Applied immediately; running jobs pick it up at their next step." : dirty ? "Unsaved changes" : ""}</p>}
-        <Button variant="outline" disabled={!dirty} onClick={() => setG(value)}>Revert</Button><Button disabled={!dirty} onClick={() => void save()}>Save settings</Button>
+      <div className="flex flex-wrap items-center gap-3 max-md:sticky max-md:bottom-0 max-md:z-10 max-md:-mx-4 max-md:gap-2 max-md:border-t max-md:border-line max-md:bg-background/95 max-md:px-4 max-md:pb-[calc(env(safe-area-inset-bottom)+0.75rem)] max-md:pt-3 max-md:backdrop-blur">
+        {err ? <p role="alert" className="flex-1 text-sm text-destructive">{err}</p> : <p className="flex-1 text-sm text-muted-foreground max-md:basis-full max-md:empty:hidden">{saved && !dirty ? "Saved. Applied immediately; running jobs pick it up at their next step." : dirty ? "Unsaved changes" : ""}</p>}
+        <Button variant="outline" className="max-md:flex-1" disabled={!dirty} onClick={() => setG(value)}>Revert</Button><Button className="max-md:flex-[2]" disabled={!dirty} onClick={() => void save()}>Save settings</Button>
       </div>
     </div>
   );

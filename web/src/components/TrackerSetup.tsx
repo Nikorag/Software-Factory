@@ -63,7 +63,7 @@ export function TrackerSetup({ info, onChanged, onKey, onTeams }: { info: SetupI
         <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Issue tracker">
           {entries.map((e) => (
             <button key={e.id} type="button" role="radio" aria-checked={e.id === defId} onClick={() => (e.id === defId ? undefined : setPending(e.id))}
-              className={cn("rounded-md border px-4 py-2 text-sm font-medium transition-colors hover:bg-accent", e.id === defId && "border-foreground bg-accent")}>{e.label}</button>
+              className={cn("rounded-md border px-4 py-2 text-sm font-medium transition-colors hover:bg-accent max-md:min-h-11", e.id === defId && "border-foreground bg-accent")}>{e.label}</button>
           ))}
         </div>
         <p className="text-xs text-muted-foreground">Projects use this unless they name their own tracker (Settings → Projects), so one profile can mix Linear, Jira and GitHub Issues, and you can have several of each.</p>

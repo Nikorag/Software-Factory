@@ -40,9 +40,10 @@ export function JobChat({ jobId }: { jobId: string }) {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
-  const end = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement>(null);
   useEffect(() => { setMsgs([]); setInput(""); }, [jobId]); // a different job is a different conversation
-  useEffect(() => { end.current?.scrollIntoView?.({ block: "nearest" }); }, [msgs, busy]);
+  // Keep the newest message in view by scrolling the message box itself: scrollIntoView would also scroll the page (on load, to here).
+  useEffect(() => { const el = box.current; if (el && (msgs.length || busy)) el.scrollTop = el.scrollHeight; }, [msgs, busy]);
 
   const ask = async (text: string) => {
     const message = text.trim();
@@ -59,7 +60,7 @@ export function JobChat({ jobId }: { jobId: string }) {
   return (
     <Card><CardContent className="grid gap-3">
       <p className="text-xs text-muted-foreground">Ask Claude about this job. It reads the job's stages, decisions and recent agent output, and can't change anything.</p>
-      <div className="grid max-h-[480px] gap-2 overflow-y-auto" aria-live="polite">
+      <div ref={box} className="grid max-h-[480px] gap-2 overflow-y-auto" aria-live="polite">
         {msgs.length === 0 && (
           <div className="flex flex-wrap gap-2">
             {SUGGESTIONS.map((s) => <Button key={s} variant="outline" size="sm" onClick={() => void ask(s)} disabled={busy}>{s}</Button>)}
@@ -69,7 +70,6 @@ export function JobChat({ jobId }: { jobId: string }) {
           <div key={i} className={cn("max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-[13px]", m.role === "user" ? "ml-auto bg-secondary" : m.error ? "border border-destructive/50 text-destructive" : "border")}>{m.text}</div>
         ))}
         {busy && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />Thinking…</div>}
-        <div ref={end} />
       </div>
       <form className="flex items-end gap-2" onSubmit={(e) => { e.preventDefault(); void ask(input); }}>
         <Textarea value={input} onChange={(e) => setInput(e.target.value)} rows={2} maxLength={4000} placeholder="Why did this one fail?" aria-label="Message"

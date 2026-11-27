@@ -40,10 +40,10 @@ function Events({ events }: { events: TimelineEvent[] }) {
   const shown = open || !fold ? events : [];
   return (
     <div className="mt-1 text-xs text-muted-foreground">
-      {fold ? <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="inline-flex items-center gap-1 hover:text-foreground"><ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />{open ? "Hide" : "Show"} {events.length} details</button> : null}
+      {fold ? <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="inline-flex items-center gap-1 hover:text-foreground max-md:min-h-11"><ChevronRight className={cn("size-3 transition-transform", open && "rotate-90")} />{open ? "Hide" : "Show"} {events.length} details</button> : null}
       {shown.length ? (
         <ul className="mt-1 grid gap-0.5">
-          {shown.map((ev, j) => <li key={j} className="flex gap-1.5"><span className="shrink-0 font-medium text-foreground/70">{ev.label}:</span><span className="min-w-0 break-words">{ev.text}</span></li>)}
+          {shown.map((ev, j) => <li key={j} className="flex gap-1.5"><span className="shrink-0 font-medium text-foreground/70">{ev.label}:</span><span className="min-w-0 wrap-anywhere">{ev.text}</span></li>)}
         </ul>
       ) : null}
     </div>
@@ -74,8 +74,10 @@ export function Timeline({ detail, cap, selected, onSelect, onPeek }: { detail: 
           {stats.runs ? <> · {stats.runs} agent run{stats.runs === 1 ? "" : "s"}, {dur(stats.agentMs)}</> : null}
         </span>
         <span className="flex-1" />
-        <Button size="sm" variant={onlyProblems ? "default" : "outline"} aria-pressed={onlyProblems} onClick={() => setOnlyProblems(!onlyProblems)}>Problems and fixes only</Button>
-        <Button size="sm" variant="outline" onClick={() => setNewestFirst(!newestFirst)}>{newestFirst ? "Newest first" : "Oldest first"}</Button>
+        <div className="contents max-md:grid max-md:grid-cols-2 max-md:gap-2">
+          <Button size="sm" variant={onlyProblems ? "default" : "outline"} aria-pressed={onlyProblems} aria-label="Problems and fixes only" onClick={() => setOnlyProblems(!onlyProblems)}><span>Problems<span className="max-md:hidden"> and fixes only</span><span className="md:hidden"> &amp; fixes</span></span></Button>
+          <Button size="sm" variant="outline" onClick={() => setNewestFirst(!newestFirst)}>{newestFirst ? "Newest first" : "Oldest first"}</Button>
+        </div>
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? <p className="text-sm text-muted-foreground">{onlyProblems ? "Nothing has gone wrong or been sent back." : "Nothing has happened yet."}</p> : (
@@ -91,7 +93,7 @@ export function Timeline({ detail, cap, selected, onSelect, onPeek }: { detail: 
                   </div>
                   <div className={cn("min-w-0 pb-4", e.tone === "loop" && "-ml-2 rounded-md border-l-2 border-loop/60 bg-loop/5 pl-2 pr-2 pt-1 mb-3")}>
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                      {e.nodeId ? <button type="button" onClick={() => onSelect(e.nodeId!)} className={cn("text-left font-medium hover:underline", isSel && "underline")}>{e.title}</button> : <span className="font-medium">{e.title}</span>}
+                      {e.nodeId ? <button type="button" onClick={() => onSelect(e.nodeId!)} className={cn("text-left font-medium hover:underline relative max-md:after:absolute max-md:after:-inset-x-2 max-md:after:-inset-y-3 max-md:after:content-['']", isSel && "underline")}>{e.title}</button> : <span className="font-medium">{e.title}</span>}
                       {e.run > 1 && !e.cycle ? <span className="rounded bg-muted px-1.5 text-[11px] text-muted-foreground">run {e.run}</span> : null}
                       <span className="flex-1" />
                       <span className="inline-flex items-center gap-1 text-xs tabular-nums text-muted-foreground" title={ago(e.at)}><Clock className="size-3" />{e.at ? clock(e.at) : "…"}{e.checks ? ` · last checked ${e.lastCheckAt ? clock(e.lastCheckAt) : "…"}` : e.end && e.end > e.at ? ` · took ${dur(e.end - e.at)}` : ""}</span>

@@ -37,7 +37,7 @@ export function ProfilesSettings() {
               <span className="flex-1" />
               {!p.current && p.running ? <Button size="sm" variant="outline" asChild><a href={p.url}><ExternalLink />Switch</a></Button> : null}
               {!p.current && p.name !== "default" ? (
-                <AlertDialog><AlertDialogTrigger asChild><Button size="sm" variant="outline" aria-label={`remove ${p.name}`}><Trash2 /></Button></AlertDialogTrigger>
+                <AlertDialog><AlertDialogTrigger asChild><Button size="sm" variant="outline" className="max-md:w-11" aria-label={`remove ${p.name}`}><Trash2 /></Button></AlertDialogTrigger>
                   <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Remove profile {p.name}?</AlertDialogTitle><AlertDialogDescription>It disappears from the list. Its data stays on disk in case you want it back. A running profile must be shut down first.</AlertDialogDescription></AlertDialogHeader>
                     <AlertDialogFooter><AlertDialogCancel>Keep it</AlertDialogCancel><AlertDialogAction onClick={() => void remove(p.name)}>Remove</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
               ) : null}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { Link } from "react-router-dom";
 import { ExternalLink, Play, Search } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -24,8 +25,8 @@ const LANE_PAGE = 10;
 function Lane({ state, items, render }: { state: string; items: BoardItem[]; render: (t: BoardItem) => React.ReactNode }) {
   const [shown, setShown] = useState(LANE_PAGE);
   return (
-    <section aria-label={state} className="grid w-72 shrink-0 content-start gap-2">
-      <h3 className="flex items-center gap-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{state}<span className="rounded-full bg-muted px-1.5 text-[10px] tabular-nums">{items.length}</span></h3>
+    <section aria-label={state} className="grid w-72 shrink-0 content-start gap-2 max-md:w-full">
+      <h3 className="flex items-center gap-2 px-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground max-md:sr-only">{state}<span className="rounded-full bg-muted px-1.5 text-[10px] tabular-nums">{items.length}</span></h3>
       {items.slice(0, shown).map(render)}
       {items.length > shown ? <Button size="sm" variant="ghost" onClick={() => setShown(shown + LANE_PAGE)}>Show {Math.min(LANE_PAGE, items.length - shown)} more ({items.length - shown} hidden)</Button> : null}
     </section>
@@ -37,14 +38,14 @@ function Ticket({ t, onStart, busy }: { t: BoardItem; onStart: (t: BoardItem) =>
   return (
     <div className="grid gap-2 rounded-lg border bg-card p-3 text-sm shadow-sm">
       <div className="flex items-center gap-2">
-        {href ? <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono text-xs font-semibold hover:underline">{t.key}<ExternalLink className="size-3" /></a> : <span className="font-mono text-xs font-semibold">{t.key}</span>}
+        {href ? <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 font-mono text-xs font-semibold hover:underline max-md:-my-3 max-md:min-h-11 max-md:pr-2">{t.key}<ExternalLink className="size-3" /></a> : <span className="font-mono text-xs font-semibold">{t.key}</span>}
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{t.projectName}</span>
       </div>
       <div className="font-medium leading-snug">{t.title}</div>
       {t.labels.length ? <div className="flex flex-wrap gap-1">{t.labels.map((l) => <Badge key={l} variant="outline" className="text-[10px]">{l}</Badge>)}</div> : null}
       <div className="flex items-center gap-2">
         {t.job ? (
-          <Link to={`/jobs/${t.job.id}`} className="flex items-center gap-2 text-xs hover:underline"><StatusBadge status={t.job.status} /><span className="text-muted-foreground">{stageLabel(t.job.stage).toLowerCase()}</span></Link>
+          <Link to={`/jobs/${t.job.id}`} className="flex items-center gap-2 text-xs hover:underline max-md:min-h-11"><StatusBadge status={t.job.status} /><span className="text-muted-foreground">{stageLabel(t.job.stage).toLowerCase()}</span></Link>
         ) : null}
         <span className="flex-1" />
         {t.canStart ? <Button size="sm" disabled={busy} onClick={() => onStart(t)}><Play />{t.job ? "Start again" : "Start"}</Button> : null}
@@ -77,18 +78,22 @@ export function Board() {
   const lanes = new Map<string, BoardItem[]>();
   for (const t of data?.items ?? []) lanes.set(t.state, [...(lanes.get(t.state) ?? []), t]);
   const searching = q !== "";
+  const mobile = useIsMobile();
+  const [lane, setLane] = useState<string | null>(null); // phones show one lane at a time
+  const laneNames = [...lanes.keys()];
+  const shownLane = lane && lanes.has(lane) ? lane : laneNames[0];
   const results = usePaged(data?.items ?? [], 25, `${q}|${project}`);
 
   return (
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full max-w-sm"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-          <Input aria-label="Search tickets" className="pl-8" value={text} onChange={(e) => setText(e.target.value)} placeholder="Find by number or title:  418,  JAM-418,  login" /></div>
+        <div className="relative w-full max-w-sm max-md:max-w-none"><Search className="pointer-events-none absolute left-2.5 top-2.5 max-md:top-3.5 size-4 text-muted-foreground" />
+          <Input aria-label="Search tickets" className="pl-8" value={text} onChange={(e) => setText(e.target.value)} placeholder={mobile ? "Ticket number or title" : "Find by number or title:  418,  JAM-418,  login"} /></div>
         {data && data.projects.length > 1 ? (
-          <Select value={project} onValueChange={setProject}><SelectTrigger className="w-48" aria-label="project filter"><SelectValue /></SelectTrigger>
+          <Select value={project} onValueChange={setProject}><SelectTrigger className="w-48 max-md:w-full" aria-label="project filter"><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value={ALL}>all projects</SelectItem>{data.projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select>
         ) : null}
-        {data ? <Badge variant="outline" className={cn(data.mode === "manual" ? "border-loop/50 text-loop" : "border-ok/50 text-ok")}>{data.mode === "manual" ? "Manual mode: nothing starts until you start it" : "Automatic mode: labelled tickets start on their own"}</Badge> : null}
+        {data ? <Badge variant="outline" className={cn("max-md:whitespace-normal max-md:py-1", data.mode === "manual" ? "border-loop/50 text-loop" : "border-ok/50 text-ok")}>{data.mode === "manual" ? "Manual mode: nothing starts until you start it" : "Automatic mode: labelled tickets start on their own"}</Badge> : null}
       </div>
       {msg ? <Alert variant={msg.ok ? "default" : "destructive"} role={msg.ok ? "status" : "alert"}><AlertDescription>{msg.text}</AlertDescription></Alert> : null}
       <ConnectionBanner error={error} updatedAt={updatedAt} what="board" />
@@ -98,7 +103,19 @@ export function Board() {
       {searching ? (<>
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{results.slice.map((t) => <div key={t.id} className="grid gap-1"><span className="text-xs text-muted-foreground">{t.state}</span><Ticket t={t} onStart={start} busy={busy !== null || offline} /></div>)}</div>
         <Pager page={results.page} pages={results.pages} pageSize={results.pageSize} total={results.total} onPage={results.setPage} onPageSize={results.setPageSize} />
-      </>) : (
+      </>) : mobile ? (
+        <div className="grid gap-3">
+          <div role="tablist" aria-label="Board columns" className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
+            {laneNames.map((s) => (
+              <button key={s} type="button" role="tab" aria-selected={s === shownLane} onClick={() => setLane(s)}
+                className={cn("flex h-11 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium", s === shownLane ? "border-foreground/60 bg-secondary text-foreground" : "border-input text-muted-foreground")}>
+                {s}<span className="rounded-full bg-muted px-1.5 text-xs tabular-nums">{lanes.get(s)!.length}</span>
+              </button>
+            ))}
+          </div>
+          {shownLane ? <Lane key={shownLane} state={shownLane} items={lanes.get(shownLane)!} render={(t) => <Ticket key={t.id} t={t} onStart={start} busy={busy !== null || offline} />} /> : null}
+        </div>
+      ) : (
         <div className="flex gap-3 overflow-x-auto pb-2">
           {[...lanes.entries()].map(([state, items]) => (
             <Lane key={state} state={state} items={items} render={(t) => <Ticket key={t.id} t={t} onStart={start} busy={busy !== null || offline} />} />

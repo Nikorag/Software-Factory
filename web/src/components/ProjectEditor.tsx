@@ -19,6 +19,8 @@ import { ModelPicker } from "./ModelPicker";
 import { startAction, TaskOutput } from "./TaskRunner";
 
 const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
+/** Repos, paths, branches and commands: no capital letter or "correction" from a phone keyboard. */
+const CODE = { autoCapitalize: "off", autoCorrect: "off", spellCheck: false } as const;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 export interface Form { passes: string; host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; access: string; loopback: boolean; specKit: boolean; bashAllow: string; lprojectId: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; tracker: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
 const blank = (): Form => ({ passes: "", host: "github", bbRepo: "", bbCred: "default", pickup: "", access: "", loopback: false, specKit: true, bashAllow: "", lprojectId: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", tracker: "", team: "", lproject: "", enabled: true, commands: {} });
@@ -32,7 +34,7 @@ const fromProject = (p: Project): Form => ({
 const same = (a: Form, b: Form) => JSON.stringify(a) === JSON.stringify(b);
 
 const Section = ({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) => (
-  <section className="grid gap-3"><div><h3 className="text-sm font-semibold">{title}</h3>{hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}</div>{children}</section>
+  <section className="grid gap-3 max-md:grid-cols-[minmax(0,1fr)]"><div><h3 className="text-sm font-semibold">{title}</h3>{hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}</div>{children}</section>
 );
 
 /** The whole editor for one project (or a new one). Server-side validation (duplicate repos, shared Linear targets, bad ids) is shown verbatim. */
@@ -93,7 +95,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
   const noTest = !f.commands.test?.trim();
 
   return (
-    <div className="grid gap-6">
+    <div className="grid gap-6 max-md:grid-cols-[minmax(0,1fr)] max-md:[&_.grid]:grid-cols-[minmax(0,1fr)]">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="min-w-0 flex-1 truncate text-lg font-semibold">{project ? project.name : "New project"}</h2>
         {project && !project.enabled ? <Badge variant="outline">disabled</Badge> : null}
@@ -109,7 +111,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
 
       {project?.onboarding ? (
         <section className="grid gap-2 rounded-lg border bg-muted/20 p-4" aria-label="Onboarding">
-          <div className="flex items-center gap-2"><h3 className="text-sm font-semibold">Onboarding</h3>
+          <div className="flex flex-wrap items-center gap-2"><h3 className="text-sm font-semibold">Onboarding</h3>
             <Badge variant="outline" className={cn(project.onboarding.status === "ready" ? "border-ok/40 text-ok" : project.onboarding.status === "in-progress" ? "border-loop/40 text-loop" : "text-muted-foreground")}>
               {project.onboarding.status === "ready" ? "Ready: tickets will be picked up" : project.onboarding.status === "in-progress" ? "Almost there: tickets are skipped until all of this is done" : "Not started: tickets are skipped until all of this is done"}</Badge></div>
           <ul className="grid gap-1.5 text-sm">
@@ -126,7 +128,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
       <Section title="General" hint="One Linear project maps to one repository. Nothing starts until a ticket in that Linear project is labelled and moved to the pickup status.">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5"><Label htmlFor="pe-name">Name</Label><Input id="pe-name" value={f.name} onChange={(e) => set("name", e.target.value)} placeholder="My App" /></div>
-          <div className="grid gap-1.5"><Label htmlFor="pe-id">Id</Label><Input id="pe-id" disabled={!!project} value={project ? project.id : f.id || slug(f.name)} onChange={(e) => set("id", slug(e.target.value))} placeholder="my-app" /></div>
+          <div className="grid gap-1.5"><Label htmlFor="pe-id">Id</Label><Input id="pe-id" {...CODE} disabled={!!project} value={project ? project.id : f.id || slug(f.name)} onChange={(e) => set("id", slug(e.target.value))} placeholder="my-app" /></div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5"><Label>Autonomy</Label>
@@ -144,26 +146,26 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
           <SelectContent><SelectItem value="github">{f.host === "bitbucket" ? "Bitbucket" : "GitHub"}: the factory keeps its own clone (recommended)</SelectItem><SelectItem value="path">An existing checkout on this machine</SelectItem></SelectContent></Select>
         {f.host === "bitbucket" ? (
           <>
-            {f.source === "path" ? <Input aria-label="checkout path" value={f.path} onChange={(e) => set("path", e.target.value)} placeholder="~/projects/my-app" /> : null}
-            <Input aria-label="Bitbucket repo" value={f.bbRepo} onChange={(e) => set("bbRepo", e.target.value)} placeholder="workspace/repository-slug" />
+            {f.source === "path" ? <Input aria-label="checkout path" {...CODE} value={f.path} onChange={(e) => set("path", e.target.value)} placeholder="~/projects/my-app" /> : null}
+            <Input aria-label="Bitbucket repo" {...CODE} value={f.bbRepo} onChange={(e) => set("bbRepo", e.target.value)} placeholder="workspace/repository-slug" />
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1.5"><Label htmlFor="pe-cred">Credential</Label>
                 {creds?.credentials.length ? <Select value={f.bbCred} onValueChange={(v) => set("bbCred", v)}><SelectTrigger id="pe-cred" aria-label="Bitbucket credential"><SelectValue /></SelectTrigger>
                   <SelectContent>{creds.credentials.map((c) => <SelectItem key={c.name} value={c.name}>{c.name} ({c.kind === "api-token" ? "API token" : "access token"})</SelectItem>)}</SelectContent></Select>
                   : <p className="text-xs text-loop">No credentials yet: add one in Settings → Integrations → Bitbucket.</p>}</div>
-              <div className="grid gap-1.5"><Label htmlFor="pe-branch">Default branch</Label><Input id="pe-branch" value={f.branch} onChange={(e) => set("branch", e.target.value)} /></div>
+              <div className="grid gap-1.5"><Label htmlFor="pe-branch">Default branch</Label><Input id="pe-branch" {...CODE} value={f.branch} onChange={(e) => set("branch", e.target.value)} /></div>
             </div>
             {project ? <div className="flex flex-wrap items-center gap-2"><Button type="button" size="sm" variant="outline" disabled={!f.bbRepo || dirty} onClick={async () => { setAccess("Checking…"); const r = await send<{ name: string; mainBranch: string | null }>("POST", `/api/bitbucket/credentials/${encodeURIComponent(f.bbCred)}/test`, { repo: f.bbRepo }); setAccess(r.ok ? `✓ ${r.data.name} is reachable${r.data.mainBranch ? ` (default branch ${r.data.mainBranch})` : ""}` : `✗ ${r.error}`); }}>Test access</Button>{access ? <span className="text-xs">{access}</span> : null}</div> : null}
           </>
         ) : (
           <>
-            {f.source === "github" ? <Input aria-label="GitHub repo" value={f.repo} onChange={(e) => set("repo", e.target.value)} placeholder="owner/name" /> : <Input aria-label="checkout path" value={f.path} onChange={(e) => set("path", e.target.value)} placeholder="~/projects/my-app" />}
+            {f.source === "github" ? <Input aria-label="GitHub repo" {...CODE} value={f.repo} onChange={(e) => set("repo", e.target.value)} placeholder="owner/name" /> : <Input aria-label="checkout path" {...CODE} value={f.path} onChange={(e) => set("path", e.target.value)} placeholder="~/projects/my-app" />}
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1.5"><Label htmlFor="pe-acct">GitHub account (gh)</Label>
                 {gh?.accounts.length ? <Select value={f.account || "__profile"} onValueChange={(v) => set("account", v === "__profile" ? "" : v)}><SelectTrigger id="pe-acct" aria-label="GitHub account"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="__profile">{gh.defaultAccount ? `profile default (${gh.defaultAccount})` : "gh's active login"}</SelectItem>{gh.accounts.map((a) => <SelectItem key={a.login} value={a.login}>{a.login}</SelectItem>)}</SelectContent></Select>
-                  : <Input id="pe-acct" value={f.account} onChange={(e) => set("account", e.target.value)} placeholder="optional" />}</div>
-              <div className="grid gap-1.5"><Label htmlFor="pe-branch">Default branch</Label><Input id="pe-branch" value={f.branch} onChange={(e) => set("branch", e.target.value)} /></div>
+                  : <Input id="pe-acct" {...CODE} value={f.account} onChange={(e) => set("account", e.target.value)} placeholder="optional" />}</div>
+              <div className="grid gap-1.5"><Label htmlFor="pe-branch">Default branch</Label><Input id="pe-branch" {...CODE} value={f.branch} onChange={(e) => set("branch", e.target.value)} /></div>
             </div>
           </>
         )}
@@ -185,16 +187,16 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
             {team?.projects.length ? <Select value={f.lproject || "__all"} onValueChange={(v) => set("lproject", v === "__all" ? "" : v)}><SelectTrigger id="pe-lp" aria-label="linear project"><SelectValue /></SelectTrigger>
               <SelectContent><SelectItem value="__all">{words.whole}</SelectItem>{team.projects.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent></Select>
               : <Input id="pe-lp" value={f.lproject} onChange={(e) => set("lproject", e.target.value)} placeholder="optional" />}</div>
-          <div className="grid gap-1.5"><Label htmlFor="pe-lpid">Tracker project id</Label><Input id="pe-lpid" className="font-mono text-xs" value={f.lprojectId} onChange={(e) => set("lprojectId", e.target.value)} placeholder="optional: use instead of the name" /></div>
+          <div className="grid gap-1.5"><Label htmlFor="pe-lpid">Tracker project id</Label><Input id="pe-lpid" {...CODE} className="font-mono text-xs" value={f.lprojectId} onChange={(e) => set("lprojectId", e.target.value)} placeholder="optional: use instead of the name" /></div>
         </div>
       </Section>
       <Separator />
       <Section title="Commands" hint="Run by the factory in a throwaway worktree, sandboxed. A test command is required before it will implement anything: use the project's own CI as the guide, then press “Run checks” to prove they work.">
-        <div className="grid gap-3 sm:grid-cols-2">{CMDS.map((k) => <div key={k} className="grid gap-1.5"><Label htmlFor={`pe-c-${k}`} className="capitalize">{k}</Label><Input id={`pe-c-${k}`} className="font-mono text-xs" value={f.commands[k] ?? ""} onChange={(e) => set("commands", { ...f.commands, [k]: e.target.value })} placeholder={k === "test" ? "npm test" : ""} /></div>)}</div>
+        <div className="grid gap-3 sm:grid-cols-2">{CMDS.map((k) => <div key={k} className="grid gap-1.5"><Label htmlFor={`pe-c-${k}`} className="capitalize">{k}</Label><Input id={`pe-c-${k}`} {...CODE} className="font-mono text-xs" value={f.commands[k] ?? ""} onChange={(e) => set("commands", { ...f.commands, [k]: e.target.value })} placeholder={k === "test" ? "npm test" : ""} /></div>)}</div>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={f.loopback} onChange={(e) => set("loopback", e.target.checked)} />
           <span>Allow local network in tests<span className="block text-xs text-muted-foreground">Lets test, lint and build commands use TCP on this machine only (e.g. tests that start an in-process database or mock server). Nothing outside this machine is reachable. Off by default.</span></span></label>
         <div className="grid gap-1.5"><Label htmlFor="pe-bash">Extra commands the agent may run</Label>
-          <textarea id="pe-bash" rows={3} className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs" placeholder={"GOLDEN_OUT=/tmp/golden godot --headless"} value={f.bashAllow} onChange={(e) => set("bashAllow", e.target.value)} />
+          <textarea id="pe-bash" {...CODE} rows={3} className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs" placeholder={"GOLDEN_OUT=/tmp/golden godot --headless"} value={f.bashAllow} onChange={(e) => set("bashAllow", e.target.value)} />
           <span className="text-xs text-muted-foreground">One command prefix per line. Only applies while agent access is restricted.</span></div>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={f.specKit} onChange={(e) => set("specKit", e.target.checked)} />
           <span>Use the SpecKit specification workflow<span className="block text-xs text-muted-foreground">On by default. Off skips spec generation for this project.</span></span></label>
@@ -212,13 +214,13 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
           {f.access === "unrestricted" && <span className="text-xs text-muted-foreground">The implementer can run any command your user can. Reviewers stay read-only and the factory still checks the diff for protected paths and secrets.</span>}</div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5"><Label htmlFor="pe-conc">Concurrent jobs</Label>
-            <div className="flex items-center gap-2"><Input id="pe-conc" type="number" min={1} max={8} className="w-24" value={f.conc} placeholder="1" onChange={(e) => set("conc", e.target.value)} />
+            <div className="flex items-center gap-2"><Input id="pe-conc" type="number" inputMode="numeric" min={1} max={8} className="w-24" value={f.conc} placeholder="1" onChange={(e) => set("conc", e.target.value)} />
               <span className="text-xs text-muted-foreground">{f.conc ? <button type="button" className="underline" onClick={() => set("conc", "")}>use default (1)</button> : "default: 1 (each job has its own worktree, but tickets in one repository often touch the same files)"}</span></div></div>
           <div className="grid gap-1.5"><Label htmlFor="pe-passes">Implementation passes</Label>
-            <div className="flex items-center gap-2"><Input id="pe-passes" type="number" min={1} max={10} className="w-24" value={f.passes} placeholder={String(globals?.maxImplementationPasses ?? 3)} onChange={(e) => set("passes", e.target.value)} />
+            <div className="flex items-center gap-2"><Input id="pe-passes" type="number" inputMode="numeric" min={1} max={10} className="w-24" value={f.passes} placeholder={String(globals?.maxImplementationPasses ?? 3)} onChange={(e) => set("passes", e.target.value)} />
               <span className="text-xs text-muted-foreground">{f.passes ? <button type="button" className="underline" onClick={() => set("passes", "")}>use global ({globals?.maxImplementationPasses ?? 3})</button> : `global: ${globals?.maxImplementationPasses ?? 3}`}</span></div></div>
           <div className="grid gap-1.5"><Label htmlFor="pe-fix">Fix cycle limit</Label>
-            <div className="flex items-center gap-2"><Input id="pe-fix" type="number" min={0} max={10} className="w-24" value={f.fix} placeholder={String(globals?.maxRemediationAttempts ?? 3)} onChange={(e) => set("fix", e.target.value)} />
+            <div className="flex items-center gap-2"><Input id="pe-fix" type="number" inputMode="numeric" min={0} max={10} className="w-24" value={f.fix} placeholder={String(globals?.maxRemediationAttempts ?? 3)} onChange={(e) => set("fix", e.target.value)} />
               <span className="text-xs text-muted-foreground">{f.fix !== "" ? <button type="button" className="underline" onClick={() => set("fix", "")}>use global ({globals?.maxRemediationAttempts ?? 3})</button> : `global: ${globals?.maxRemediationAttempts ?? 3}`}</span></div></div>
         </div>
         <div className="grid gap-3">
@@ -249,10 +251,10 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         </Section>
       </>) : null}
 
-      <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center gap-3 border-t bg-card/95 px-1 py-3 backdrop-blur">
-        {err ? <p role="alert" className="min-w-0 flex-1 text-sm text-destructive">{err}</p> : <p className="flex-1 text-sm text-muted-foreground">{saved ? "Saved. Applied immediately." : dirty ? "Unsaved changes" : ""}</p>}
-        <Button variant="outline" disabled={!dirty} onClick={() => setF(initial)}>Revert</Button>
-        <Button disabled={busy || !f.name.trim() || (!project && !dirty)} onClick={() => void save()}>{project ? "Save changes" : "Create project"}</Button>
+      <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center gap-3 border-t bg-card/95 px-1 py-3 backdrop-blur max-md:z-10 max-md:-mx-4 max-md:gap-2 max-md:px-4 max-md:pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+        {err ? <p role="alert" className="min-w-0 flex-1 text-sm text-destructive max-md:basis-full">{err}</p> : <p className="flex-1 text-sm text-muted-foreground max-md:basis-full max-md:empty:hidden">{saved ? "Saved. Applied immediately." : dirty ? "Unsaved changes" : ""}</p>}
+        <Button variant="outline" className="max-md:flex-1" disabled={!dirty} onClick={() => setF(initial)}>Revert</Button>
+        <Button className="max-md:flex-[2]" disabled={busy || !f.name.trim() || (!project && !dirty)} onClick={() => void save()}>{project ? "Save changes" : "Create project"}</Button>
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
-import { Activity, Columns3, GitBranch, Settings as SettingsIcon, Plus } from "lucide-react";
+import { Activity, Columns3, GitBranch, Settings as SettingsIcon, Plus, X } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { inHubMode } from "@/lib/api";
 import { electronMac } from "@/lib/platform";
@@ -8,29 +9,34 @@ import { ago } from "@/lib/format";
 import type { Job, Overview, Project, ProfileInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const row = "flex min-h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors hover:bg-accent/70";
+const row = "flex min-h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors hover:bg-accent/70 max-md:min-h-11 max-md:text-sm";
 const GROUPS: { id: Bucket; label: string; color: string }[] = [
   { id: "running", label: "Working", color: TONE.run }, { id: "needs", label: "Needs you", color: TONE.wait }, { id: "queued", label: "Queued", color: "#C4C4CC" },
 ];
 
-export function ProjectRail({ open, overview: o, projects, jobs, projectId, jobId, profiles, stop, paused, controls }: {
+export function ProjectRail({ open, onClose, overview: o, projects, jobs, projectId, jobId, profiles, stop, paused, controls }: {
   open: boolean;
+  /** Closes the drawer (phones only). */
+  onClose?: () => void;
   /** Pause / Emergency stop buttons, shown here (not in the header) on a phone. */
   controls?: React.ReactNode;
   overview: Overview | null; projects: Project[]; jobs: Job[]; projectId: string | null; jobId: string | null;
   profiles: { current: string; profiles: ProfileInfo[] } | null; stop: boolean; paused: boolean;
 }) {
   const nav = useNavigate();
+  const closeBtn = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (open) closeBtn.current?.focus(); }, [open]); // a keyboard or screen-reader user lands inside the drawer they opened
   const nameOf = (id: string) => projects.find((p) => p.id === id)?.name ?? id;
   const state = stop ? { t: "EMERGENCY STOP", c: TONE.fail } : paused ? { t: "PAUSED", c: TONE.wait } : { t: "RUNNING", c: TONE.ok };
   // A project that is not fully set up cannot run tickets yet, so it is greyed out and opens its settings (where the missing steps are listed).
   const ready = (p: Project) => !p.onboarding || p.onboarding.status === "ready";
   const pick = (p: Project) => nav(ready(p) ? lastTab(p.id) ?? `/p/${encodeURIComponent(p.id)}` : `/settings?tab=projects&project=${encodeURIComponent(p.id)}`);
   return (
-    <aside aria-label="Projects and jobs" className={cn("fixed inset-y-0 left-0 z-30 flex h-dvh min-h-0 w-[min(280px,85vw)] shrink-0 flex-col border-r border-line bg-rail transition-transform duration-200 md:static md:z-auto md:h-auto md:w-[264px] md:translate-x-0 md:transition-none", open ? "translate-x-0" : "-translate-x-full invisible md:visible")}>
+    <aside aria-label="Projects and jobs" className={cn("fixed inset-y-0 left-0 z-30 flex h-dvh min-h-0 w-[min(300px,85vw)] max-md:pb-safe max-md:pt-safe max-md:shadow-2xl shrink-0 flex-col border-r border-line bg-rail transition-transform duration-200 md:static md:z-auto md:h-auto md:w-[264px] md:translate-x-0 md:transition-none", open ? "translate-x-0" : "-translate-x-full invisible md:visible")}>
       <div className={cn("app-drag flex h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3.5", electronMac ? "pl-[84px]" : "pl-4")}>
         {inHubMode() ? <a href="/" className="text-xs text-muted-foreground hover:underline">← Hub</a> : null}
         <NavLink to="/" className="flex-1 truncate text-sm font-semibold">Software Factory</NavLink>
+        <button ref={closeBtn} type="button" onClick={onClose} aria-label="Close menu" className="-mr-2 flex size-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground md:hidden"><X className="size-5" /></button>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-3">
@@ -53,7 +59,7 @@ export function ProjectRail({ open, overview: o, projects, jobs, projectId, jobI
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between px-4 pb-1.5 pt-3.5">
           <span className="text-xs font-medium text-dim">Projects</span>
-          <NavLink to="/settings?tab=projects" aria-label="Add project" className="flex size-6 items-center justify-center rounded-md text-dim hover:bg-accent hover:text-foreground"><Plus className="size-3.5" /></NavLink>
+          <NavLink to="/settings?tab=projects" aria-label="Add project" className="flex size-6 items-center justify-center rounded-md text-dim hover:bg-accent hover:text-foreground max-md:-mr-2.5 max-md:size-11"><Plus className="size-3.5 max-md:size-4" /></NavLink>
         </div>
         <nav aria-label="Project list" className="flex flex-col gap-0.5 px-2">
           {projects.length === 0 ? <div className="px-2.5 py-1 text-xs text-dim">No projects yet.</div> : null}
@@ -81,7 +87,7 @@ export function ProjectRail({ open, overview: o, projects, jobs, projectId, jobI
               <div key={g.id}>
                 <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-2.5 text-[11.5px] font-semibold" style={{ color: g.color }}>{g.label} <span className="font-medium text-dim">{items.length}</span></div>
                 {items.map((j) => (
-                  <NavLink key={j.id} to={`/jobs/${j.id}`} className={cn(row, "min-h-8 text-[12.5px]", j.id === jobId && "bg-secondary")}>
+                  <NavLink key={j.id} to={`/jobs/${j.id}`} className={cn(row, "min-h-8 text-[12.5px] max-md:min-h-11 max-md:text-sm", j.id === jobId && "bg-secondary")}>
                     <span aria-hidden className="size-[7px] shrink-0 rounded-full" style={{ background: toneOf(j) }} />
                     <span className="min-w-0 flex-1 truncate"><span className="font-semibold">{nameOf(j.project)}</span><span className="text-muted-foreground"> · {stageName(j)}</span></span>
                     <span className="text-[11.5px] text-dim">{ago(j.updatedAt).replace(" ago", "")}</span>
@@ -95,7 +101,7 @@ export function ProjectRail({ open, overview: o, projects, jobs, projectId, jobI
 
       <nav aria-label="Factory" className="flex shrink-0 flex-col gap-0.5 border-t border-line p-2">
         {([["/board", "Board", Columns3], ["/jobs", "All jobs", GitBranch], ["/health", "Factory health", Activity], ["/settings", "Settings", SettingsIcon]] as const).map(([to, label, Icon]) => (
-          <NavLink key={to} to={to} className={({ isActive }) => cn(row, "min-h-[34px] text-[#C4C4CC]", isActive && "bg-accent text-foreground")}>
+          <NavLink key={to} to={to} className={({ isActive }) => cn(row, "min-h-[34px] text-[#C4C4CC] max-md:min-h-11", isActive && "bg-accent text-foreground")}>
             <Icon className="size-[15px]" aria-hidden />{label}
             {to === "/health" && o && o.health.length ? <span className="ml-auto size-[7px] rounded-full" style={{ background: o.health.every((h) => h.status === "ok") ? TONE.ok : TONE.wait }} aria-label={o.health.every((h) => h.status === "ok") ? "all checks passing" : "a check needs attention"} /> : null}
           </NavLink>

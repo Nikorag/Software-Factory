@@ -35,7 +35,7 @@ export function Peek({ jobId, runs, activeId, onActive, onClose, wrap, onWrap, c
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent showCloseButton={false} className={cn("flex h-[85vh] max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl", TERM.bg, TERM.text, TERM.line)}>
+      <DialogContent showCloseButton={false} className={cn("flex h-[85vh] max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl max-md:h-dvh max-md:max-h-dvh max-md:max-w-full max-md:rounded-none max-md:border-0 max-md:pb-safe max-md:pt-safe", TERM.bg, TERM.text, TERM.line)}>
         <DialogHeader className="sr-only">
           <DialogTitle>{active.finished ? "Conversation" : "Live"}: {role(active)}</DialogTitle>
           <DialogDescription>The back-and-forth of an agent run, shown like a Claude Code session.</DialogDescription>

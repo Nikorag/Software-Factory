@@ -55,27 +55,29 @@ export function ProjectOverview() {
             <div className="truncate text-[12.5px] text-muted-foreground">{[p?.githubRepo ?? p?.bitbucketRepo ?? p?.repository, pickup ? `${pickup === "manual" ? "Manual" : "Automatic"} pickup` : null, p?.overrides?.maxConcurrentJobs ? `up to ${p.overrides.maxConcurrentJobs} at once` : null].filter(Boolean).join(" · ")}</div>
           </div>
         </div>
-        <Button variant="outline" size="sm" asChild><Link to={`/settings?tab=projects&project=${encodeURIComponent(projectId)}`}>Project settings</Link></Button>
-        <Button size="sm" asChild><Link to="/board">Start a ticket</Link></Button>
+        <div className="contents max-md:grid max-md:w-full max-md:grid-cols-2 max-md:gap-2">
+          <Button variant="outline" size="sm" asChild><Link to={`/settings?tab=projects&project=${encodeURIComponent(projectId)}`}>Project settings</Link></Button>
+          <Button size="sm" asChild><Link to="/board">Start a ticket</Link></Button>
+        </div>
       </div>
       <ConnectionBanner error={error} updatedAt={updatedAt} what="board" />
       {msg ? <div role="status" className="rounded-lg border bg-card px-3 py-2 text-sm">{msg}</div> : null}
 
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3">
-        {stats.map((s) => <div key={s.label} className="rounded-xl border bg-card px-4 py-3.5"><div className="text-[26px] font-semibold leading-tight tracking-tight tabular-nums" style={{ color: s.c }}>{s.n}</div><div className="text-xs text-muted-foreground">{s.label}</div></div>)}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-3 max-md:grid-cols-3 max-md:gap-2">
+        {stats.map((s) => <div key={s.label} className="rounded-xl border bg-card px-4 py-3.5 max-md:px-3 max-md:py-2.5"><div className="text-[26px] max-md:text-[22px] font-semibold leading-tight tracking-tight tabular-nums" style={{ color: s.c }}>{s.n}</div><div className="text-xs text-muted-foreground">{s.label}</div></div>)}
       </div>
 
       <section aria-label="Ongoing jobs" className={card}>
         <h2 className="px-4 pb-2.5 pt-3.5 text-[13px] font-semibold">Ongoing</h2>
         {mine.length ? (
-          <div className="overflow-x-auto"><div className="min-w-[640px]">
+          <div className="overflow-x-auto"><div className="min-w-[640px] max-md:min-w-0">
             {mine.map((j) => (
-              <button key={j.id} type="button" onClick={() => nav(`/jobs/${j.id}`)} className="grid min-h-12 w-full grid-cols-[96px_minmax(0,1.4fr)_minmax(0,1fr)_130px_90px] items-center gap-3.5 border-t border-line px-4 text-left text-[13px] hover:bg-accent/40">
+              <button key={j.id} type="button" onClick={() => nav(`/jobs/${j.id}`)} className="grid min-h-12 w-full grid-cols-[96px_minmax(0,1.4fr)_minmax(0,1fr)_130px_90px] items-center gap-3.5 border-t border-line px-4 text-left text-[13px] hover:bg-accent/40 max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-1.5 max-md:py-3">
                 <span className="font-mono text-xs font-semibold">{j.key}</span>
-                <span className="truncate text-muted-foreground">{j.project}</span>
-                <span className="flex gap-0.5" aria-hidden>{stripStates(j).map((s, i) => <span key={i} className="h-1.5 flex-1 rounded-sm" style={{ background: s === "idle" ? SEG.idle : s === "run" ? toneOf(j) : SEG[s] }} />)}</span>
-                <span className="text-[12.5px]" style={{ color: toneOf(j) }}>{stageName(j)}</span>
-                <span className="text-right text-xs text-dim">{ago(j.updatedAt)}</span>
+                <span className="truncate text-muted-foreground max-md:hidden">{j.project}</span>
+                <span className="flex gap-0.5 max-md:col-span-2 max-md:row-start-3" aria-hidden>{stripStates(j).map((s, i) => <span key={i} className="h-1.5 flex-1 rounded-sm" style={{ background: s === "idle" ? SEG.idle : s === "run" ? toneOf(j) : SEG[s] }} />)}</span>
+                <span className="text-[12.5px] max-md:col-span-2 max-md:row-start-2" style={{ color: toneOf(j) }}>{stageName(j)}</span>
+                <span className="text-right text-xs text-dim max-md:col-start-2 max-md:row-start-1">{ago(j.updatedAt)}</span>
               </button>
             ))}
           </div></div>
@@ -89,7 +91,7 @@ export function ProjectOverview() {
             <div key={t.id} className="flex min-h-[46px] items-center gap-3 border-t border-line px-4 text-[13px]">
               <span className="w-[72px] shrink-0 font-mono text-xs text-muted-foreground">{t.key}</span>
               <span className="min-w-0 flex-1 truncate">{t.title}</span>
-              <Button variant="outline" size="sm" className="h-7 px-2.5 text-xs" disabled={busy !== null || offline} onClick={() => void start(t.id, t.key)}>Start</Button>
+              <Button variant="outline" size="sm" className="h-7 px-2.5 text-xs max-md:px-4 max-md:text-sm" disabled={busy !== null || offline} onClick={() => void start(t.id, t.key)}>Start</Button>
             </div>
           ))}
           {ready.length === 0 ? <div className="border-t border-line px-4 py-4 text-[13px] text-muted-foreground">Nothing is waiting to be started.</div> : null}
@@ -97,7 +99,7 @@ export function ProjectOverview() {
         <section aria-label="Recently finished" className={cn(card, "min-w-0 flex-1 basis-[380px]")}>
           <h2 className="px-4 pb-2.5 pt-3.5 text-[13px] font-semibold">Recently finished</h2>
           {finished.slice(0, 8).map((j) => (
-            <Link key={j.id} to={`/jobs/${j.id}`} className="flex min-h-[46px] items-center gap-3 border-t border-line px-4 text-[13px] hover:bg-accent/40">
+            <Link key={j.id} to={`/jobs/${j.id}`} className="flex min-h-[46px] max-md:min-h-12 items-center gap-3 border-t border-line px-4 text-[13px] hover:bg-accent/40">
               <span aria-hidden className="size-[7px] shrink-0 rounded-full" style={{ background: DONE_TONE[j.status] }} />
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{j.key}</span>
               <span className="text-xs" style={{ color: DONE_TONE[j.status] }}>{DONE_LABEL[j.status]}</span>

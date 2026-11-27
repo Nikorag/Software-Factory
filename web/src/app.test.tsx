@@ -294,20 +294,20 @@ const proj = { id: "my-app", name: "My App", enabled: true, autonomy: "supervise
 const setupInfo = { tracker: { kind: "linear", name: "Linear", connected: true }, configDir: null, homeConfigDir: "~/.software-factory/config", usingDefaults: true, projectCount: 1, linear: { keyPresent: true, env: "LINEAR_API_KEY", keychainService: "svc" } };
 
 describe("settings and setup", () => {
-  it("on a phone the project list sits behind its own burger button, and picking a project closes it", async () => {
+  it("on a phone the project list sits behind a project switcher button, and picking a project closes it", async () => {
     // (jsdom applies no breakpoint CSS: the button and the drawer are both in the DOM; what matters is the wiring)
     const user = userEvent.setup();
     routes = { "/api/overview": overview(), "/api/projects": { projects: [proj, { ...proj, id: "bare", name: "Bare", githubRepo: "me/bare", commands: {} }] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] } };
     app("/settings");
-    const burger = await screen.findByRole("button", { name: "Open projects menu" });
+    const burger = await screen.findByRole("button", { name: /Choose another project/ });
     expect(burger).toHaveAttribute("aria-expanded", "false");
     await user.click(burger);
-    expect(screen.getByRole("button", { name: "Open projects menu" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: /Choose another project/ })).toHaveAttribute("aria-expanded", "true");
     await user.click(screen.getByRole("button", { name: "Close projects menu" }));
-    expect(screen.getByRole("button", { name: "Open projects menu" })).toHaveAttribute("aria-expanded", "false");
-    await user.click(screen.getByRole("button", { name: "Open projects menu" }));
+    expect(screen.getByRole("button", { name: /Choose another project/ })).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getByRole("button", { name: /Choose another project/ }));
     await user.click(within(await screen.findByRole("navigation", { name: "Projects" })).getByRole("button", { name: /Bare/ }));
-    expect(screen.getByRole("button", { name: "Open projects menu" })).toHaveAttribute("aria-expanded", "false"); // chose one: the drawer closed
+    expect(screen.getByRole("button", { name: /Choose another project/ })).toHaveAttribute("aria-expanded", "false"); // chose one: the drawer closed
     expect(await screen.findByLabelText("Name")).toHaveValue("Bare");
   });
   it("shows projects in a list on the left and the selected one in a full editor", async () => {
