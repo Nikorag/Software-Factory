@@ -1,6 +1,13 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createImplementationHandlers } from "../src/implement/handlers.js";
+
+// Wraps (does not replace) the real function so the test can see what createContext hands it.
+vi.mock("../src/implement/handlers.js", async (importOriginal) => {
+  const m = await importOriginal<typeof import("../src/implement/handlers.js")>();
+  return { ...m, createImplementationHandlers: vi.fn(m.createImplementationHandlers) };
+});
 import { carryRepoFiles, mergeRepoFile, parseRepoFile, readRepoFileText, refreshRepoFile } from "../src/config/repo-file.js";
 import { ConfigError } from "../src/config/load.js";
 import pino from "pino";
@@ -203,6 +210,9 @@ describe("protected paths wiring", () => {
     expect(protectedPathsOf(config)).toEqual([".env", ".software-factory.yml"]);
     const ctx = createContext(config, { db: openDb(":memory:"), logger: pino({ level: "silent" }), agents: {} as never });
     expect((ctx.runner as unknown as { d: { protectedPaths: string[] } }).d.protectedPaths).toEqual([".env", ".software-factory.yml"]);
+    // the second enforcement point: the implementation stage's own protected-path check
+    const deps = vi.mocked(createImplementationHandlers).mock.calls.at(-1)![0];
+    expect(deps.settings.protectedPaths).toEqual([".env", ".software-factory.yml"]);
   });
 });
 
