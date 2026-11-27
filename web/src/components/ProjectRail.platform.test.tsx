@@ -24,9 +24,11 @@ async function renderRail(ua: string) {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("ProjectRail top row in the desktop app", () => {
-  it("reserves the window-controls area on the right on Windows/Linux and stays a drag region", async () => {
+  // The rail is a 264px column on the left; the Windows/Linux window buttons are top-right and Shell's header already reserves that corner.
+  // Reserving 144px here would only squeeze the title, so the rail header must not carry a right reserve.
+  it("adds no right reserve to the rail header on Windows/Linux and stays a drag region", async () => {
     const header = await renderRail(UA.overlay);
-    expect(header.className).toContain("md:pr-36");
+    expect(header.className).not.toContain("md:pr-36");
     expect(header.className).toContain("pl-4");
     expect(header.className).toContain("app-drag");
     expect(screen.getByLabelText("profile")).toBeTruthy();

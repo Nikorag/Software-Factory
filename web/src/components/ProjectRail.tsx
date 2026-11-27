@@ -3,7 +3,7 @@ import { Activity, Columns3, GitBranch, Settings as SettingsIcon, Plus, X } from
 import { useEffect, useRef } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { inHubMode } from "@/lib/api";
-import { electronMac, electronOverlay } from "@/lib/platform";
+import { electronMac } from "@/lib/platform";
 import { bucketOf, initialOf, lastTab, projectMeta, stageName, swatch, toneOf, TONE, type Bucket } from "@/lib/projects";
 import { ago } from "@/lib/format";
 import type { Job, Overview, Project, ProfileInfo } from "@/lib/types";
@@ -33,7 +33,7 @@ export function ProjectRail({ open, onClose, overview: o, projects, jobs, projec
   const pick = (p: Project) => nav(ready(p) ? lastTab(p.id) ?? `/p/${encodeURIComponent(p.id)}` : `/settings?tab=projects&project=${encodeURIComponent(p.id)}`);
   return (
     <aside aria-label="Projects and jobs" className={cn("fixed inset-y-0 left-0 z-30 flex h-dvh min-h-0 w-[min(300px,85vw)] max-md:pb-safe max-md:pt-safe max-md:shadow-2xl shrink-0 flex-col border-r border-line bg-rail transition-transform duration-200 md:static md:z-auto md:h-auto md:w-[264px] md:translate-x-0 md:transition-none", open ? "translate-x-0" : "-translate-x-full invisible md:visible")}>
-      <div className={cn("app-drag flex h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3.5", electronMac ? "pl-[84px]" : "pl-4", electronOverlay && "md:pr-36")}>
+      <div className={cn("app-drag flex h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3.5", electronMac ? "pl-[84px]" : "pl-4")}>
         {inHubMode() ? <a href="/" className="text-xs text-muted-foreground hover:underline">← Hub</a> : null}
         <NavLink to="/" className="flex-1 truncate text-sm font-semibold">Software Factory</NavLink>
         <button ref={closeBtn} type="button" onClick={onClose} aria-label="Close menu" className="-mr-2 flex size-11 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground md:hidden"><X className="size-5" /></button>
