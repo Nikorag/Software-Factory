@@ -97,7 +97,7 @@ export function registerBoardRoutes(app: FastifyInstance, d: BoardDeps, requireT
     if (!v.eligible) return reply.code(409).send({ error: `${issue.identifier}: ${v.reasons.join("; ")}` });
     const ob = onboardingFor(d.db, project, d.config.factory.workflow.planning_mode);
     if (ob.status !== "ready") return reply.code(409).send({ error: `${project.name} is not onboarded yet (still to do: ${ob.steps.filter((s) => !s.ok).map((s) => s.label.toLowerCase()).join("; ")})` });
-    const { job, created } = enqueue(d.db, { projectId: project.id, externalId: issue.id, externalKey: issue.identifier, workflow: v.workflow, autonomous: v.autonomous, dryRun: d.config.factory.dryRun, manual: true });
+    const { job, created } = enqueue(d.db, { projectId: project.id, externalId: issue.id, externalKey: issue.identifier, title: issue.title, workflow: v.workflow, autonomous: v.autonomous, dryRun: d.config.factory.dryRun, manual: true });
     if (!created) return reply.code(409).send({ error: `${issue.identifier} already has an active job` });
     d.db.insert(decisions).values({ jobId: job.id, kind: "manual.start", decision: `started ${issue.identifier} from the board as ${v.workflow}`, rationale: issue.url, actor: "dashboard" }).run();
     if (!d.config.factory.dryRun) enqueueOutbox(d.db, job.id, issue.id, { kind: "comment", body: `**Software factory** was asked to work on this ticket (\`${v.workflow}\`).` }, `${job.id}:pickup`);

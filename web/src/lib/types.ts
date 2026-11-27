@@ -1,4 +1,6 @@
 export interface Job {
+  /** The ticket title (absent for jobs from before it was recorded). */
+  title?: string | null;
   /** How the job is planned; absent (an older server) means Spec Kit, the original flow. */
   planningMode?: "haiku_prompt" | "speckit";
   id: string; key: string; project: string; workflow: string; stage: string; status: string; heldFromStage: string | null;
@@ -28,6 +30,8 @@ export interface Invocation { id: number; stageExecutionId: number | null; agent
 export interface JobDetail {
   job: Job; remediationCap?: number; stageOrder: string[]; executions: Execution[]; decisions: Decision[]; invocations: Invocation[];
   artifacts: { kind: string; path: string; bytes: number | null; at: number | null }[];
+  /** The Haiku-written implementer prompt and its acceptance criteria (haiku_prompt mode). */
+  plan?: { prompt: string; criteria: { id: string; text: string }[] } | null;
   worktree: { path: string; state: string; branch: string } | null;
   outbox: { id: number; kind: string; status: string; attempts: number; lastError: string | null }[];
 }

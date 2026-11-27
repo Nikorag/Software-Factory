@@ -58,6 +58,43 @@ describe("flow derivation (from the stage history the factory already stores)", 
   });
 });
 
+describe("job title and unconfigured projects", () => {
+  it("shows the ticket title on the job page and in the job list, not just the number", async () => {
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ title: "Optional due dates for todos" }), []) };
+    app("/jobs/j1");
+    expect(await screen.findByTestId("job-title")).toHaveTextContent("Optional due dates for todos");
+    expect(screen.getAllByText("JAM-1").length).toBeGreaterThan(0); // the key is still there
+  });
+  it("greys out a project that is not fully set up in the left rail, and sends you to its settings", async () => {
+    const half = { ...proj, id: "half", name: "Half Done", onboarding: { status: "in-progress" as const, steps: [{ id: "test", label: "Test command configured", ok: false, detail: "" }] } };
+    const done = { ...proj, onboarding: { status: "ready" as const, steps: [] } };
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [done, half] } };
+    app("/");
+    const rail = await screen.findByRole("navigation", { name: "Project list" });
+    const row = (name: RegExp) => within(rail).getByRole("button", { name });
+    await waitFor(() => expect(row(/Half Done/)).toHaveAttribute("data-configured", "false"));
+    expect(row(/Half Done/)).toHaveClass("opacity-50");
+    expect(row(/Half Done/)).toHaveAttribute("title", expect.stringMatching(/still to do: test command configured/));
+    expect(row(/My App/)).toHaveAttribute("data-configured", "true");
+    expect(row(/My App/)).not.toHaveClass("opacity-50");
+  });
+});
+
+describe("the implementer prompt on the job page", () => {
+  it("has a Prompt tile with the Haiku-written prompt and its criteria, and none when there is no prompt (Spec Kit)", async () => {
+    routes = { "/api/overview": overview(), "/api/jobs/j1": { ...detail(job(), []), plan: { prompt: "Add isOverdue to src/due.js, following the module style.", criteria: [{ id: "AC-01", text: "past dates are overdue" }] } } };
+    app("/jobs/j1");
+    const tile = await screen.findByRole("region", { name: "Prompt" });
+    expect(within(tile).getByLabelText("Implementer prompt")).toHaveTextContent("Add isOverdue to src/due.js, following the module style.");
+    expect(within(tile).getByText("AC-01")).toBeInTheDocument();
+    cleanup();
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), []) };
+    app("/jobs/j1");
+    await screen.findByRole("region", { name: "Session" });
+    expect(screen.queryByRole("region", { name: "Prompt" })).toBeNull();
+  });
+});
+
 describe("job page layout follows the screen", () => {
   const mobile = (on: boolean) => {
     window.matchMedia = ((q: string) => ({ matches: on && q.includes("max-width"), media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false })) as never;
@@ -79,6 +116,19 @@ describe("job page layout follows the screen", () => {
     expect(screen.getByRole("tab", { name: "Session" })).toHaveAttribute("aria-selected", "true");
     await userEvent.click(agents);
     expect(agents).toHaveAttribute("aria-selected", "true");
+  });
+  it("mobile moves Pause and Emergency stop out of the header and into the menu drawer, so the jobs dropdown has the room", async () => {
+    mobile(true);
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [proj] } };
+    app("/");
+    const group = await screen.findByRole("group", { name: "Factory controls" });
+    expect(within(group).getByRole("button", { name: /Pause/ })).toBeInTheDocument();
+    expect(within(group).getByRole("button", { name: /Emergency stop/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Pause/ })).toHaveLength(1); // not also in the header
+    cleanup(); mobile(false);
+    app("/");
+    expect(await screen.findByRole("button", { name: /Pause/ })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Factory controls" })).toBeNull(); // desktop keeps them in the header
   });
   it("mobile puts a project's open jobs in one dropdown next to Overview instead of a tab each", async () => {
     mobile(true);

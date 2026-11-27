@@ -123,6 +123,22 @@ describe("dashboard API data (real persisted state, nothing mocked)", () => {
     expect(o.system.memory.totalBytes).toBeGreaterThan(0);
     expect(o.health).toEqual([expect.objectContaining({ name: "sandbox", status: "ok" })]);
   });
+  it("carries the ticket title on jobs (null for jobs from before it was kept)", async () => {
+    const s = setup(); const a = s.job("JAM-1");
+    expect((await get(s.app, `/api/jobs/${a.id}`)).json().job.title).toBeNull();
+    s.db.update(jobs).set({ title: "Optional due dates for todos" }).where(eq(jobs.id, a.id)).run();
+    expect((await get(s.app, `/api/jobs/${a.id}`)).json().job.title).toBe("Optional due dates for todos");
+    expect((await get(s.app, "/api/jobs")).json().jobs.find((j: { id: string }) => j.id === a.id).title).toBe("Optional due dates for todos");
+  });
+  it("shows the Haiku-written prompt and criteria on the job (in full, not clipped), and null when there is none", async () => {
+    const s = setup(); const a = s.job("JAM-1");
+    expect((await get(s.app, `/api/jobs/${a.id}`)).json().plan).toBeNull();
+    const prompt = `Add isOverdue to src/due.js. ${"Follow the existing module style. ".repeat(100)}`;
+    s.db.insert(stageExecutions).values({ jobId: a.id, stage: "REQUIREMENTS_ANALYSIS", attempt: 1, outcome: "succeeded", idempotencyKey: "plan1", outputJson: JSON.stringify({ plan: { prompt, criteria: [{ id: "AC-01", text: "past dates are overdue" }] }, branch: "factory/JAM-1" }) }).run();
+    const plan = (await get(s.app, `/api/jobs/${a.id}`)).json().plan;
+    expect(plan.prompt).toBe(prompt); expect(plan.prompt.length).toBeGreaterThan(1500);
+    expect(plan.criteria).toEqual([{ id: "AC-01", text: "past dates are overdue" }]);
+  });
   it("lists jobs with filters, and shows full detail: stage history, decisions, agent runs, artefacts, outbox", async () => {
     const s = setup(); const a = s.job("JAM-1"); s.job("JAM-2");
     s.db.insert(stageExecutions).values({ jobId: a.id, stage: "DISCOVERED", attempt: 1, outcome: "succeeded", idempotencyKey: "k1" }).run();

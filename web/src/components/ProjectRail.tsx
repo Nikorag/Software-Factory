@@ -13,15 +13,19 @@ const GROUPS: { id: Bucket; label: string; color: string }[] = [
   { id: "running", label: "Working", color: TONE.run }, { id: "needs", label: "Needs you", color: TONE.wait }, { id: "queued", label: "Queued", color: "#C4C4CC" },
 ];
 
-export function ProjectRail({ open, overview: o, projects, jobs, projectId, jobId, profiles, stop, paused }: {
+export function ProjectRail({ open, overview: o, projects, jobs, projectId, jobId, profiles, stop, paused, controls }: {
   open: boolean;
+  /** Pause / Emergency stop buttons, shown here (not in the header) on a phone. */
+  controls?: React.ReactNode;
   overview: Overview | null; projects: Project[]; jobs: Job[]; projectId: string | null; jobId: string | null;
   profiles: { current: string; profiles: ProfileInfo[] } | null; stop: boolean; paused: boolean;
 }) {
   const nav = useNavigate();
   const nameOf = (id: string) => projects.find((p) => p.id === id)?.name ?? id;
   const state = stop ? { t: "EMERGENCY STOP", c: TONE.fail } : paused ? { t: "PAUSED", c: TONE.wait } : { t: "RUNNING", c: TONE.ok };
-  const pick = (id: string) => nav(lastTab(id) ?? `/p/${encodeURIComponent(id)}`);
+  // A project that is not fully set up cannot run tickets yet, so it is greyed out and opens its settings (where the missing steps are listed).
+  const ready = (p: Project) => !p.onboarding || p.onboarding.status === "ready";
+  const pick = (p: Project) => nav(ready(p) ? lastTab(p.id) ?? `/p/${encodeURIComponent(p.id)}` : `/settings?tab=projects&project=${encodeURIComponent(p.id)}`);
   return (
     <aside aria-label="Projects and jobs" className={cn("fixed inset-y-0 left-0 z-30 flex h-dvh min-h-0 w-[min(280px,85vw)] shrink-0 flex-col border-r border-line bg-rail transition-transform duration-200 md:static md:z-auto md:h-auto md:w-[264px] md:translate-x-0 md:transition-none", open ? "translate-x-0" : "-translate-x-full invisible md:visible")}>
       <div className={cn("app-drag flex h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3.5", electronMac ? "pl-[84px]" : "pl-4")}>
@@ -44,6 +48,8 @@ export function ProjectRail({ open, overview: o, projects, jobs, projectId, jobI
         {o ? <span className="whitespace-nowrap text-[11.5px] text-muted-foreground" title="The factory opens pull requests and never merges them">{o.mergeMode === "pr-only" ? "PR-only" : o.mergeMode}{o.dryRun ? " · DRY RUN" : ""}</span> : null}
       </div>
 
+      {controls ? <div role="group" aria-label="Factory controls" className="flex flex-wrap gap-2 border-b border-line px-4 pb-3 pt-1">{controls}</div> : null}
+
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex items-center justify-between px-4 pb-1.5 pt-3.5">
           <span className="text-xs font-medium text-dim">Projects</span>
@@ -52,12 +58,13 @@ export function ProjectRail({ open, overview: o, projects, jobs, projectId, jobI
         <nav aria-label="Project list" className="flex flex-col gap-0.5 px-2">
           {projects.length === 0 ? <div className="px-2.5 py-1 text-xs text-dim">No projects yet.</div> : null}
           {projects.map((p) => {
-            const meta = projectMeta(jobs.filter((j) => j.project === p.id)), sel = p.id === projectId;
+            const meta = projectMeta(jobs.filter((j) => j.project === p.id)), sel = p.id === projectId, setUp = ready(p);
+            const todo = p.onboarding?.steps.filter((x) => !x.ok).map((x) => x.label.toLowerCase()).join("; ");
             return (
-              <button key={p.id} type="button" onClick={() => pick(p.id)} aria-current={sel ? "true" : undefined} className={cn(row, "min-h-9", sel && "bg-accent")}>
-                <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-[5px] text-[11px] font-bold text-background" style={{ background: swatch(p.id) }}>{initialOf(p)}</span>
+              <button key={p.id} type="button" onClick={() => pick(p)} aria-current={sel ? "true" : undefined} data-configured={setUp ? "true" : "false"} title={setUp ? undefined : `Not fully set up yet (still to do: ${todo}). Open its settings.`} className={cn(row, "min-h-9", sel && "bg-accent", !setUp && "opacity-50 hover:opacity-80")}>
+                <span aria-hidden className={cn("flex size-5 shrink-0 items-center justify-center rounded-[5px] text-[11px] font-bold text-background", !setUp && "grayscale")} style={{ background: swatch(p.id) }}>{initialOf(p)}</span>
                 <span className={cn("min-w-0 flex-1 truncate", sel ? "font-semibold" : "font-medium")}>{p.name}</span>
-                <span className="whitespace-nowrap text-[11.5px]" style={{ color: meta.color }}>{meta.text}</span>
+                {setUp ? <span className="whitespace-nowrap text-[11.5px]" style={{ color: meta.color }}>{meta.text}</span> : <span className="whitespace-nowrap text-[11.5px] text-dim">Set up</span>}
               </button>
             );
           })}

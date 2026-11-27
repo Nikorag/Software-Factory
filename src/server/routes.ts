@@ -17,6 +17,7 @@ import { readConversation } from "../agents/transcript.js";
 import { readLimits, usageFile, windowIsCurrent } from "../agents/usage.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
 import { onboardingOf, type CheckRecord } from "../repo/readiness.js";
+import { latestPlan } from "../planning/plan.js";
 import type { RepoReport } from "../repo/inspect.js";
 import { registerBoardRoutes } from "./board-routes.js";
 import { registerBitbucketRoutes } from "./bitbucket-routes.js";
@@ -52,7 +53,7 @@ export interface ApiDeps {
 const ms = (d: Date | null | undefined) => (d ? d.getTime() : null);
 const baseJobRow = (j: typeof jobs.$inferSelect, planningMode: string) => ({
   planningMode, // how this job is planned: the dashboard draws the matching flow chart
-  id: j.id, key: j.externalKey, project: j.projectId, workflow: j.workflow, stage: j.stage, status: j.status, heldFromStage: j.heldFromStage,
+  id: j.id, key: j.externalKey, title: j.title, project: j.projectId, workflow: j.workflow, stage: j.stage, status: j.status, heldFromStage: j.heldFromStage,
   remediationAttempts: j.remediationAttempts, stageAttempts: j.stageAttempts, autonomous: j.autonomous, dryRun: j.dryRun, prUrl: j.prUrl,
   lastError: j.lastError, notBefore: ms(j.notBefore), createdAt: ms(j.createdAt), updatedAt: ms(j.updatedAt), archivedAt: ms(j.archivedAt),
 });
@@ -176,6 +177,8 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
         .map((a) => ({ id: a.id, stageExecutionId: a.stageExecutionId, agent: a.agent, model: a.model, exitCode: a.exitCode, durationMs: a.durationMs, finished: runFinished(a, a.stageExecutionId === null ? undefined : outcomeOf.get(a.stageExecutionId), job.status), usage: a.usageJson ? JSON.parse(a.usageJson) : null, hasLog: Boolean(a.logPath), at: ms(a.startedAt) })),
       artifacts: db.select().from(artifacts).where(eq(artifacts.jobId, id)).orderBy(asc(artifacts.id)).all().filter((a) => !a.kind.startsWith("step:"))
         .map((a) => ({ kind: a.kind, path: a.path, bytes: a.bytes, at: ms(a.createdAt) })),
+      /** The prompt Haiku wrote for the implementer and its acceptance criteria (haiku_prompt mode); null in Spec Kit mode or before it exists. */
+      plan: latestPlan(db, id) ?? null,
       worktree: db.select().from(worktrees).where(eq(worktrees.jobId, id)).get() ?? null,
       outbox: db.select().from(linearOutbox).where(eq(linearOutbox.jobId, id)).orderBy(asc(linearOutbox.id)).all()
         .map((o) => ({ id: o.id, kind: o.kind, status: o.status, attempts: o.attempts, lastError: clip(o.lastError, 300) })),

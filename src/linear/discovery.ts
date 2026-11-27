@@ -89,7 +89,7 @@ export async function discoverIssues(deps: {
       continue;
     }
     const { job, created } = enqueue(db, {
-      projectId: project.id, externalId: issue.id, externalKey: issue.identifier,
+      projectId: project.id, externalId: issue.id, externalKey: issue.identifier, title: issue.title,
       workflow: verdict.workflow, autonomous: verdict.autonomous, dryRun: deps.dryRun ?? false,
     });
     if (!created) continue;

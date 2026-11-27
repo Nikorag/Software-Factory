@@ -3,7 +3,8 @@ import type { Logger } from "pino";
 import { ConfigError } from "../config/load.js";
 import type { ProjectConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
-import { decisions } from "../db/schema.js";
+import { and, eq, isNull, ne, or } from "drizzle-orm";
+import { decisions, jobs } from "../db/schema.js";
 import type { StageResult } from "../core/engine.js";
 import type { AgentRunner } from "../agents/runner.js";
 import type { ModelRouter, TaskKind } from "../agents/router.js";
@@ -79,6 +80,8 @@ export function createStageKit(d: StageKitDeps) {
       if (e instanceof LinearApiError && !e.retryable) return { ok: false, stop: { kind: "blocked", reason: `cannot read the Linear issue: ${e.message}` } };
       throw e;
     }
+    // Keep the recorded title current (and fill it for jobs that predate it): the dashboard shows it beside the key.
+    d.db.update(jobs).set({ title: issue.title }).where(and(eq(jobs.id, job.id), or(isNull(jobs.title), ne(jobs.title, issue.title)))).run();
     return { ok: true, info, issue, ticket: withAnswers(ticketBlock(issue), humanQAs(d.db, job.id)), featureDir: featureDirFor(job.externalKey, issue.title), cwd: info.path };
   }
 

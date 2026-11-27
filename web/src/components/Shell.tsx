@@ -13,6 +13,7 @@ import { ProjectRail } from "@/components/ProjectRail";
 import { StatusBar } from "@/components/StatusBar";
 import { electronOverlay } from "@/lib/platform";
 import { openJobs, rememberTab } from "@/lib/projects";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 
 const TITLES: Record<string, string> = { "/": "All projects", "/board": "Board", "/jobs": "All jobs", "/health": "Factory health", "/settings": "Settings", "/setup": "Setup" };
@@ -52,27 +53,34 @@ export function Shell() {
     try { const err = await post(`/api/control/${name}`); setMsg(err); if (!err) await reload(); } finally { setBusy(false); }
   };
   const stop = o?.control.emergencyStop, paused = o?.control.paused;
+  const mobile = useIsMobile();
+  // Pause / Resume / Emergency stop / Clear stop. On a phone they live in the menu drawer: the header has no room for them beside the tabs.
+  const controls = o ? (
+    <>
+      {!paused && !stop ? <Button variant="outline" size="sm" disabled={busy || offline} onClick={() => void act("pause")}><Pause />Pause</Button> : null}
+      {paused && !stop ? <Button variant="outline" size="sm" disabled={busy || offline} onClick={() => void act("resume")}><Play />Resume</Button> : null}
+      {!stop ? (
+        <AlertDialog>
+          <AlertDialogTrigger asChild><Button variant="destructive" size="sm"><OctagonAlert />Emergency stop</Button></AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader><AlertDialogTitle>Emergency stop?</AlertDialogTitle><AlertDialogDescription>Running agents are terminated now and nothing new starts until you clear the stop.</AlertDialogDescription></AlertDialogHeader>
+            <AlertDialogFooter><AlertDialogCancel>Keep running</AlertDialogCancel><AlertDialogAction onClick={() => void act("stop")}>Stop everything</AlertDialogAction></AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
+      {stop ? <Button variant="outline" size="sm" disabled={busy || offline} onClick={() => void act("clear-stop")}><ShieldOff />Clear stop</Button> : null}
+    </>
+  ) : null;
   return (
     <div className="flex min-h-dvh w-full flex-col md:h-screen md:flex-row">
       {navOpen ? <div aria-hidden className="fixed inset-0 z-20 bg-black/55 md:hidden" onClick={() => setNavOpen(false)} /> : null}
-      <ProjectRail open={navOpen} overview={o} projects={projects} jobs={jobs} projectId={projectId} jobId={jobId} profiles={prof ?? null} stop={Boolean(stop)} paused={Boolean(paused)} />
+      <ProjectRail open={navOpen} overview={o} projects={projects} jobs={jobs} projectId={projectId} jobId={jobId} profiles={prof ?? null} stop={Boolean(stop)} paused={Boolean(paused)} controls={mobile ? controls : null} />
       <div className="flex min-w-0 flex-1 flex-col bg-background md:min-h-0">
         <header className={cn("app-drag flex min-h-[52px] shrink-0 flex-wrap items-center gap-1.5 border-b border-line px-3 py-2", electronOverlay && "md:pr-36")}>
           <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open menu" aria-expanded={navOpen} onClick={() => setNavOpen(true)}><Menu /></Button>
           {projectId ? <JobTabs projectId={projectId} jobs={jobs.filter((j) => j.project === projectId)} jobId={jobId} /> : <h1 className="px-1.5 text-sm font-semibold">{TITLES[pathname] ?? "Software Factory"}</h1>}
-          <span className="flex-1" />
-          {o && !paused && !stop ? <Button variant="outline" size="sm" disabled={busy || offline} onClick={() => void act("pause")}><Pause />Pause</Button> : null}
-          {o && paused && !stop ? <Button variant="outline" size="sm" disabled={busy || offline} onClick={() => void act("resume")}><Play />Resume</Button> : null}
-          {o && !stop ? (
-            <AlertDialog>
-              <AlertDialogTrigger asChild><Button variant="destructive" size="sm"><OctagonAlert />Emergency stop</Button></AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader><AlertDialogTitle>Emergency stop?</AlertDialogTitle><AlertDialogDescription>Running agents are terminated now and nothing new starts until you clear the stop.</AlertDialogDescription></AlertDialogHeader>
-                <AlertDialogFooter><AlertDialogCancel>Keep running</AlertDialogCancel><AlertDialogAction onClick={() => void act("stop")}>Stop everything</AlertDialogAction></AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          ) : null}
-          {o && stop ? <Button variant="outline" size="sm" disabled={busy || offline} onClick={() => void act("clear-stop")}><ShieldOff />Clear stop</Button> : null}
+          {mobile ? null : <span className="flex-1" />}
+          {mobile ? null : controls}
         </header>
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <div className="grid gap-3 px-6 empty:hidden [&>*:first-child]:mt-4">

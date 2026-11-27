@@ -93,6 +93,13 @@ export function JobDetail() {
           </div>
         
     </>) },
+    ...(d.plan ? [{ id: "prompt", tab: "Prompt", wide: true, tabId: undefined as string | undefined, node: (<>
+      <Card><CardContent className="grid gap-4 text-sm">
+        <div><h4 className="mb-1 font-semibold">Implementer prompt</h4><p className="mb-2 text-xs text-muted-foreground">Written by Haiku from the ticket and the repository. The implementer gets this, the acceptance criteria below and the ticket.</p>
+          <pre aria-label="Implementer prompt" className="max-h-[28rem] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-3 font-sans text-[13px] leading-relaxed">{d.plan.prompt}</pre></div>
+        <div><h4 className="mb-1 font-semibold">Acceptance criteria</h4><ul className="grid gap-1">{d.plan.criteria.map((c) => <li key={c.id}><b className="font-mono text-xs">{c.id}</b> {c.text}</li>)}</ul></div>
+      </CardContent></Card>
+    </>) }] : []),
     { id: "history", tab: "Stage history", wide: false, tabId: undefined, node: (<>
 <Card><CardContent>
           <div className="mb-3 flex flex-wrap items-center gap-2"><div className="relative w-full max-w-xs"><Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" /><Input aria-label="Filter stage history" className="pl-8" value={fh} onChange={(e) => setFh(e.target.value)} placeholder="Filter by stage, outcome or error" /></div>{node ? <span className="text-xs text-muted-foreground">Showing {node.label} only.</span> : null}</div>
@@ -135,7 +142,8 @@ export function JobDetail() {
     <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
       <Card><CardContent className="grid gap-4 md:grid-cols-[1.6fr_1fr_1fr] md:items-center">
         <div>
-          <div className="flex flex-wrap items-center gap-2"><h2 className="font-mono text-base font-semibold">{j.key}</h2><StatusBadge status={j.status} /><span className="text-sm text-muted-foreground">{j.project} · {j.workflow}{j.autonomous ? " · autonomous" : ""}{j.dryRun ? " · dry run" : ""}</span></div>
+          {j.title ? <h2 className="mb-1 break-words text-lg font-semibold leading-snug" data-testid="job-title">{j.title}</h2> : null}
+          <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-base font-semibold">{j.key}</span><StatusBadge status={j.status} /><span className="text-sm text-muted-foreground">{j.project} · {j.workflow}{j.autonomous ? " · autonomous" : ""}{j.dryRun ? " · dry run" : ""}</span></div>
           <div className="mt-2 flex flex-wrap gap-2">
             {pr ? <Button variant="outline" size="sm" asChild><a href={pr} target="_blank" rel="noopener noreferrer"><ExternalLink />pull request</a></Button> : null}
             {canRetry ? <Button size="sm" disabled={locked} title={archived ? "Retrying restores this job from the archive" : undefined} onClick={() => void run("retry", `/api/jobs/${j.id}/retry`)}>{pending === "retry" ? <Loader2 className="animate-spin" /> : <RotateCcw />}{archived ? "Retry and restore" : "Retry"}</Button> : null}

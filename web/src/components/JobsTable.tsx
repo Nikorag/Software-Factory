@@ -75,7 +75,7 @@ export function JobsTable({ jobs, actions, disabled }: { jobs: Job[]; actions?: 
       <TableBody>
         {jobs.map((j) => (
           <TableRow key={j.id} className="cursor-pointer" tabIndex={0} onClick={() => nav(`/jobs/${j.id}`)} onKeyDown={(e) => { if (e.key === "Enter") nav(`/jobs/${j.id}`); }}>
-            <TableCell className="font-mono text-xs">{j.key}{j.dryRun ? " (dry)" : ""}{j.archivedAt ? <span className="ml-1 text-muted-foreground">(archived)</span> : null}</TableCell>
+            <TableCell className="max-w-[320px]"><span className="font-mono text-xs">{j.key}{j.dryRun ? " (dry)" : ""}{j.archivedAt ? <span className="ml-1 text-muted-foreground">(archived)</span> : null}</span>{j.title ? <span className="block truncate text-xs text-muted-foreground" title={j.title}>{j.title}</span> : null}</TableCell>
             <TableCell>{j.project}</TableCell>
             <TableCell><ProgressStrip job={j} /></TableCell>
             <TableCell>{stageLabel(j.stage)}{j.heldFromStage ? <small className="text-muted-foreground"> ← {stageLabel(j.heldFromStage)}</small> : null}</TableCell>

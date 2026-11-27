@@ -20,6 +20,7 @@ export const jobs = sqliteTable(
     projectId: text("project_id").notNull().references(() => projects.id),
     externalId: text("external_id").notNull(), // Linear issue id
     externalKey: text("external_key").notNull(), // e.g. ENG-123
+    title: text("title"), // the ticket's title, recorded at pickup and refreshed whenever a stage reads the ticket (null for jobs from before it was kept)
     workflow: text("workflow").notNull().default("feature"),
     stage: text("stage").notNull().default("DISCOVERED"),
     status: text("status", { enum: ["queued", "running", "waiting", "done", "failed", "cancelled"] }).notNull().default("queued"),
