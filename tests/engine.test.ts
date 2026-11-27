@@ -189,17 +189,23 @@ describe("Claude usage limit", () => {
     expect(getJob(h.db, job.id)!.stage).toBe("COMPLETED");
   });
   it("does not abort a job that is already running when the limit is reached", async () => {
+    h.db.insert(projects).values({ id: "q", configJson: "{}" }).run();
     const job = add();
-    let limited = false, aborted = false;
+    let other = "";
+    let limited = false, aborted = false, startedMidRun = -1;
     const hang: StageHandler = ({ signal }) => new Promise((res) => {
-      limited = true; // the limit is hit mid-run
       signal.addEventListener("abort", () => { aborted = true; });
+      limited = true; // the limit is hit mid-run...
+      other = enqueue(h.db, { projectId: "q", externalId: "e2", externalKey: "E2" }).job.id; // a job in another project and a free slot: only the usage gate can stop it starting
+      startedMidRun = e.start(); // ...and the scheduler ticks again while this job is running
       setTimeout(() => res({ kind: "ok" }), 60);
     });
-    const e = engine({ ...simulatedHandlers(), IMPLEMENTATION: hang }, config(), { claudeLimits: () => (limited ? reading({ fiveHour: { utilization: 1, resetsAt: Date.now() + 3_600_000, status: "rejected" } }) : null) });
+    const e = engine({ ...simulatedHandlers(), IMPLEMENTATION: hang }, config({ maxConcurrentJobs: 2 }), { claudeLimits: () => (limited ? reading({ fiveHour: { utilization: 1, resetsAt: Date.now() + 3_600_000, status: "rejected" } }) : null) });
     await e.tick();
+    expect(startedMidRun).toBe(0);
     expect(aborted).toBe(false);
     expect(getJob(h.db, job.id)!.stage).toBe("COMPLETED");
+    expect(getJob(h.db, other)).toMatchObject({ stage: "DISCOVERED", status: "queued" });
   });
 });
 
