@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { carryRepoFiles, mergeRepoFile, parseRepoFile, readRepoFileText, refreshRepoFile } from "../src/config/repo-file.js";
 import { ConfigError } from "../src/config/load.js";
 import { effectiveProtectedPaths, FactoryConfig, ProjectConfig } from "../src/config/schema.js";
+import { findProtectedChanges } from "../src/agents/guard.js";
+import { toolPolicy } from "../src/agents/permissions.js";
 import { checkProject } from "../src/repo/check.js";
 import { onboardingOf } from "../src/repo/readiness.js";
 import { GitError, type GitFn } from "../src/repo/git.js";
@@ -176,6 +178,15 @@ describe("protected path", () => {
     expect(FactoryConfig.parse({}).protectedPaths).toContain(".software-factory.yml");
     expect(effectiveProtectedPaths([".env"])).toEqual([".env", ".software-factory.yml"]);
     expect(effectiveProtectedPaths([".software-factory.yml"])).toEqual([".software-factory.yml"]);
+  });
+  it("the real guard flags a changed .software-factory.yml, and the agent policy denies editing it, with a customised list", async () => {
+    const { repo } = makeRepo({ "README.md": "hi\n", ".software-factory.yml": FILE });
+    writeFileSync(join(repo, ".software-factory.yml"), "id: p\ncommands: { test: evil }\n");
+    sh(repo, "commit", "-qam", "job edit");
+    const paths = effectiveProtectedPaths([".env"]);
+    expect(await findProtectedChanges(repo, "HEAD~1", paths)).toEqual([".software-factory.yml"]);
+    expect(await findProtectedChanges(repo, "HEAD~1", [".env"])).toEqual([]); // without the helper the customised list would miss it
+    expect(toolPolicy("implementer", { protectedPaths: paths, roots: [repo] }).deny.some((r) => r.includes(".software-factory.yml"))).toBe(true);
   });
 });
 
