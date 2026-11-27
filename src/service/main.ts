@@ -6,6 +6,7 @@ import { createContext, type Context } from "../app/context.js";
 import type { LoadedConfig } from "../config/schema.js";
 import { decisions } from "../db/schema.js";
 import { ensureClone } from "../repo/clone.js";
+import { refreshRepoFile } from "../config/repo-file.js";
 import { validateProjects } from "../repo/registry.js";
 import { discoverIssues } from "../linear/discovery.js";
 import { flushOutbox } from "../linear/outbox.js";
@@ -71,7 +72,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     discover: async () => config.projects.projects.length === 0 ? { enqueued: [], skipped: [], errors: [] } : discoverIssues({ db: ctx.handle.db, trackers: ctx.trackers, linear: config.linear, projects: config.projects.projects, logger, dryRun: config.factory.dryRun, requireOnboarding: true, planningMode: config.factory.workflow.planning_mode, pickupMode: config.factory.pickupMode }),
     flush: async () => (config.factory.dryRun ? { sent: 0, failed: 0, pending: 0 } : flushOutbox({ db: ctx.handle.db, trackers: ctx.trackers, projectOf: (id) => config.projects.projects.find((p) => p.id === id), linear: config.linear, logger })),
     validate: async () => {
-      for (const p of config.projects.projects.filter((x) => x.enabled && x.managed)) { const c = await ensureClone(p, { hosts: ctx.hosts }); if (c.status === "error") logger.warn({ project: p.id, err: c.error }, "clone failed"); }
+      for (const p of config.projects.projects.filter((x) => x.enabled && x.managed)) { const c = await ensureClone(p, { hosts: ctx.hosts }); if (c.status === "error") logger.warn({ project: p.id, err: c.error }, "clone failed"); else { const r = await refreshRepoFile(p); if (r.status === "error") logger.warn({ project: p.id, err: r.error }, ".software-factory.yml not applied"); } }
       await validateProjects(ctx.handle.db, config.projects.projects, { hosts: ctx.hosts, planningMode: config.factory.workflow.planning_mode });
     },
   });

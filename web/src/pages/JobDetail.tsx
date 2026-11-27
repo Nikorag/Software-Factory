@@ -209,7 +209,7 @@ export function JobDetail() {
               <Button variant="outline" size="sm" className="w-full" aria-pressed={chart} onClick={() => setChart(!chart)}>{chart ? "Show as a list" : "Show the full chart"}</Button>
             </>) : (<>
               <FlowChart flow={flow} selected={sel} onSelect={setSel} />
-              <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2"><FlowLegend /><p className="text-xs text-muted-foreground">Click a step to see what it does. Drag to pan, ⌘-scroll to zoom.</p></div>
+              <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2"><FlowLegend /><p className="text-xs text-muted-foreground">Click a step to see what it does. Drag to pan when zoomed in, ⌘-scroll or pinch to zoom.</p></div>
             </>)}
             {selected}
           </section>

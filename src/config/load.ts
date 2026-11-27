@@ -19,7 +19,7 @@ export function expandHome(p: string): string {
 
 // Secrets must come from the environment. Reject config files that embed them.
 const SECRET_KEY = /(api[_-]?key|token|secret|password)$/i;
-function assertNoSecrets(value: unknown, file: string, path = ""): void {
+export function assertNoSecrets(value: unknown, file: string, path = ""): void {
   if (value && typeof value === "object") {
     for (const [k, v] of Object.entries(value)) {
       if (SECRET_KEY.test(k) && typeof v === "string" && v.length > 0) {

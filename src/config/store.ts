@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { isMap, isSeq, parseDocument, type Document, type YAMLMap } from "yaml";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir, loadConfig } from "./load.js";
+import { carryRepoFiles } from "./repo-file.js";
 import { BUILTIN_TRACKER_IDS, GithubIssuesConfig, JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, KIND_NAME, ProjectInput, ReviewerRoute, TrackerId, TrackerKind, ProjectOverrides, type LoadedConfig } from "./schema.js";
 
 const FILES = ["factory.yaml", "linear.yaml", "models.yaml", "workflows.yaml", "projects.yaml"];
@@ -103,6 +104,7 @@ export function removeProject(id: string, dir = seedHomeConfig()): LoadedConfig 
 
 /** Swap the project list inside the object the running service already holds, so engine, scheduler and server all see the change without a restart. */
 export function applyProjects(live: LoadedConfig, fresh: LoadedConfig): void {
+  carryRepoFiles(live.projects.projects, fresh.projects.projects); // a repo's .software-factory.yml keeps winning over the re-read projects.yaml
   live.projects.projects.splice(0, live.projects.projects.length, ...fresh.projects.projects);
 }
 
