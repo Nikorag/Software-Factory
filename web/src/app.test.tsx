@@ -81,17 +81,17 @@ describe("job title and unconfigured projects", () => {
 });
 
 describe("the implementer prompt on the job page", () => {
-  it("has a Prompt tile with the Haiku-written prompt and its criteria, and none when there is no prompt (Spec Kit)", async () => {
+  it("has a Prompt tab with the Haiku-written prompt and its criteria, and none when there is no prompt (Spec Kit)", async () => {
     routes = { "/api/overview": overview(), "/api/jobs/j1": { ...detail(job(), []), plan: { prompt: "Add isOverdue to src/due.js, following the module style.", criteria: [{ id: "AC-01", text: "past dates are overdue" }] } } };
-    app("/jobs/j1");
-    const tile = await screen.findByRole("region", { name: "Prompt" });
+    app("/jobs/j1?tab=prompt");
+    const tile = await screen.findByRole("tabpanel", { name: "Prompt" });
     expect(within(tile).getByLabelText("Implementer prompt")).toHaveTextContent("Add isOverdue to src/due.js, following the module style.");
     expect(within(tile).getByText("AC-01")).toBeInTheDocument();
     cleanup();
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), []) };
     app("/jobs/j1");
-    await screen.findByRole("region", { name: "Session" });
-    expect(screen.queryByRole("region", { name: "Prompt" })).toBeNull();
+    await screen.findByRole("tab", { name: "Overview" });
+    expect(screen.queryByRole("tab", { name: "Prompt" })).toBeNull();
   });
 });
 
@@ -100,22 +100,26 @@ describe("job page layout follows the screen", () => {
     window.matchMedia = ((q: string) => ({ matches: on && q.includes("max-width"), media: q, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false })) as never;
   };
   afterEach(() => { delete (window as { matchMedia?: unknown }).matchMedia; });
-  it("desktop shows every section as a tile, with no tab strip", async () => {
-    mobile(false);
-    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [exec("AUTOMATED_TESTING", "succeeded", 1)]) };
-    app("/jobs/j1");
-    for (const name of ["Session", "Stage history", "Agent runs", "Decisions", "Ask Claude", "Artifacts & write-back"]) expect(await screen.findByRole("region", { name })).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Agent runs" })).toBeNull();
-  });
-  it("mobile shows the same sections as tabs, one at a time", async () => {
-    mobile(true);
-    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [exec("AUTOMATED_TESTING", "succeeded", 1)]) };
-    app("/jobs/j1");
-    const agents = await screen.findByRole("tab", { name: "Agent runs" });
-    expect(screen.queryByRole("region", { name: "Agent runs" })).toBeNull();
-    expect(screen.getByRole("tab", { name: "Session" })).toHaveAttribute("aria-selected", "true");
-    await userEvent.click(agents);
-    expect(agents).toHaveAttribute("aria-selected", "true");
+  for (const size of ["desktop", "mobile"] as const) {
+    it(`${size} shows the job's sections as tabs, Overview first, one at a time`, async () => {
+      mobile(size === "mobile");
+      routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [exec("AUTOMATED_TESTING", "succeeded", 1)]) };
+      app("/jobs/j1");
+      const list = await screen.findByRole("tablist", { name: "Job sections" });
+      expect(within(list).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Overview", "Stage history1", "Agent runs", "Decisions", "Ask Claude", "Files"]);
+      expect(within(list).getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("region", { name: "Pipeline" })).toBeInTheDocument();
+      const agents = within(list).getByRole("tab", { name: "Agent runs" });
+      await userEvent.click(agents);
+      expect(agents).toHaveAttribute("aria-selected", "true");
+      expect(screen.queryByRole("region", { name: "Pipeline" })).toBeNull();
+    });
+  }
+  it("opens the tab named in the URL, so Back and a shared link land on the same section", async () => {
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { decisions: [{ id: 1, kind: "eligibility", decision: "eligible", rationale: null, actor: "factory", at: 1 }] }) };
+    app("/jobs/j1?tab=decisions");
+    expect(await screen.findByRole("tab", { name: /Decisions/ })).toHaveAttribute("aria-selected", "true");
+    expect(within(screen.getByRole("list", { name: "Decisions" })).getByText("eligible")).toBeInTheDocument();
   });
   it("mobile moves Pause and Emergency stop out of the header and into the menu drawer, so the jobs dropdown has the room", async () => {
     mobile(true);
@@ -218,19 +222,19 @@ describe("dashboard", () => {
     const j = job({ prUrl: "https://github.com/Nikorag/Zonto-Kart/pull/35", stage: "NEEDS_ATTENTION", status: "waiting", heldFromStage: "CLAUDE_REVIEW" });
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [exec("DISCOVERED")]) };
     app("/jobs/j1");
-    const a = await screen.findByRole("link", { name: /pull request/ });
+    const a = await screen.findByRole("link", { name: /pull request/i });
     expect(a).toHaveAttribute("rel", expect.stringContaining("noopener")); expect(a).toHaveAttribute("target", "_blank");
     expect(screen.getByRole("img", { name: "Pipeline flow chart" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Claude review: fail" })).toBeInTheDocument(); // marked where it stopped
     expect(screen.getByRole("button", { name: "Discovered: done" })).toBeInTheDocument();
-    expect(screen.getByText(/Retry resumes there/)).toBeInTheDocument();
+    expect(screen.getByText(/Retry resumes at Claude review/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Answer & resume/ })).toBeDisabled(); // nothing typed yet
   });
   it("shows friendly stage names, not the engine's ids, in the held banner, the history and the decisions", async () => {
     const j = job({ stage: "NEEDS_ATTENTION", status: "waiting", heldFromStage: "LOCAL_MODEL_REVIEW", lastError: "remediation attempts exhausted (3): 2 blocking finding(s) in LOCAL_MODEL_REVIEW" });
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [exec("LOCAL_MODEL_REVIEW", "succeeded")], { decisions: [{ id: 1, kind: "hold.NEEDS_ATTENTION", decision: "LOCAL_MODEL_REVIEW -> NEEDS_ATTENTION", rationale: null, actor: "factory", at: 1 }] }) };
     app("/jobs/j1");
-    expect(await screen.findByText(/Held at Needs attention \(was Independent review\)/)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Stopped at Independent review" })).toBeInTheDocument();
     expect(screen.queryByText(/LOCAL_MODEL_REVIEW/)).toBeNull();
   });
   it("offers to delete the worktree too when deleting a job that still has one", async () => {
@@ -269,7 +273,9 @@ describe("dashboard", () => {
     app("/jobs/j1");
     await userEvent.click(await screen.findByRole("button", { name: /Run checks: done/ }));
     expect(screen.getByText(/runs build, typecheck, lint and tests itself/)).toBeInTheDocument();
-    expect(screen.getAllByText("Showing Run checks only.").length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("button", { name: "Its stage history" }));
+    expect(screen.getByRole("tab", { name: /Stage history/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(/Showing Run checks only/)).toBeInTheDocument();
     expect(screen.queryByText("LOCAL_MODEL_REVIEW")).toBeNull();
   });
   it("controls work with no token and no read-only mode, sending the same-origin header", async () => {
@@ -297,6 +303,8 @@ describe("dashboard", () => {
     ];
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [], { feedback }), "/api/jobs/j1/feedback": { ok: true } };
     app("/jobs/j1");
+    expect(await screen.findByRole("heading", { name: "Ready for your review" })).toBeInTheDocument(); // the merge band offers it
+    await userEvent.click(screen.getByRole("button", { name: /Request changes/ }));
     const list = await screen.findByRole("list", { name: "Change requests" });
     expect(within(list).getByText("Done, pushed to the PR")).toBeInTheDocument();
     expect(within(list).getByText("Declined")).toBeInTheDocument();
@@ -502,7 +510,7 @@ describe("settings and setup", () => {
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [run] }), "/api/jobs/j1/invocations/7/conversation?after=0": { offset: 500, done: true, agent: "anthropic/implementer", model: "claude-opus-5-5", turns: [
       { kind: "prompt", text: "Implement the due-date feature\nline two\nline three\nline four" }, { kind: "session", model: "claude-opus-5-5", tools: 6 }, { kind: "text", text: "I'll start by reading the tests." },
       { kind: "tool", id: "t1", name: "Bash", input: "npm test" }, { kind: "tool_result", id: "t1", text: "12 passed\n3 skipped\nDone in 4s", error: false }, { kind: "usage", tokens: 50_000 }, { kind: "result", ok: true, text: "Done", turns: 3 } ] } };
-    app("/jobs/j1");
+    app("/jobs/j1?tab=agents");
     await userEvent.click(await screen.findByRole("button", { name: "Conversation" }));
     expect(await screen.findByText("I'll start by reading the tests.")).toBeInTheDocument();
     expect(screen.getByText("Prompt sent to Claude")).toBeInTheDocument();
@@ -523,7 +531,7 @@ describe("settings and setup", () => {
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ key: "JAM-419" }), [], { invocations: [run], worktree: wt }), "/api/jobs/j1/invocations/9/conversation?after=0": { offset: 9, done: true, agent: "anthropic/spec-writer", model: "claude-opus-5-5", cwd: wt.path, startedAt: 1, durationMs: 185_000, turns: [
       { kind: "session", model: "claude-opus-5-5", tools: 7 }, { kind: "tool", id: "a", name: "Read", input: "/x/y.ts" }, { kind: "tool", id: "b", name: "Bash", input: "ls" },
       { kind: "usage", tokens: 48_000 }, { kind: "result", ok: true, text: "ok", turns: 2 } ] } };
-    app("/jobs/j1");
+    app("/jobs/j1?tab=agents");
     await userEvent.click(await screen.findByRole("button", { name: "Conversation" }));
     const bar = within(await screen.findByRole("status", { name: "run status" }));
     expect(bar.getByText("JAM-419")).toBeInTheDocument();
@@ -650,7 +658,7 @@ describe("settings and setup", () => {
     const run = { id: 8, stageExecutionId: null, agent: "anthropic/implementer", model: null, exitCode: 0, durationMs: 1, finished: true, usage: null, hasLog: true, at: 1 };
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [run] }), "/api/jobs/j1/invocations/8/conversation?after=0": { offset: 1, done: true, agent: "x", model: null, turns: [
       { kind: "text", text: XSS }, { kind: "tool", id: "a", name: XSS, input: XSS }, { kind: "tool_result", id: "a", text: XSS, error: false } ] } };
-    const { container } = app("/jobs/j1");
+    const { container } = app("/jobs/j1?tab=agents");
     await userEvent.click(await screen.findByRole("button", { name: "Conversation" }));
     await screen.findAllByText(/<img src=x onerror=/);
     expect(container.querySelectorAll("img, script, iframe, object, embed").length).toBe(0);
@@ -969,7 +977,7 @@ describe("reliability: live state, lost connections and double clicks", () => {
     const stopped = { id: 3, stageExecutionId: null, agent: "anthropic/implementer", model: "m", exitCode: null, durationMs: 300_000, finished: true, usage: null, hasLog: true, at: 1 };
     const live = { ...stopped, id: 4, agent: "anthropic/reviewer", durationMs: null, finished: false };
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [stopped, live] }) };
-    app("/jobs/j1");
+    app("/jobs/j1?tab=agents");
     const rows = await screen.findAllByRole("row");
     const row = (agent: string) => within(rows.find((r) => within(r).queryByText(agent))!);
     expect(row("anthropic/implementer").getByRole("button", { name: "Conversation" })).toBeInTheDocument();

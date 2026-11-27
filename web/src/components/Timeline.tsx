@@ -65,7 +65,7 @@ export function Timeline({ detail, cap, selected, onSelect, onPeek }: { detail: 
 
   return (
     <Card>
-      <CardHeader className="flex-row flex-wrap items-center gap-x-4 gap-y-2">
+      <CardHeader className="flex flex-row flex-wrap items-center gap-x-4 gap-y-2">
         <CardTitle className="text-sm uppercase tracking-wider text-muted-foreground">What happened</CardTitle>
         <span className="text-xs text-muted-foreground">
           {stats.steps} step{stats.steps === 1 ? "" : "s"}

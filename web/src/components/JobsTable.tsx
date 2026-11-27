@@ -19,7 +19,7 @@ export interface JobActions { archive: (j: Job, archived: boolean) => void; remo
  * to remove it too: the job cannot be deleted while its worktree exists. A worktree with uncommitted changes needs a second, explicit
  * confirmation. Reused by the list and the job page.
  */
-export function DeleteJobButton({ job, onDelete, label, disabled }: { job: Job; onDelete: (o: DeleteOptions) => Promise<SendResult>; label?: string; disabled?: boolean }) {
+export function DeleteJobButton({ job, onDelete, label, disabled, size = "sm" }: { job: Job; onDelete: (o: DeleteOptions) => Promise<SendResult>; label?: string; disabled?: boolean; size?: "sm" | "default" }) {
   const [open, setOpen] = useState(false);
   const [wt, setWt] = useState<{ path: string } | null>(null);
   const [alsoWorktree, setAlsoWorktree] = useState(true);
@@ -50,7 +50,7 @@ export function DeleteJobButton({ job, onDelete, label, disabled }: { job: Job; 
 
   return (
     <AlertDialog open={open} onOpenChange={(o) => { if (!busy) setOpen(o); }}>
-      <AlertDialogTrigger asChild><Button size="sm" variant="outline" disabled={disabled} aria-label={`delete ${job.key}`}><Trash2 />{label}</Button></AlertDialogTrigger>
+      <AlertDialogTrigger asChild><Button size={size} variant="outline" disabled={disabled} aria-label={`delete ${job.key}`}><Trash2 />{label}</Button></AlertDialogTrigger>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Delete {job.key} permanently?</AlertDialogTitle>
         <AlertDialogDescription>This removes the job, its history and its agent logs. It cannot be undone. The pull request and the ticket are not touched. To keep the history but hide the job, archive it instead.</AlertDialogDescription></AlertDialogHeader>
         {wt ? (
