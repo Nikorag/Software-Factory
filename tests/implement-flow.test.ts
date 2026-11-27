@@ -31,6 +31,14 @@ describe.skipIf(!sandboxAvailable())("implementation pipeline (real engine, git,
     expect(sh(h.wt, "log", "--format=%an|%s", "origin/main..HEAD").split("\n")).toEqual(expect.arrayContaining(["Software Factory|impl(JAM-1): pass 1"]));
     expect(sh(h.repo, "status", "--porcelain")).toBe(""); // the original checkout is untouched
   });
+  it("records the agent's commentary in a successful agent step's output, and none for a step with no agent", async () => {
+    await h.engine.tick();
+    const out = (stage: string) => JSON.parse(h.ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.stage, stage)).get()!.outputJson!);
+    expect(typeof out("IMPLEMENTATION").commentary).toBe("string");
+    expect(out("IMPLEMENTATION").commentary.length).toBeGreaterThan(0);
+    expect(out("IMPLEMENTATION").summary).toBeDefined(); // the implementer's summary (used for the PR body) is still recorded
+    expect(out("IMPLEMENTATION_PREPARATION").commentary).toBeUndefined();
+  });
   it("ran the project's real checks in the sandbox (baseline, tests, final) and recorded the evidence", async () => {
     await h.engine.tick();
     const prep = JSON.parse(h.ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.stage, "IMPLEMENTATION_PREPARATION")).get()!.outputJson!);

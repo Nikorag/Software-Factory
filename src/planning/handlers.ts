@@ -1,5 +1,6 @@
 import type { StageHandler } from "../core/engine.js";
 import { createStageKit, type StageKitDeps } from "../app/stage-kit.js";
+import { withCommentary } from "../agents/commentary.js";
 import { criteriaFrom, ImplementationPlan } from "./plan.js";
 
 const MIN = 60_000;
@@ -38,5 +39,5 @@ export function createPromptHandlers(d: StageKitDeps) {
     return { kind: "ok", output: { plan: { prompt: plan.prompt.slice(0, MAX_PROMPT), criteria }, branch: p.info.branch } };
   };
 
-  return { REQUIREMENTS_ANALYSIS: requirementsAnalysis };
+  return withCommentary({ REQUIREMENTS_ANALYSIS: requirementsAnalysis });
 }

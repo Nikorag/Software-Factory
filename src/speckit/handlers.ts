@@ -12,6 +12,7 @@ import { Analysis, Analyze, Classification, blocking, Remediation, Review, type 
 import { commitPaths, isInitialised } from "./tools.js";
 import { createStageKit, failureToResult, formatAnswer, type StageKitDeps } from "../app/stage-kit.js";
 import { humanQAs } from "../core/jobs.js";
+import { withCommentary } from "../agents/commentary.js";
 
 export type SpecKitDeps = StageKitDeps;
 
@@ -190,11 +191,11 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
     return { kind: "ok", output: { accepted: r.data!.accepted, rejected: r.data!.rejected, summary: r.data!.summary } };
   };
 
-  return {
+  return withCommentary({
     REQUIREMENTS_ANALYSIS: requirementsAnalysis,
     SPECIFICATION_GENERATION: specificationGeneration,
     SPECIFICATION_REVIEW: specificationReview,
     SPECIFICATION_REMEDIATION: specificationRemediation,
     SPECIFICATION_VALIDATION: specificationValidation,
-  };
+  });
 }

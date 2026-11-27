@@ -9,6 +9,7 @@ import { writeExecWrapper } from "../exec/factory-exec.js";
 import { ensureDependencies } from "../exec/deps.js";
 import { git as realGit } from "../repo/git.js";
 import { createStageKit, type StageKitDeps } from "../app/stage-kit.js";
+import { withCommentary } from "../agents/commentary.js";
 import { readSpecBundle, validateSpecArtifacts } from "../speckit/artifacts.js";
 import { commitAll } from "../speckit/tools.js";
 import { addedLines, changedFiles, codeDiff, historyAddedLines, NON_CODE } from "./diff.js";
@@ -524,7 +525,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     { ...kit, implementer, wrapperFor, secretStop, ...(d.agentAccess ? { agentAccess: d.agentAccess } : {}) },
   );
 
-  return {
+  return withCommentary({
     CONFLICT_RESOLUTION: conflictResolution,
     IMPLEMENTATION_PREPARATION: implementationPreparation,
     IMPLEMENTATION: implementation,
@@ -533,7 +534,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     CLAUDE_REVIEW: claudeReview,
     REMEDIATION: remediation,
     FINAL_VALIDATION: finalValidation,
-  };
+  });
 }
 
 export interface ReportInput {
