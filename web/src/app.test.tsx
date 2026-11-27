@@ -189,6 +189,24 @@ describe("dashboard", () => {
     expect(screen.getByText("Dashboard only: the scheduler is not running.")).toBeInTheDocument();
     expect(screen.getByText("JAM-1")).toBeInTheDocument(); expect(screen.getByText("sandbox")).toBeInTheDocument();
   });
+  it("shows the usage-limit banner only while the server reports the limit exhausted", async () => {
+    const usage = (exhausted: { window: "fiveHour"; resetsAt: number } | null) => ({ limits: null, exhausted, estimatedListCostUsd: { last24h: 0, last7d: 0 } });
+    routes = { "/api/overview": overview({ claudeUsage: usage({ window: "fiveHour", resetsAt: Date.now() + 130 * 60_000 }) }) };
+    app("/");
+    const banner = await screen.findByTestId("usage-limit");
+    expect(banner).toHaveTextContent(/Claude usage limit reached/);
+    expect(banner).toHaveTextContent(/Running jobs continue/);
+    cleanup();
+    routes = { "/api/overview": overview({ claudeUsage: usage(null) }) };
+    app("/");
+    await screen.findByText("RUNNING");
+    expect(screen.queryByTestId("usage-limit")).toBeNull();
+    cleanup();
+    routes = { "/api/overview": overview() }; // no reading at all
+    app("/");
+    await screen.findByText("RUNNING");
+    expect(screen.queryByTestId("usage-limit")).toBeNull();
+  });
   it("offers the setup wizard when there are no projects, and not otherwise", async () => {
     routes = { "/api/overview": overview({ projectCount: 0 }) };
     app("/");

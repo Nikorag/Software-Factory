@@ -5,7 +5,7 @@ import { ClaudeCodeAgent } from "../agents/claude.js";
 import { LocalModelClient } from "../agents/local.js";
 import { ModelRouter } from "../agents/router.js";
 import { AgentRunner } from "../agents/runner.js";
-import { usageFile } from "../agents/usage.js";
+import { readLimits, usageFile } from "../agents/usage.js";
 import { ConfigError } from "../config/load.js";
 import { effectiveProtectedPaths, planningModeOf, type LoadedConfig, type ProjectConfig } from "../config/schema.js";
 import { openDb, type DbHandle } from "../db/client.js";
@@ -93,6 +93,6 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
       github: (p) => opts.github ?? hosts.pr(p), hosts, maxConflictResolutions: () => config.factory.workflow.max_conflict_resolutions, timing: opts.delivery, now: opts.deliveryNow, push: opts.push,
     }),
   };
-  const engine = new Engine({ db: handle.db, logger, config, handlers, observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun, planningMode }) });
+  const engine = new Engine({ db: handle.db, logger, config, handlers, claudeLimits: () => readLimits(usageFile(dataDir)), observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun, planningMode }) });
   return { config, handle, logger, router, runner, worktrees, linear, trackers, project, handlers, engine, hosts };
 }

@@ -16,7 +16,7 @@ import { WorktreeError } from "../repo/worktrees.js";
 import type { Scheduler } from "../service/scheduler.js";
 import { cachedSystemInfo, counts, type HealthChecker } from "../service/metrics.js";
 import { readConversation } from "../agents/transcript.js";
-import { readLimits, usageFile, windowIsCurrent } from "../agents/usage.js";
+import { exhaustedLimit, readLimits, usageFile, windowIsCurrent } from "../agents/usage.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
 import { onboardingOf, type CheckRecord } from "../repo/readiness.js";
 import { latestPlan } from "../planning/plan.js";
@@ -117,6 +117,8 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
     }
     return {
       limits: l ? { ...l, fiveHour: windowIsCurrent(l.fiveHour, now) ? l.fiveHour : null, sevenDay: windowIsCurrent(l.sevenDay, now) ? l.sevenDay : null } : null,
+      /** The window blocking new jobs right now (the rule lives in exhaustedLimit), or null. */
+      exhausted: exhaustedLimit(l, now),
       estimatedListCostUsd: { last24h: Math.round(day * 100) / 100, last7d: Math.round(week * 100) / 100 },
     };
   };

@@ -8,6 +8,7 @@ import { api, post, inHubMode } from "@/lib/api";
 import type { Overview, Project, ProfileInfo, UpdateInfo } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
+import { UsageLimitBanner } from "@/components/ClaudeUsage";
 import { JobTabs } from "@/components/JobTabs";
 import { ProjectRail } from "@/components/ProjectRail";
 import { StatusBar } from "@/components/StatusBar";
@@ -91,6 +92,7 @@ export function Shell() {
                 <Button variant="ghost" size="sm" className="ml-auto" onClick={dismiss} aria-label="dismiss update notice"><X /></Button></AlertDescription></Alert>
             ) : null}
             {stop ? <Alert variant="destructive" role="alert"><OctagonAlert /><AlertDescription>Emergency stop is active{o?.control.reason ? `: ${o.control.reason}` : ""}. No new work starts and running agents were terminated.</AlertDescription></Alert> : null}
+            <UsageLimitBanner usage={o?.claudeUsage} />
             {msg ? <Alert variant="destructive" role="alert"><AlertDescription>{msg}</AlertDescription></Alert> : null}
             <ConnectionBanner global error={error} updatedAt={updatedAt} what="dashboard" />
           </div>
