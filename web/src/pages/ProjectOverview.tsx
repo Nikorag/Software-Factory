@@ -8,7 +8,7 @@ import { usePoll } from "@/hooks/usePoll";
 import { api, send } from "@/lib/api";
 import { ago } from "@/lib/format";
 import { stripStates } from "@/lib/pipeline";
-import { initialOf, openJobs, stageName, swatch, toneOf, TONE } from "@/lib/projects";
+import { effectiveStatus, initialOf, openJobs, stageName, swatch, toneOf, TONE } from "@/lib/projects";
 import type { Board, Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -30,12 +30,12 @@ export function ProjectOverview() {
   const p = projData?.projects.find((x) => x.id === projectId);
   const name = p?.name ?? projectId;
   const mine = openJobs(o).filter((j) => j.project === projectId);
-  const finished = o.recent.filter((j) => j.project === projectId && ["done", "failed", "cancelled"].includes(j.status) && !j.archivedAt);
-  const n = (s: string) => mine.filter((j) => j.status === s).length;
+  const finished = o.recent.filter((j) => j.project === projectId && ["done", "failed", "cancelled"].includes(effectiveStatus(j)) && !j.archivedAt);
+  const n = (s: string) => mine.filter((j) => effectiveStatus(j) === s).length;
   const ready = (board?.items ?? []).filter((t) => t.canStart);
   const stats = [
     { n: n("running"), label: "running", c: TONE.run }, { n: n("queued"), label: "queued", c: "#ECECEE" }, { n: n("waiting") + n("failed"), label: "need you", c: TONE.wait },
-    { n: finished.filter((j) => j.status === "done").length, label: "finished recently", c: TONE.ok }, { n: n("failed"), label: "failed", c: n("failed") ? TONE.fail : "#ECECEE" },
+    { n: finished.filter((j) => effectiveStatus(j) === "done").length, label: "finished recently", c: TONE.ok }, { n: n("failed"), label: "failed", c: n("failed") ? TONE.fail : "#ECECEE" },
   ];
   const start = async (id: string, key: string) => {
     if (busy) return;
@@ -100,9 +100,9 @@ export function ProjectOverview() {
           <h2 className="px-4 pb-2.5 pt-3.5 text-[13px] font-semibold">Recently finished</h2>
           {finished.slice(0, 8).map((j) => (
             <Link key={j.id} to={`/jobs/${j.id}`} className="flex min-h-[46px] max-md:min-h-12 items-center gap-3 border-t border-line px-4 text-[13px] hover:bg-accent/40">
-              <span aria-hidden className="size-[7px] shrink-0 rounded-full" style={{ background: DONE_TONE[j.status] }} />
+              <span aria-hidden className="size-[7px] shrink-0 rounded-full" style={{ background: DONE_TONE[effectiveStatus(j)] }} />
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{j.key}</span>
-              <span className="text-xs" style={{ color: DONE_TONE[j.status] }}>{DONE_LABEL[j.status]}</span>
+              <span className="text-xs" style={{ color: DONE_TONE[effectiveStatus(j)] }}>{DONE_LABEL[effectiveStatus(j)]}</span>
               <span className="w-10 text-right text-xs text-dim">{ago(j.updatedAt).replace(" ago", "")}</span>
             </Link>
           ))}

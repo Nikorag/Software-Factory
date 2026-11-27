@@ -9,7 +9,7 @@ import type { FactoryDb } from "../db/client.js";
 import { agentInvocations, artifacts, decisions, jobs, linearOutbox, projects, stageExecutions, worktrees } from "../db/schema.js";
 import * as control from "../core/control.js";
 import type { Engine } from "../core/engine.js";
-import { answerJob, archiveJob, cancelJob, deleteJob, getJob, JobError, retryJob } from "../core/jobs.js";
+import { answerJob, archiveJob, cancelJob, deleteJob, getJob, isAwaitingMerge, JobError, retryJob } from "../core/jobs.js";
 import { listFeedback, requestChanges } from "../core/feedback.js";
 import { decideRequest, listRequests } from "../core/approvals.js";
 import { WorktreeError } from "../repo/worktrees.js";
@@ -129,8 +129,8 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
       control: control.getControl(db),
       counts: counts(db),
       active: all.filter((j) => j.status === "running").map(jobRow),
-      queued: all.filter((j) => j.status === "queued" || j.status === "waiting").slice(0, 30).map(jobRow),
-      recent: all.filter((j) => ["done", "failed", "cancelled"].includes(j.status)).slice(0, 20).map(jobRow),
+      queued: all.filter((j) => (j.status === "queued" || j.status === "waiting") && !isAwaitingMerge(j)).slice(0, 30).map(jobRow),
+      recent: all.filter((j) => ["done", "failed", "cancelled"].includes(j.status) || isAwaitingMerge(j)).slice(0, 20).map(jobRow),
       engineActive: d.engine?.activeJobIds() ?? [],
       scheduler: d.scheduler?.status() ?? null,
       system: await systemInfo(d.dataDir ?? "."),
