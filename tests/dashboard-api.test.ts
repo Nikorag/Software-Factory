@@ -133,6 +133,28 @@ describe("dashboard API data (real persisted state, nothing mocked)", () => {
     expect(o.system.memory.totalBytes).toBeGreaterThan(0);
     expect(o.health).toEqual([expect.objectContaining({ name: "sandbox", status: "ok" })]);
   });
+  it("treats a job awaiting a human merge as done, not queued, without changing what is stored", async () => {
+    const s = setup(); s.job("JAM-1"); s.job("JAM-2"); s.job("JAM-3");
+    const nb = new Date(Date.now() + 600_000);
+    s.db.update(jobs).set({ stage: "MERGING", status: "queued", notBefore: nb }).where(eq(jobs.externalKey, "JAM-2")).run();
+    s.db.update(jobs).set({ stage: "MERGING", status: "waiting", notBefore: nb }).where(eq(jobs.externalKey, "JAM-3")).run();
+    const o = (await get(s.app, "/api/overview")).json();
+    expect(o.counts.byStatus).toMatchObject({ queued: 1, waiting: 0, done: 2 });
+    expect(o.queued.map((j: { key: string }) => j.key)).toEqual(["JAM-1"]);
+    expect(o.recent.map((j: { key: string }) => j.key).sort()).toEqual(["JAM-2", "JAM-3"]);
+    const stored = s.db.select().from(jobs).where(eq(jobs.externalKey, "JAM-2")).get()!;
+    expect(stored.status).toBe("queued"); expect(stored.notBefore?.getTime()).toBe(nb.getTime());
+  });
+  it("caps recent at 20 finished jobs but never drops a job awaiting a merge", async () => {
+    const s = setup();
+    for (let i = 0; i < 25; i++) s.job(`DONE-${i}`);
+    s.db.update(jobs).set({ status: "done", stage: "COMPLETED", updatedAt: new Date(Date.now() + 1000) }).run();
+    s.job("WAIT-1");
+    s.db.update(jobs).set({ stage: "MERGING", status: "queued", updatedAt: new Date(0) }).where(eq(jobs.externalKey, "WAIT-1")).run(); // oldest: would fall past the cap
+    const recent = (await get(s.app, "/api/overview")).json().recent as { key: string }[];
+    expect(recent.map((j) => j.key)).toContain("WAIT-1");
+    expect(recent.filter((j) => j.key !== "WAIT-1")).toHaveLength(20);
+  });
   it("carries the ticket title on jobs (null for jobs from before it was kept)", async () => {
     const s = setup(); const a = s.job("JAM-1");
     expect((await get(s.app, `/api/jobs/${a.id}`)).json().job.title).toBeNull();

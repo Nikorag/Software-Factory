@@ -4,6 +4,7 @@ import { freemem, loadavg, totalmem, uptime } from "node:os";
 import { promisify } from "node:util";
 import { and, count, eq, gte, isNotNull, sql } from "drizzle-orm";
 import type { FactoryDb } from "../db/client.js";
+import { isAwaitingMerge } from "../core/jobs.js";
 import { agentInvocations, jobs, linearOutbox } from "../db/schema.js";
 
 const run = promisify(execFile);
@@ -48,7 +49,11 @@ export interface Counts { byStatus: Record<string, number>; outbox: { pending: n
 
 export function counts(db: FactoryDb, now = new Date(), windowMs = 3600_000): Counts {
   const byStatus: Record<string, number> = { queued: 0, running: 0, waiting: 0, done: 0, failed: 0, cancelled: 0 };
-  for (const r of db.select({ s: jobs.status, n: count() }).from(jobs).groupBy(jobs.status).all()) byStatus[r.s] = r.n;
+  // A job awaiting a human merge is stored as queued/waiting (it is re-polled) but reported as done.
+  for (const r of db.select({ s: jobs.status, st: jobs.stage, n: count() }).from(jobs).groupBy(jobs.status, jobs.stage).all()) {
+    const s = isAwaitingMerge({ stage: r.st, status: r.s }) ? "done" : r.s;
+    byStatus[s] = (byStatus[s] ?? 0) + r.n;
+  }
   const ob = (st: "pending" | "failed") => db.select({ n: count() }).from(linearOutbox).where(eq(linearOutbox.status, st)).get()?.n ?? 0;
   // Aggregated in SQL over the time window only: this runs on every /api/overview poll, and agent_invocations only ever grows.
   const failure = sql<string | null>`json_extract(${agentInvocations.usageJson}, '$.failure')`;

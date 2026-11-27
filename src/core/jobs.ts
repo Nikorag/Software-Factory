@@ -86,6 +86,9 @@ export function recoverExpired(db: FactoryDb, now: Date, exclude: Iterable<strin
 
 const HELD = ["BLOCKED", "FAILED", "NEEDS_ATTENTION", "PAUSED", "CANCELLED"];
 
+/** The PR is open and only a human merge is left: the stored status stays queued/waiting (the engine re-polls it), but it is reported as Done. */
+export const isAwaitingMerge = (j: { stage: string; status: string }): boolean => j.stage === "MERGING" && (j.status === "queued" || j.status === "waiting") && !HELD.includes(j.stage);
+
 /** Request cancellation. Queued/waiting jobs cancel immediately; running jobs are signalled and stop at the next check. */
 export function cancelJob(db: FactoryDb, id: string, actor: string): JobRow {
   return db.transaction((tx) => {
