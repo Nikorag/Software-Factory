@@ -66,6 +66,18 @@ describe("FlowChart scrolling and zoom", () => {
     fireEvent.click(step);
     expect(picked).toEqual([]);
   });
+  it("a fitted mouse drag released outside the canvas does not leave a gesture that pans on hover", () => {
+    const { canvas, inner } = setup();
+    let captured = 0; canvas.setPointerCapture = () => { captured++; };
+    const mouse = { pointerId: 1, pointerType: "mouse" };
+    fireEvent.pointerDown(canvas, { ...mouse, buttons: 1, clientX: 300, clientY: 100 });
+    fireEvent.pointerMove(canvas, { ...mouse, buttons: 1, clientX: 360, clientY: 100 }); // button then released elsewhere: no pointerup arrives
+    wheel(canvas, { ctrlKey: true });
+    const before = inner.style.transform;
+    fireEvent.pointerMove(canvas, { ...mouse, buttons: 0, clientX: 200, clientY: 100 });
+    expect(inner.style.transform).toBe(before);
+    expect(captured).toBe(0);
+  });
   it("pans on drag when zoomed in", () => {
     const { canvas, inner } = setup();
     let captured = 0; canvas.setPointerCapture = () => { captured++; };

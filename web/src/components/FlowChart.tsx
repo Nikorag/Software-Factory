@@ -62,6 +62,8 @@ function usePanZoom() {
       if (pts.current.size === 2) { const [a, b] = [...pts.current.values()]; gesture.current.dist = Math.hypot(a!.x - b!.x, a!.y - b!.y); }
     },
     onPointerMove: (e: React.PointerEvent) => {
+      // A mouse released outside the canvas (not captured while fitted) never sends pointerup here; drop that stale gesture rather than panning on hover.
+      if (e.pointerType === "mouse" && e.buttons === 0) { pts.current.delete(e.pointerId); gesture.current = null; return; }
       const g = gesture.current, prev = pts.current.get(e.pointerId); if (!g || !prev) return;
       const now = local(e);
       if (!g.moved && Math.hypot(e.clientX - g.ox, e.clientY - g.oy) < 6) return; // still a tap
