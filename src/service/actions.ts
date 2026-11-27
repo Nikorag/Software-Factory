@@ -1,5 +1,6 @@
 import type { Context } from "../app/context.js";
 import type { ProjectConfig } from "../config/schema.js";
+import { REPO_FILE, refreshRepoFile } from "../config/repo-file.js";
 import { checkProject } from "../repo/check.js";
 import { ensureClone } from "../repo/clone.js";
 import { syncProjects, validateProjects } from "../repo/registry.js";
@@ -13,6 +14,12 @@ export const ACTIONS: Record<ActionKind, string> = {
   sync: "Clone the repository", validate: "Validate the repository", check: "Run the project's commands (sandboxed)",
   onboard: "Add Spec Kit on a local review branch", "onboard-pr": "Add Spec Kit and open a pull request",
 };
+/** Applies the repo's committed .software-factory.yml; an invalid one is reported but never fails the action (the previous settings stay). */
+async function logRepoFile(p: ProjectConfig, log: (l: string) => void): Promise<void> {
+  const r = await refreshRepoFile(p);
+  if (r.status === "applied") log(`✓ ${REPO_FILE} applied from ${p.defaultBranch}`);
+  else if (r.status === "error") log(`! ${r.error} (previous settings kept)`);
+}
 export type ActionFn = (p: ProjectConfig, log: (l: string) => void) => Promise<boolean>;
 export type ProjectActions = Record<ActionKind, ActionFn>;
 
@@ -20,9 +27,10 @@ export type ProjectActions = Record<ActionKind, ActionFn>;
 export function createProjectActions(ctx: Pick<Context, "config" | "handle" | "runner" | "hosts">): ProjectActions {
   const { config } = ctx;
   const clone = async (p: ProjectConfig, log: (l: string) => void): Promise<boolean> => {
-    if (!p.managed) return true;
+    if (!p.managed) { await logRepoFile(p, log); return true; }
     const r = await ensureClone(p, { hosts: ctx.hosts });
     log(r.status === "error" ? `✗ clone failed: ${r.error}` : `✓ clone ${r.status}${"path" in r ? ` (${r.path})` : ""}`);
+    if (r.status !== "error") await logRepoFile(p, log);
     return r.status !== "error";
   };
   const onboard = (pr: boolean): ActionFn => async (p, log) => {

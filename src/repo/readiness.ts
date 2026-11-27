@@ -21,6 +21,8 @@ export function onboardingOf(project: ProjectConfig, report: RepoReport | null, 
     { id: "checks", label: "Commands verified", ok: Boolean(check?.ok),
       detail: !check ? "press Run checks to prove the commands work in the sandbox" : check.ok ? `passed ${new Date(check.at).toLocaleDateString()}` : "the last run failed: see Run checks" },
   ];
+  // Only shown when there is a problem: an invalid .software-factory.yml was not applied and the previous settings are in effect.
+  if (project.repoFileError) steps.push({ id: "repo-file", label: ".software-factory.yml valid", ok: false, detail: project.repoFileError });
   const ok = steps.filter((s) => s.ok).length;
   const essential = ["repo", "speckit", "test", "linear"].every((id) => steps.find((s) => s.id === id)?.ok ?? id === "speckit");
   return { steps, status: ok === steps.length ? "ready" : essential || ok > 1 ? "in-progress" : "not-started" };

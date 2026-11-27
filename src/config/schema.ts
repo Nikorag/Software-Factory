@@ -68,9 +68,15 @@ export const FactoryConfig = z.object({
   // and by verifying the worktree diff after every agent run. (The factory itself can never be a project: see loadConfig.)
   protectedPaths: z.array(z.string()).default([".git/**", ".env", ".env.*", "**/*.pem", "**/*.key", "**/id_rsa*", "**/id_ed25519*", "**/secrets/**", ".github/workflows/**",
     // the agents' own instruction set and the scripts they run: never editable by an agent
-    ".claude/**", ".specify/scripts/**", ".specify/templates/**", ".specify/workflows/**", ".specify/integrations/**"]),
+    ".claude/**", ".specify/scripts/**", ".specify/templates/**", ".specify/workflows/**", ".specify/integrations/**",
+    // the project's own factory settings (commands, allowLoopback...): only people change them
+    ".software-factory.yml"]),
 });
 export type FactoryConfig = z.infer<typeof FactoryConfig>;
+
+/** Always protected, even when a user's factory.yaml lists its own protectedPaths: it controls what runs with network access and how loose the sandbox is. */
+export const ALWAYS_PROTECTED_PATHS: readonly string[] = [".software-factory.yml"];
+export const effectiveProtectedPaths = (paths: readonly string[]): string[] => [...paths, ...ALWAYS_PROTECTED_PATHS.filter((p) => !paths.includes(p))];
 
 const Provider = z.enum(["local", "anthropic"]);
 const ModelRoute = z.object({
@@ -121,8 +127,17 @@ export const ProjectOverrides = z.object({
 });
 export type ProjectOverrides = z.infer<typeof ProjectOverrides>;
 
+/** Field definitions shared by projects.yaml and a repository's `.software-factory.yml` (see src/config/repo-file.ts). */
+export const ProjectId = z.string().regex(/^[a-z0-9][a-z0-9-]*$/);
+export const ProjectCommands = z.object({ install: z.string().optional(), build: z.string().optional(), test: z.string().optional(), lint: z.string().optional(), typecheck: z.string().optional() });
+export const ProjectGithub = z.object({
+  account: z.string().optional(),
+  // owner/name. If `repository` is omitted the factory clones this into <dataDir>/projects/<id> and owns that clone.
+  repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional(),
+});
+
 export const ProjectConfig = z.object({
-  id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/),
+  id: ProjectId,
   name: z.string(),
   repository: z.string(), // always an absolute-ish path after loading
   managed: z.boolean().default(false), // true: the factory owns this clone under <dataDir>/projects
@@ -139,21 +154,15 @@ export const ProjectConfig = z.object({
   // Used when host is "bitbucket": workspace/slug, and which stored credential (Settings > Integrations) to use.
   bitbucket: z.object({ repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional(), credential: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).default("default") }).prefault({}),
   // GitHub account that owns/accesses this repo. gh is invoked as this account per call; the global gh login is never switched.
-  github: z
-    .object({
-      account: z.string().optional(),
-      // owner/name. If `repository` is omitted the factory clones this into <dataDir>/projects/<id> and owns that clone.
-      repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional(),
-    })
-    .prefault({}),
+  github: ProjectGithub.prefault({}),
   overrides: ProjectOverrides.optional(),
   // Extra shell command prefixes the (restricted) implementer may run, e.g. "GOLDEN_OUT=/tmp/golden godot --headless". Ignored when unrestricted.
   agentBashAllow: z.array(z.string()).default([]),
   // Let this project's test/lint/build commands use TCP on this machine only (e.g. tests that start PGlite or a mock server). Off by default.
   allowLoopback: z.boolean().default(false),
-  commands: z
-    .object({ install: z.string().optional(), build: z.string().optional(), test: z.string().optional(), lint: z.string().optional(), typecheck: z.string().optional() })
-    .default({}),
+  commands: ProjectCommands.default({}),
+  // Runtime only (never written to projects.yaml): why this project's `.software-factory.yml` was not applied. See src/config/repo-file.ts.
+  repoFileError: z.string().optional(),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;
 /** What projects.yaml may contain: `repository` can be omitted when `github.repo` is given (factory-managed clone). */
