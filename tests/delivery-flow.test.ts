@@ -34,6 +34,8 @@ describe.skipIf(!sandboxAvailable())("PR-only delivery: push, open the PR, watch
     expect(h.github.created).toHaveLength(1);
     const pr = h.github.created[0]!;
     expect(pr).toMatchObject({ repo: "Nikorag/todo", head: "factory/JAM-1", base: "main", title: "JAM-1: Optional due dates for todos" });
+    expect(pr.body.startsWith("## Summary\nimplemented")).toBe(true);
+    expect(pr.body.indexOf("implemented")).toBeLessThan(pr.body.indexOf("Acceptance criteria"));
     expect(pr.body).toContain("Acceptance criteria"); expect(pr.body).toContain("MET FR-001"); expect(pr.body).toContain("PASS `test`");
     expect(pr.body).toMatch(/not\*\* merged automatically/);
     expect(job(h).prUrl).toBe("https://github.com/Nikorag/todo/pull/1");
@@ -62,6 +64,16 @@ describe.skipIf(!sandboxAvailable())("PR-only delivery: push, open the PR, watch
     expect(h.linear.issues.get(job(h).externalId)!.state.name).toBe("Done");
     expect(h.linear.issues.get(job(h).externalId)!.comments.map((c) => c.body).join("\n")).toMatch(/Merged/);
     expect(h.github.calls.filter((c) => /merge/i.test(c))).toEqual([]); // still: the factory never merged
+  });
+
+  it("opens the PR body with a summary built from the ticket title and commits when the implementer gave none", async () => {
+    const h = await harness({ timing: FAST });
+    h.claude.b.implementResult = () => ({ summary: "", tasksDone: ["T001"], tasksSkipped: [], deferred: [] });
+    await until(h, () => stageOf(h) === "MERGING");
+    const body = h.github.created[0]!.body;
+    expect(body.startsWith("## Summary\nImplements: Optional due dates for todos.")).toBe(true);
+    expect(body).not.toMatch(/## Summary\n\s*(\n|$)/);
+    expect(body.indexOf("## Summary")).toBeLessThan(body.indexOf("Acceptance criteria"));
   });
 
   it("STRUCTURAL GUARANTEE: there is no merge capability anywhere in the GitHub client or delivery code", () => {
