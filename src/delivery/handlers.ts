@@ -63,6 +63,19 @@ export function humanItems(o: { deferred: { id: string; what: string; reason: st
 }
 const HUMAN_HEADING = "## Needs human verification\nThe factory runs autonomously until this PR and cannot do these itself (manual or visual checks, real devices or servers, or a disputed finding it would otherwise loop on). Please verify them before merging:";
 
+/**
+ * The plain-language opening of the PR body. Prefers the implementer's own summary; otherwise a deterministic line from the
+ * ticket title and commit subjects. Never returns an empty heading.
+ */
+export function prSummary(o: { summary?: string | null; title: string; commits?: string[] }): string {
+  const given = (o.summary ?? "").trim();
+  if (given) return `## Summary\n${given}`;
+  const subjects = (o.commits ?? []).map((c) => c.trim()).filter(Boolean);
+  const title = o.title.trim();
+  const line = [title ? `Implements: ${title}.` : "", subjects.length ? `Commits: ${subjects.join("; ")}.` : ""].filter(Boolean).join(" ");
+  return line ? `## Summary\n${line}` : "";
+}
+
 const FOOTER = (key: string, url: string) => `\n\n---\n**Raised by the Software Factory** for [${key}](${url}). It is **not** merged automatically: a human reviews and merges this PR.`;
 
 /**
@@ -215,8 +228,14 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
         } else await gh.commentOnPr(repo, pr.number, `Updated by the Software Factory (head ${headRef}).`);
         await postHumanItems(gh, repo, pr.number, ctx.job.id, human);
       } else {
+        const impl = d.db.select().from(stageExecutions).where(and(eq(stageExecutions.jobId, ctx.job.id), eq(stageExecutions.stage, "IMPLEMENTATION"), eq(stageExecutions.outcome, "succeeded"))).orderBy(desc(stageExecutions.id)).limit(1).get();
+        let implSummary: string | undefined;
+        try { implSummary = impl?.outputJson ? (JSON.parse(impl.outputJson) as { summary?: string }).summary : undefined; } catch { /* fall back below */ }
+        let commits: string[] = [];
+        try { commits = (await git(p.cwd, ["log", "--format=%s", `${p.info.base}..HEAD`])).split("\n"); } catch { /* the title alone will do */ }
+        const summary = prSummary({ summary: implSummary, title: p.issue.title, commits });
         const humanSection = human.length ? `\n\n${HUMAN_HEADING}\n${human.join("\n")}` : "";
-        pr = await gh.createPr(repo, { head: p.info.branch, base: project.defaultBranch, title: `${p.issue.identifier}: ${p.issue.title}`, body: `${report || `Implements ${p.issue.identifier}.`}${humanSection}${FOOTER(p.issue.identifier, p.issue.url)}` });
+        pr = await gh.createPr(repo, { head: p.info.branch, base: project.defaultBranch, title: `${p.issue.identifier}: ${p.issue.title}`, body: `${summary ? `${summary}\n\n` : ""}${report || `Implements ${p.issue.identifier}.`}${humanSection}${FOOTER(p.issue.identifier, p.issue.url)}` });
         markPosted(ctx.job.id, human);
       }
       d.db.update(jobs).set({ prUrl: pr.url }).where(eq(jobs.id, ctx.job.id)).run();

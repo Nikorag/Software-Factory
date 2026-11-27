@@ -34,6 +34,8 @@ describe.skipIf(!sandboxAvailable())("PR-only delivery: push, open the PR, watch
     expect(h.github.created).toHaveLength(1);
     const pr = h.github.created[0]!;
     expect(pr).toMatchObject({ repo: "Nikorag/todo", head: "factory/JAM-1", base: "main", title: "JAM-1: Optional due dates for todos" });
+    expect(pr.body.startsWith("## Summary\nimplemented")).toBe(true);
+    expect(pr.body.indexOf("implemented")).toBeLessThan(pr.body.indexOf("Acceptance criteria"));
     expect(pr.body).toContain("Acceptance criteria"); expect(pr.body).toContain("MET FR-001"); expect(pr.body).toContain("PASS `test`");
     expect(pr.body).toMatch(/not\*\* merged automatically/);
     expect(job(h).prUrl).toBe("https://github.com/Nikorag/todo/pull/1");
