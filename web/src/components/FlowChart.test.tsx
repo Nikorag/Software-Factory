@@ -56,6 +56,16 @@ describe("FlowChart scrolling and zoom", () => {
     fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 160, clientY: 140 });
     expect(captured).toBe(0);
   });
+  it("a drag that starts and ends on a step does not select it, even while fitted", () => {
+    const picked: string[] = [];
+    render(<FlowChart flow={flow} selected={null} onSelect={(id) => picked.push(id)} />);
+    const step = screen.getAllByRole("button").find((b) => b.getAttribute("aria-label")?.includes(":"))!;
+    fireEvent.pointerDown(step, { pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(step, { pointerId: 1, clientX: 160, clientY: 100 });
+    fireEvent.pointerUp(step, { pointerId: 1, clientX: 160, clientY: 100 });
+    fireEvent.click(step);
+    expect(picked).toEqual([]);
+  });
   it("pans on drag when zoomed in", () => {
     const { canvas, inner } = setup();
     let captured = 0; canvas.setPointerCapture = () => { captured++; };

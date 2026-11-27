@@ -65,8 +65,8 @@ function usePanZoom() {
       const g = gesture.current, prev = pts.current.get(e.pointerId); if (!g || !prev) return;
       const now = local(e);
       if (!g.moved && Math.hypot(e.clientX - g.ox, e.clientY - g.oy) < 6) return; // still a tap
-      if (!g.moved && pts.current.size < 2 && cur.s <= fit + 0.001) return; // fitted to width there is nothing to pan, so a one-pointer drag is left to the page
-      if (!g.moved) { g.moved = true; try { box.current!.setPointerCapture(e.pointerId); } catch { /* not capturable */ } }
+      // Fitted to width there is nothing to pan, so a one-pointer drag does not capture the pointer; it is still a drag, so its click is suppressed.
+      if (!g.moved) { g.moved = true; if (pts.current.size >= 2 || cur.s > fit + 0.001) try { box.current!.setPointerCapture(e.pointerId); } catch { /* not capturable */ } }
       if (pts.current.size >= 2) {
         pts.current.set(e.pointerId, now);
         const [a, b] = [...pts.current.values()], d = Math.hypot(a!.x - b!.x, a!.y - b!.y);
