@@ -18,6 +18,8 @@ export interface ImplBehaviour {
   /** The implementer's structured answer on each implement pass (default: T001 done, nothing skipped or deferred). */
   implementResult?: (n: number) => S;
   failure?: (req: AgentRequest) => Partial<AgentResult> | undefined;
+  /** What the permission system refused during this run (as Claude Code reports it). */
+  denials?: (req: AgentRequest) => AgentResult["denials"];
 }
 
 export const write = (cwd: string, rel: string, content: string) => { const p = join(cwd, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, content); };
@@ -81,7 +83,7 @@ export class ImplAgent implements Agent {
     else if ("criteria" in props) s = this.b.finalReview(++this.n.final);
     else if ("accepted" in props) { this.b.remediate(req.cwd, dir, ++this.n.remediate, req); s = this.b.remediation(); }
     else if ("verdict" in props && "findings" in props) s = this.b.codeReview(++this.n.code);
-    else return this.ok();
-    return this.ok({ structured: s, text: JSON.stringify(s) });
+    else return this.ok({ denials: this.b.denials?.(req) ?? [] });
+    return this.ok({ structured: s, text: JSON.stringify(s), denials: this.b.denials?.(req) ?? [] });
   }
 }

@@ -11,6 +11,7 @@ import * as control from "../core/control.js";
 import type { Engine } from "../core/engine.js";
 import { answerJob, archiveJob, cancelJob, deleteJob, getJob, JobError, retryJob } from "../core/jobs.js";
 import { listFeedback, requestChanges } from "../core/feedback.js";
+import { decideRequest, listRequests } from "../core/approvals.js";
 import { WorktreeError } from "../repo/worktrees.js";
 import type { Scheduler } from "../service/scheduler.js";
 import { cachedSystemInfo, counts, type HealthChecker } from "../service/metrics.js";
@@ -181,6 +182,8 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
       /** The prompt Haiku wrote for the implementer and its acceptance criteria (haiku_prompt mode); null in Spec Kit mode or before it exists. */
       plan: latestPlan(db, id) ?? null,
       worktree: db.select().from(worktrees).where(eq(worktrees.jobId, id)).get() ?? null,
+      /** What the job's agents were refused that a person can allow (Approve / Deny on the job page), oldest first. */
+      permissions: listRequests(db, id).map((r) => ({ id: r.id, stage: r.stage, tool: r.tool, kind: r.kind, path: r.path, grant: r.grantPath.replace(/\/\*\*$/, "/"), folder: r.grantPath.endsWith("/**"), status: r.status, reason: r.reason, at: ms(r.createdAt), decidedAt: ms(r.decidedAt) })),
       /** Change requests on the job's pull request (job page or `/software-factory` PR comments), oldest first. */
       feedback: listFeedback(db, id).map((f) => ({ id: f.id, source: f.source, author: f.author, body: clip(f.body, 4000), path: f.path, line: f.line, url: f.url, status: f.status, note: clip(f.note, 1000), at: ms(f.createdAt), updatedAt: ms(f.updatedAt) })),
       outbox: db.select().from(linearOutbox).where(eq(linearOutbox.jobId, id)).orderBy(asc(linearOutbox.id)).all()
@@ -265,6 +268,13 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   });
   app.post<{ Params: { id: string }; Body: { answer?: unknown } }>("/api/jobs/:id/answer", { preHandler: requireToken }, async (req, reply) => {
     try { return { ok: true, job: jobRow(answerJob(db, req.params.id, typeof req.body?.answer === "string" ? req.body.answer : "", actor)) }; }
+    catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
+  });
+  /** Approve or deny one thing an agent asked for. Deciding the last open one resumes a job that was waiting for them. */
+  app.post<{ Params: { id: string; rid: string }; Body: { decision?: unknown } }>("/api/jobs/:id/permissions/:rid", { preHandler: requireToken }, async (req, reply) => {
+    const decision = req.body?.decision;
+    if (decision !== "approve" && decision !== "deny") return reply.code(400).send({ error: "decision must be approve or deny" });
+    try { const r = decideRequest(db, req.params.id, Number(req.params.rid), decision, actor); return { ok: true, job: jobRow(r.job), resumed: r.resumed }; }
     catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
   });
   /** "Request changes" on a job whose PR is open: queued, then applied by a fix pass and pushed to the same PR. */

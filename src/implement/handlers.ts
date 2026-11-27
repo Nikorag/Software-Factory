@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import type { StageHandler, StageResult } from "../core/engine.js";
 import { runProjectCommand, SandboxUnavailable, type CommandKind, type CommandResult } from "../exec/commands.js";
 import { writeExecWrapper } from "../exec/factory-exec.js";
+import { ensureDependencies } from "../exec/deps.js";
 import { git as realGit } from "../repo/git.js";
 import { createStageKit, type StageKitDeps } from "../app/stage-kit.js";
 import { readSpecBundle, validateSpecArtifacts } from "../speckit/artifacts.js";
@@ -75,17 +76,31 @@ export function createImplementationHandlers(d: ImplDeps) {
   }
 
   /** Runs the project's configured checks in order inside the sandbox. A failed build stops the rest. */
-  async function runChecks(ctx: { job: { id: string }; signal: AbortSignal }, wt: string, commands: Partial<Record<CommandKind, string>>, kinds: CommandKind[] = CHECK_ORDER, loopback = false): Promise<CommandResult[]> {
+  /** Where the fingerprint of the last successful dependency install in a job's worktree is kept (shared with the agent's check tool). */
+  const depsState = (jobId: string) => join(jobDir(jobId), "deps-installed.json");
+
+  async function runChecks(ctx: { job: { id: string }; signal: AbortSignal }, wt: string, commands: Partial<Record<CommandKind, string>>, kinds: CommandKind[] = CHECK_ORDER, loopback = false, o: { forceInstall?: boolean } = {}): Promise<CommandResult[]> {
     const results: CommandResult[] = [];
     const gitCommonDir = await commonDir(wt);
+    const one = (kind: CommandKind, command: string) => exec({
+      kind, command, worktree: wt, timeoutMs: d.settings.commandTimeoutSeconds * 1000, signal: ctx.signal,
+      logFile: join(d.dataDir, "logs", "commands", ctx.job.id, `${Date.now()}-${kind}.log`), profileDir: join(jobDir(ctx.job.id), "profiles"),
+      sandbox: { ...d.settings.sandbox, gitCommonDir, loopback },
+    });
+    // Dependencies follow the code: install (again) first when the manifests changed since the last install here (see exec/deps.ts).
+    if (commands.install && (kinds.includes("install") || kinds.some((k) => commands[k]))) {
+      mkdirSync(jobDir(ctx.job.id), { recursive: true });
+      const inst = await ensureDependencies({ worktree: wt, install: commands.install, state: depsState(ctx.job.id), force: o.forceInstall || kinds.includes("install"), run: (c) => one("install", c) });
+      if (inst) {
+        results.push(inst);
+        if (!kinds.includes("install")) record(ctx.job.id, "deps.install", inst.ok ? "dependency manifests changed: installed again before the checks" : "dependency manifests changed, and installing them failed", `\`${inst.command}\` ${inst.ok ? "passed" : `failed (exit ${inst.exitCode})`}`);
+        if (!inst.ok) return results; // checks against missing dependencies would only report the same thing
+      }
+    }
     for (const kind of kinds) {
       const command = commands[kind];
-      if (!command) continue;
-      const r = await exec({
-        kind, command, worktree: wt, timeoutMs: d.settings.commandTimeoutSeconds * 1000, signal: ctx.signal,
-        logFile: join(d.dataDir, "logs", "commands", ctx.job.id, `${Date.now()}-${kind}.log`), profileDir: join(jobDir(ctx.job.id), "profiles"),
-        sandbox: { ...d.settings.sandbox, gitCommonDir, loopback },
-      });
+      if (!command || kind === "install") continue;
+      const r = await one(kind, command);
       results.push(r);
       if (!r.ok && kind === "build") break;
     }
@@ -159,12 +174,13 @@ export function createImplementationHandlers(d: ImplDeps) {
   }
 
   async function wrapperFor(jobId: string, wt: string, commands: Partial<Record<CommandKind, string>>, loopback = false): Promise<{ path: string; checks: string[] }> {
-    const checks = CHECK_ORDER.filter((k) => commands[k]);
+    const checks: string[] = CHECK_ORDER.filter((k) => commands[k]);
     const path = writeExecWrapper(jobDir(jobId), {
       worktree: wt, profileDir: join(jobDir(jobId), "profiles"), timeoutMs: d.settings.commandTimeoutSeconds * 1000,
-      commands: Object.fromEntries(checks.map((k) => [k, commands[k]!])), sandbox: { ...d.settings.sandbox, gitCommonDir: await commonDir(wt), loopback },
+      commands: Object.fromEntries(checks.map((k) => [k, commands[k as CommandKind]!])), sandbox: { ...d.settings.sandbox, gitCommonDir: await commonDir(wt), loopback },
+      ...(commands.install ? { install: commands.install, depsState: depsState(jobId) } : {}),
     });
-    return { path, checks };
+    return { path, checks: commands.install ? [...checks, "install"] : checks };
   }
 
   const implementationPreparation: StageHandler = async (ctx) => {
@@ -181,7 +197,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     }
     try {
       if (project.commands.install) {
-        const [inst] = await runChecks(ctx, p.cwd, { install: project.commands.install }, ["install"], project.allowLoopback);
+        const [inst] = await runChecks(ctx, p.cwd, { install: project.commands.install }, ["install"], project.allowLoopback, { forceInstall: true });
         if (inst && !inst.ok) return { kind: "blocked", reason: `Dependency install failed (\`${inst.command}\`):\n${inst.tail.slice(-1500)}` };
       }
       // Baseline: the checks must pass on the untouched default branch, or failures could not be attributed to the change.
@@ -198,6 +214,17 @@ export function createImplementationHandlers(d: ImplDeps) {
     }
   };
 
+  /**
+   * The implementer finished without changing any code. Once is retried (with that failure in its prompt); twice in a row stops for a
+   * person, with what the implementer said, instead of retrying into FAILED (live: twice, then fixed by a human answer).
+   */
+  const noChange = (ctx: Parameters<StageHandler>[0], said: string): StageResult => {
+    const reason = `the implementer finished without changing any code${said ? `. It said: ${said.slice(0, 1500)}` : ""}`;
+    return ctx.job.stageAttempts >= 1
+      ? { kind: "needs_attention", reason: `${reason}\n\nThis happened twice. Answer with what it should do (or what it is missing, for example a path it may not write), then the job resumes.` }
+      : { kind: "retry", reason };
+  };
+
   /** haiku_prompt mode: one implementer run from the generated prompt. Verification, review and fix cycles are the stages that follow. */
   const implementDirect = async (ctx: Parameters<StageHandler>[0], p: Extract<Awaited<ReturnType<typeof prepare>>, { ok: true }>, plan: StoredPlan): Promise<StageResult> => {
     const project = d.project(ctx.job.projectId);
@@ -210,7 +237,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     await commitAll(p.cwd, `impl(${p.issue.identifier}): implement`, git);
     const leak = await secretStop(p.cwd, p.info.base);
     if (leak) return leak;
-    if ((await changedFiles(p.cwd, p.info.base, { code: true }, git)).length === 0) return { kind: "retry", reason: "the implementer finished without changing any code" };
+    if ((await changedFiles(p.cwd, p.info.base, { code: true }, git)).length === 0) return noChange(ctx, r.data!.summary);
     for (const x of r.data!.deferred) recordDeferral(d.db, ctx.job.id, { id: x.id, severity: "minor", issue: x.id }, x.reason);
     record(ctx.job.id, "implementation.pass", `implemented from the generated prompt${r.data!.deferred.length ? `, ${r.data!.deferred.length} deferred to a human` : ""}`, r.data!.summary);
     return { kind: "ok", output: { passes: 1, summary: r.data!.summary, deferred: r.data!.deferred, files: (await changedFiles(p.cwd, p.info.base, { code: true }, git)).length } };
@@ -244,7 +271,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       const leak = await secretStop(p.cwd, p.info.base);
       if (leak) return leak;
       if ((await changedFiles(p.cwd, p.info.base, { code: true }, git)).length === 0) {
-        return { kind: "retry", reason: "the implementer finished without changing any code" };
+        return noChange(ctx, r.data!.summary);
       }
       const changedThisPass = (await git(p.cwd, ["diff", "--name-only", before, "HEAD", "--", ".", ...NON_CODE])).trim().length > 0;
       for (const x of r.data!.deferred) recordDeferral(d.db, ctx.job.id, { id: x.id, severity: "minor", issue: x.id }, x.reason);
@@ -403,6 +430,16 @@ export function createImplementationHandlers(d: ImplDeps) {
     // Nothing changed and nothing was settled: another test-and-review cycle would see exactly the same thing. Retry this step,
     // which tells the implementer why (previousFailures), instead of spending a full fix cycle.
     if (after === before && rejected.length === 0 && deferred.length === 0) {
+      // No valid way forward is left to the agent: it cannot change the result and may not defer a failing check. Another identical
+      // run would only repeat this (live: three in a row, then FAILED). Ask a person, with the agent's own explanation.
+      if (refused.length || ctx.job.stageAttempts >= 1) {
+        const why = r.data!.deferred.filter((x) => refused.includes(x.id)).map((x) => `- ${x.id}: ${x.reason}`).join("\n");
+        return { kind: "needs_attention", reason: [
+          `The implementer could not fix ${findings.map((f) => f.id).join(", ")} and changed nothing${refused.length ? `. It asked to leave ${refused.join(", ")} to a person, which the factory does not allow for failing checks` : ""}.`,
+          why ? `Its reasons:\n${why}` : "", r.data!.summary ? `It said: ${r.data!.summary}` : "",
+          "Answer with what it should do (for example how the failing check should be installed or run), or fix it in the worktree, then the job resumes.",
+        ].filter(Boolean).join("\n\n") };
+      }
       return { kind: "retry", reason: `the implementer changed nothing and neither fixed, rejected nor deferred the findings (${findings.map((f) => f.id).join(", ")})${r.data!.accepted.length ? `; it reported ${r.data!.accepted.join(", ")} as fixed, but made no commit` : ""}` };
     }
     return { kind: "ok", output: { accepted: r.data!.accepted, rejected, deferred, refused, summary: r.data!.summary, head: after, changed: after !== before } };

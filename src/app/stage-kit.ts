@@ -15,6 +15,7 @@ import { WorktreeError, type WorktreeInfo, type WorktreeManager } from "../repo/
 import { featureDirFor } from "../speckit/artifacts.js";
 import { ticketBlock } from "../speckit/prompts.js";
 import { humanQAs, type HumanAnswer } from "../core/jobs.js";
+import { recordRequests, waitingReason } from "../core/approvals.js";
 import { toJsonSchema } from "../speckit/schemas.js";
 
 /** One answer, with what was asked and which stage asked it (a fresh agent never saw the question). */
@@ -89,12 +90,16 @@ export function createStageKit(d: StageKitDeps) {
     d.db.insert(decisions).values({ jobId, kind, decision, rationale: rationale ?? null, actor: "factory" }).run();
 
   /** Runs one agent step: boundary-checked, recorded, schema-validated. Failures come back as a ready-made StageResult. */
-  async function agent<T extends z.ZodType>(ctx: { job: { id: string; projectId?: string }; executionId: number; signal: AbortSignal }, o: AgentCall<T>): Promise<AgentOutcome<T>> {
+  async function agent<T extends z.ZodType>(ctx: { job: { id: string; projectId?: string; stage?: string }; executionId: number; signal: AbortSignal }, o: AgentCall<T>): Promise<AgentOutcome<T>> {
     const result = await d.runner.run({
       jobId: ctx.job.id, projectId: ctx.job.projectId, executionId: ctx.executionId, task: o.task, role: o.role, prompt: o.prompt, cwd: o.cwd,
       timeoutMs: o.timeoutMs, signal: ctx.signal, baseRef: o.baseRef, bashAllow: o.bashAllow, resumeSessionId: o.resumeSessionId,
       jsonSchema: o.schema ? toJsonSchema(o.schema) : undefined,
     });
+    // The agent was refused something a person can allow (see core/approvals.ts): ask, instead of carrying on without it (live:
+    // "changed nothing" twice, then FAILED). Asked once per request per job; this step resumes once everything is decided.
+    const asks = recordRequests(d.db, ctx.job.id, ctx.job.stage ?? "", result.denials ?? [], o.cwd);
+    if (asks.length) return { ok: false, stop: { kind: "needs_attention", reason: waitingReason(asks) } };
     if (!result.ok) return { ok: false, stop: failureToResult(result, o.role) };
     if (!o.schema) return { ok: true, data: undefined, result };
     const parsed = o.schema.safeParse(result.structured);

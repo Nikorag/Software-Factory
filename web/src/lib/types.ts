@@ -36,6 +36,12 @@ export interface JobDetail {
   outbox: { id: number; kind: string; status: string; attempts: number; lastError: string | null }[];
   /** Change requests on the job's pull request, oldest first (absent from servers that predate them). */
   feedback?: Feedback[];
+  /** What the job's agents were refused that a person can allow (absent from servers that predate them). */
+  permissions?: PermissionRequest[];
+}
+export interface PermissionRequest {
+  id: number; stage: string; tool: string; kind: "read"; path: string; grant: string; folder: boolean;
+  status: "pending" | "approved" | "denied" | "refused"; reason: string | null; at: number | null; decidedAt: number | null;
 }
 export interface Feedback {
   id: number; source: "dashboard" | "github"; author: string; body: string; path: string | null; line: number | null; url: string | null;

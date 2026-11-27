@@ -18,7 +18,7 @@ export function buildClaudeArgs(req: AgentRequest): string[] {
     "--permission-mode", "auto", // the same mode an interactive auto-mode session uses; settings files load as they would there
     "--strict-mcp-config",
   ]);
-  const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow, roots: pathRoots(req.cwd) });
+  const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow, roots: pathRoots(req.cwd), readPaths: req.readPaths });
   return finishArgs(req, [
     "-p",
     "--output-format", "stream-json", "--verbose", // one JSON event per line, as it happens: the whole conversation is logged live, and the last line is the result
@@ -71,7 +71,7 @@ export function parseClaudeOutput(run: Pick<RunResult, "stdout" | "stderr" | "ex
     } catch { /* a partial or non-JSON line */ }
   }
   if (!raw) { try { raw = JSON.parse(run.stdout) as RawResult; } catch { /* handled below */ } }
-  const denials = (raw?.permission_denials ?? []).map((d) => ({ tool: d.tool_name ?? "?", input: JSON.stringify(d.tool_input ?? {}).slice(0, 300) }));
+  const denials = (raw?.permission_denials ?? []).map((d) => ({ tool: d.tool_name ?? "?", input: JSON.stringify(d.tool_input ?? {}).slice(0, 4000) })); // long enough for any absolute path (approvals read it)
   const base = { denials, exitCode: run.exitCode, durationMs: run.durationMs, ...(limits ? { limits } : {}) };
   if (!raw || raw.type !== "result") {
     return { ...base, ok: false, text: run.stdout.slice(-2000), failure: classifyFailure(undefined, run.stderr, run.exitCode), error: `unparseable Claude Code output (exit ${run.exitCode}): ${run.stderr.slice(0, 500)}` };

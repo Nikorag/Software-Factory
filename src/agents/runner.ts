@@ -26,6 +26,11 @@ export interface RunStep {
   resumeSessionId?: string;
 }
 
+/** Tells the agent which folders outside the worktree a person has let it read. */
+const readNote = (prompt: string, grants: string[]): string => (grants.length
+  ? `${prompt}\n\nA person has allowed you to READ these folders outside the worktree (read-only; you still cannot write there): ${grants.map((g) => g.replace(/\/\*\*$/, "/")).join(", ")}.`
+  : prompt);
+
 /**
  * The single entry point stage handlers use to run an agent. It fixes the permission profile from the role,
  * records the invocation, and independently verifies afterwards that the agent respected its boundaries.
@@ -36,6 +41,7 @@ export class AgentRunner {
     usageFile?: string; // where the latest Claude plan-limit reading is kept
     access?: (projectId?: string) => "restricted" | "unrestricted"; // per project; default restricted
     projectBashAllow?: (projectId?: string) => string[]; // per project extra shell prefixes for the restricted implementer
+    readGrants?: (jobId: string) => string[]; // folders outside the worktree a person approved this job's agents to read
   }) {}
 
   async run(step: RunStep): Promise<AgentResult & { route: Route; violations: string[] }> {
@@ -48,6 +54,7 @@ export class AgentRunner {
       db.insert(decisions).values({ jobId: step.jobId, kind: "agent.unrestricted", decision: `${step.role} runs with unrestricted access (Claude Code auto mode)`, rationale: "agentAccess is `unrestricted`", actor: "factory" }).run();
     }
     const logFile = join(this.d.logDir, step.jobId ?? "_unattached", `${Date.now()}-${step.role}.log`);
+    const grants = step.jobId ? (this.d.readGrants?.(step.jobId) ?? []) : [];
     const row = step.jobId
       ? db.insert(agentInvocations).values({
           jobId: step.jobId, stageExecutionId: step.executionId ?? null, agent: `${route.provider}/${step.role}`, model: route.model, cwd: step.cwd, logPath: logFile,
@@ -60,7 +67,7 @@ export class AgentRunner {
     const before = profile === "read-only" && route.provider === "anthropic" ? await git(step.cwd, ["status", "--porcelain", "--untracked-files=all"]).catch(() => null) : null;
     const result = await router.run(step.task, {
       role: step.role, profile, prompt: step.prompt, cwd: step.cwd, timeoutMs: step.timeoutMs, signal: step.signal,
-      systemPrompt: rolePrompt(step.role), protectedPaths: this.d.protectedPaths, access, bashAllow: [...(step.bashAllow ?? []), ...(this.d.projectBashAllow?.(step.projectId) ?? [])],
+      systemPrompt: readNote(rolePrompt(step.role), grants), readPaths: grants, protectedPaths: this.d.protectedPaths, access, bashAllow: [...(step.bashAllow ?? []), ...(this.d.projectBashAllow?.(step.projectId) ?? [])],
       jsonSchema: step.jsonSchema, resumeSessionId: step.resumeSessionId, persistSession: profile === "implementer", logFile,
     }, step.projectId);
 

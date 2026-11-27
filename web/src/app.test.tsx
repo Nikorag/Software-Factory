@@ -319,6 +319,35 @@ describe("dashboard", () => {
     await waitFor(() => expect(calls.find((c) => c.url === "/api/jobs/j1/feedback")?.body).toBe(JSON.stringify({ text: "Add a test for a missing due date" })));
     expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(/Sent/);
   });
+  it("Ask Claude shows Claude's reply as formatted Markdown, and your own message as you typed it", async () => {
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job()), "/api/jobs/j1/chat": { id: "c1" },
+      "/api/jobs/j1/chat/c1": { status: "done", reply: "**Short answer:** it reads `config/_infra.hcl`.\n\n1. Check the diff\n2. Gate it with `count`" } };
+    app("/jobs/j1?tab=chat");
+    await userEvent.type(await screen.findByRole("textbox", { name: "Message" }), "why **this**?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("why **this**?", {}, { timeout: 4000 })).toBeInTheDocument(); // plain text, markers kept
+    const bold = await screen.findByText("Short answer:", {}, { timeout: 4000 });
+    expect(bold.tagName).toBe("STRONG");
+    expect(screen.getByText("config/_infra.hcl").tagName).toBe("CODE");
+    expect(screen.getAllByRole("listitem").map((l) => l.textContent)).toEqual(expect.arrayContaining(["Check the diff", "Gate it with count"]));
+  });
+  it("asks for permission with Approve / Deny when an agent was refused a read, and shows what can never be granted", async () => {
+    const j = job({ stage: "NEEDS_ATTENTION", status: "waiting", heldFromStage: "IMPLEMENTATION", lastError: "Waiting for your approval: the agent was refused something it needs." });
+    const permissions = [
+      { id: 1, stage: "IMPLEMENTATION", tool: "Read", kind: "read" as const, path: "/Users/me/projects/old-site/worker/index.ts", grant: "/Users/me/projects/old-site/worker/", folder: true, status: "pending" as const, reason: null, at: 1, decidedAt: null },
+      { id: 2, stage: "IMPLEMENTATION", tool: "Read", kind: "read" as const, path: "/Users/me/.ssh/id_ed25519", grant: "/Users/me/.ssh/id_ed25519", folder: false, status: "refused" as const, reason: "Never granted: ~/.ssh holds credentials or the factory's own data.", at: 1, decidedAt: null },
+    ];
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [], { permissions }), "/api/jobs/j1/permissions/1": { ok: true } };
+    app("/jobs/j1");
+    expect(await screen.findByRole("heading", { name: "The agent is asking for access" })).toBeInTheDocument();
+    const list = screen.getByRole("list", { name: "Permission requests" });
+    expect(within(list).getByText("/Users/me/projects/old-site/worker/")).toBeInTheDocument(); // what approving grants
+    expect(within(list).getByText(/Never granted: ~\/\.ssh/)).toBeInTheDocument();
+    expect(within(list).getAllByRole("button", { name: /^Approve/ })).toHaveLength(1); // nothing to approve for the refused one
+    expect(screen.queryByRole("button", { name: /Answer & resume/ })).toBeNull(); // it waits for decisions, not an answer
+    await userEvent.click(within(list).getByRole("button", { name: /^Approve: read \/Users\/me\/projects/ }));
+    await waitFor(() => expect(calls.find((c) => c.url === "/api/jobs/j1/permissions/1")?.body).toBe(JSON.stringify({ decision: "approve" })));
+  });
   it("offers no change requests before a PR exists", async () => {
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ stage: "IMPLEMENTATION" })) };
     app("/jobs/j1");

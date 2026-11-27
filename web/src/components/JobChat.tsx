@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { api, send } from "@/lib/api";
+import { Markdown } from "@/components/Markdown";
 import { cn } from "@/lib/utils";
 
 interface Msg { role: "user" | "assistant"; text: string; error?: boolean }
@@ -67,7 +68,10 @@ export function JobChat({ jobId }: { jobId: string }) {
           </div>
         )}
         {msgs.map((m, i) => (
-          <div key={i} className={cn("max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-[13px]", m.role === "user" ? "ml-auto bg-secondary" : m.error ? "border border-destructive/50 text-destructive" : "border")}>{m.text}</div>
+          m.role === "assistant" && !m.error
+            // Claude answers in Markdown: rendered as elements, never as HTML (see Markdown.tsx). Your own messages stay plain text.
+            ? <Markdown key={i} text={m.text} className="max-w-[85%] rounded-lg border px-3.5 py-2.5 text-[13.5px] max-md:max-w-full" />
+            : <div key={i} className={cn("max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-[13px]", m.role === "user" ? "ml-auto bg-secondary" : "border border-destructive/50 text-destructive")}>{m.text}</div>
         ))}
         {busy && <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />Thinking…</div>}
       </div>

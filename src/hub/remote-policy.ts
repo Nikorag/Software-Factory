@@ -30,7 +30,7 @@ export const RULES: readonly Rule[] = [
   block("POST", "/api/control/shutdown", LIFECYCLE),
 
   // ---- jobs and the board ----
-  ...allow("POST", "/api/jobs/:id/answer", "/api/jobs/:id/feedback", "/api/jobs/:id/archive", "/api/jobs/:id/unarchive", "/api/jobs/:id/cancel", "/api/jobs/:id/retry", "/api/board/start"),
+  ...allow("POST", "/api/jobs/:id/answer", "/api/jobs/:id/feedback", "/api/jobs/:id/permissions/:rid", "/api/jobs/:id/archive", "/api/jobs/:id/unarchive", "/api/jobs/:id/cancel", "/api/jobs/:id/retry", "/api/board/start"),
   ...allow("DELETE", "/api/jobs/:id"),
 
   // The job chat: POST starts a read-only agent on this machine and returns at once; GET polls for the reply. (Asynchronous because a

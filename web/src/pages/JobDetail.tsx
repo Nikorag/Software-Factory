@@ -19,6 +19,7 @@ import { PeekButton, Timeline } from "@/components/Timeline";
 import { FlowChart, FlowLegend, FlowSteps } from "@/components/FlowChart";
 import { toneOf } from "@/components/StatusBadge";
 import { JobHero, NeedsYou } from "@/components/job/JobHero";
+import { Approvals } from "@/components/job/Approvals";
 import { DecisionList, FilesPanel, SectionHead } from "@/components/job/JobSections";
 import { api, apiText, deleteJobRequest, post, send, type DeleteOptions, type SendResult } from "@/lib/api";
 import { ago, dur, HELD, safeUrl, stageLabel, stageText } from "@/lib/format";
@@ -99,6 +100,9 @@ export function JobDetail() {
   const deleteIt = async (o: DeleteOptions): Promise<SendResult> => { const r = await deleteJobRequest(j.id, o); if (r.ok) nav(`/p/${encodeURIComponent(j.project)}`); return r; };
   const finished = ["done", "failed", "cancelled"].includes(j.status);
   const cycles = j.remediationAttempts, cap = d.remediationCap ?? 3;
+  // The agent was refused something a person can allow (core/approvals.ts): the step waits for Approve / Deny, not for an answer.
+  const asking = held && j.stage === "NEEDS_ATTENTION" && (j.lastError ?? "").startsWith("Waiting for your approval:");
+  const asks = (d.permissions ?? []).filter((r) => r.status === "pending" || (r.status === "refused" && r.stage === j.heldFromStage));
   const awaitingMerge = !held && j.stage === "MERGING" && ["queued", "waiting"].includes(j.status) && Boolean(pr);
   const canRequest = Boolean(j.prUrl) && (!finished || j.status === "failed" || Boolean(d.feedback?.length));
   const openFeedback = (d.feedback ?? []).filter((f) => f.status === "pending" || f.status === "applying").length;
@@ -158,7 +162,12 @@ export function JobDetail() {
       {msg ? <Alert variant="destructive" role="alert"><AlertDescription>{msg}</AlertDescription></Alert> : null}
       {archived && canRetry ? <Alert role="status"><ArchiveRestore /><AlertDescription>This job is archived. Retrying will restore this job from the archive (it shows in the job list again).</AlertDescription></Alert> : null}
 
-      {held && j.stage !== "CANCELLED" ? (
+      {asking && asks.length ? (
+        <NeedsYou tone="wait" label="Needs your permission" title="The agent is asking for access">
+          <p className="max-w-2xl text-sm text-muted-foreground">It was refused something it needs for {stageLabel(j.heldFromStage ?? j.stage)}. Decide each request: the step resumes, in the same agent session, once none is left undecided. Anything you allow applies to this job only.</p>
+          <Approvals jobId={j.id} requests={asks} locked={locked} onDecided={reload} />
+        </NeedsYou>
+      ) : held && j.stage !== "CANCELLED" ? (
         <NeedsYou tone={j.stage === "FAILED" ? "fail" : "wait"} label={j.stage === "FAILED" ? "Failed" : "Needs you"} title={`Stopped at ${stageLabel(j.heldFromStage ?? j.stage)}`}
           actions={<>
             <Button disabled={!answer.trim() || locked} onClick={() => void run("answer", `/api/jobs/${j.id}/answer`, { answer })}>{pending === "answer" ? <Loader2 className="animate-spin" /> : <Send />}Answer &amp; resume</Button>

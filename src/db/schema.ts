@@ -130,6 +130,30 @@ export const prFeedback = sqliteTable(
   (t) => [uniqueIndex("pr_feedback_external").on(t.jobId, t.externalId), index("pr_feedback_job_status").on(t.jobId, t.status)],
 );
 
+/**
+ * Things an agent was refused that a person can allow, one row per distinct request per job (asked once). Today: reading a folder
+ * outside the worktree. `grantPath` is what an approval allows (Claude Code rule path: a folder ending in /**, or one file).
+ */
+export const permissionRequests = sqliteTable(
+  "permission_requests",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    jobId: text("job_id").notNull().references(() => jobs.id),
+    stage: text("stage").notNull(),
+    tool: text("tool").notNull(),
+    kind: text("kind", { enum: ["read"] }).notNull(),
+    path: text("path").notNull(), // what the agent asked for
+    grantPath: text("grant_path").notNull(),
+    // pending: waiting for a person; approved / denied: decided; refused: never grantable (credentials, home, the factory's data)
+    status: text("status", { enum: ["pending", "approved", "denied", "refused"] }).notNull().default("pending"),
+    reason: text("reason"),
+    decidedBy: text("decided_by"),
+    createdAt: ts("created_at").notNull().default(now),
+    decidedAt: ts("decided_at"),
+  },
+  (t) => [uniqueIndex("permission_requests_once").on(t.jobId, t.kind, t.grantPath)],
+);
+
 // Singleton control row: global pause and emergency stop survive restarts.
 export const factoryState = sqliteTable("factory_state", {
   id: integer("id").primaryKey(),

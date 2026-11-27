@@ -1,3 +1,4 @@
+import { readGrants } from "../core/approvals.js";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { ClaudeCodeAgent } from "../agents/claude.js";
@@ -60,6 +61,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
   const runner = new AgentRunner({ db: handle.db, router, logDir: join(dataDir, "logs", "agents"), protectedPaths: config.factory.protectedPaths, usageFile: usageFile(dataDir),
     access: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess,
     projectBashAllow: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAllow ?? [],
+    readGrants: (jobId) => readGrants(handle.db, jobId),
   });
   const worktrees = new WorktreeManager({
     db: handle.db, logger, workspacesRoot: join(dataDir, "workspaces"),

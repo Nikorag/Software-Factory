@@ -43,10 +43,16 @@ const ALWAYS_DENY_BASH = [
 const SPECKIT_SCRIPTS = [".specify/scripts/bash/check-prerequisites.sh", ".specify/scripts/bash/resolve-template.sh", ".specify/scripts/bash/setup-plan.sh", ".specify/scripts/bash/setup-tasks.sh"];
 const bash = (prefix: string) => `Bash(${prefix}:*)`;
 
-export function toolPolicy(profile: PermissionProfile, opts: { protectedPaths?: string[]; bashAllow?: string[]; roots?: string[] } = {}): ToolPolicy {
+/** Read access a person approved outside the worktree: `Read(//abs/...)` covers Read, Grep and Glob, and never writing (verified live, 2.1.332). */
+export function readRules(paths: string[]): string[] {
+  const forms = (p: string) => { const folder = p.endsWith("/**"); const base = folder ? p.slice(0, -3) : p; return pathRoots(base).map((r) => (folder ? `${r}/**` : r)); };
+  return [...new Set(paths.flatMap(forms))].map((p) => `Read(//${p.replace(/^\/+/, "")})`);
+}
+
+export function toolPolicy(profile: PermissionProfile, opts: { protectedPaths?: string[]; bashAllow?: string[]; roots?: string[]; readPaths?: string[] } = {}): ToolPolicy {
   const protectedPaths = opts.protectedPaths ?? [];
   const roots = opts.roots ?? [];
-  const readOnly = GIT_READ.map(bash); // file reads are allowed by default, confined to the worktree
+  const readOnly = [...GIT_READ.map(bash), ...readRules(opts.readPaths ?? [])]; // file reads are allowed by default, confined to the worktree (plus approved folders)
   switch (profile) {
     case "read-only":
       return { tools: ["Read", "Grep", "Glob", "Bash"], allow: readOnly, deny: ["Edit", "Write", "NotebookEdit", ...ALWAYS_DENY_BASH.map(bash)] };

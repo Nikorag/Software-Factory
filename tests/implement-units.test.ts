@@ -90,9 +90,9 @@ describe.skipIf(!sandboxAvailable())("factory-exec wrapper: the only way an agen
     const bad = run(wrapper, "lint");
     expect(bad.status).toBe(1); expect(bad.stdout).toContain("FAILED (exit 3)");
   });
-  it("accepts only the named checks: no install, no arbitrary command, no unconfigured check", () => {
+  it("accepts only the named checks: no arbitrary command, no unconfigured check, and install only when the project configures one", () => {
     const { wrapper, wt } = setup();
-    expect(run(wrapper, "install").status).toBe(64);
+    expect(run(wrapper, "install").status).toBe(65); // this project has no install command: nothing to run (never a command of the agent's own)
     expect(run(wrapper, "rm -rf /").status).toBe(64);
     expect(run(wrapper, "echo pwned > " + join(wt, "pwn.txt")).status).toBe(64);
     expect(run(wrapper, "typecheck").status).toBe(65);

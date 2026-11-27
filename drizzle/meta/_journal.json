@@ -64,6 +64,13 @@
       "when": 1795775089683,
       "tag": "0008_wandering_slipstream",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1795792475076,
+      "tag": "0009_parched_speed",
+      "breakpoints": true
     }
   ]
 }
