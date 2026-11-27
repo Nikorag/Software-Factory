@@ -366,6 +366,23 @@ describe("dashboard", () => {
     await userEvent.click(within(list).getByRole("button", { name: /^Approve: read \/Users\/me\/projects/ }));
     await waitFor(() => expect(calls.find((c) => c.url === "/api/jobs/j1/permissions/1")?.body).toBe(JSON.stringify({ decision: "approve" })));
   });
+  it("shows the gate panel while waiting: Confirm calls the confirm endpoint; Ask for changes needs a note first", async () => {
+    const j = job({ stage: "AWAITING_CONFIRMATION", status: "waiting", heldFromStage: "REQUIREMENTS_ANALYSIS", lastError: "Waiting for your confirmation: the generated prompt gate." });
+    const plan = { prompt: "Add isOverdue to src/due.js", criteria: [{ id: "AC-01", text: "true for a past date" }] };
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [], { plan }), "/api/jobs/j1/gate/confirm": { ok: true }, "/api/jobs/j1/gate/return": { ok: true } };
+    app("/jobs/j1");
+    expect(await screen.findByRole("heading", { name: /Review before continuing/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("Generated prompt")).toHaveTextContent("Add isOverdue to src/due.js");
+    expect(screen.getByText("true for a past date")).toBeInTheDocument();
+    const ask = screen.getByRole("button", { name: /Ask for changes/ });
+    expect(ask).toBeDisabled(); // a note is required
+    await userEvent.type(screen.getByLabelText("What should change"), "also cover leap years");
+    expect(ask).toBeEnabled();
+    await userEvent.click(ask);
+    await waitFor(() => expect(calls.find((c) => c.url === "/api/jobs/j1/gate/return")?.body).toBe(JSON.stringify({ note: "also cover leap years" })));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/jobs/j1/gate/confirm" && c.method === "POST")).toBe(true));
+  });
   it("offers no change requests before a PR exists", async () => {
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ stage: "IMPLEMENTATION" })) };
     app("/jobs/j1");

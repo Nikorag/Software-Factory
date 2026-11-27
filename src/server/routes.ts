@@ -12,6 +12,7 @@ import type { Engine } from "../core/engine.js";
 import { answerJob, archiveJob, cancelJob, deleteJob, getJob, isAwaitingMerge, JobError, retryJob } from "../core/jobs.js";
 import { listFeedback, requestChanges } from "../core/feedback.js";
 import { decideRequest, listRequests } from "../core/approvals.js";
+import { confirmGate, returnGate } from "../core/gates.js";
 import { WorktreeError } from "../repo/worktrees.js";
 import type { Scheduler } from "../service/scheduler.js";
 import { cachedSystemInfo, counts, type HealthChecker } from "../service/metrics.js";
@@ -221,7 +222,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
         const row = rows.find((r) => r.id === p.id);
         const report = row?.validationJson ? (JSON.parse(row.validationJson) as { ok?: boolean; findings?: { severity: string; code: string; message: string }[]; branchProtection?: { status: string } }) : null;
         return {
-          id: p.id, name: p.name, enabled: p.enabled, autonomy: p.autonomy, repository: p.repository, managed: p.managed, defaultBranch: p.defaultBranch, githubAccount: p.github.account ?? null, host: p.host, bitbucketRepo: p.bitbucket.repo ?? null, bitbucketCredential: p.bitbucket.credential, overrides: p.overrides ?? null, specKit: p.specKit, allowLoopback: p.allowLoopback, agentBashAllow: p.agentBashAllow,
+          id: p.id, name: p.name, enabled: p.enabled, autonomy: p.autonomy, repository: p.repository, managed: p.managed, defaultBranch: p.defaultBranch, githubAccount: p.github.account ?? null, host: p.host, bitbucketRepo: p.bitbucket.repo ?? null, bitbucketCredential: p.bitbucket.credential, overrides: p.overrides ?? null, specKit: p.specKit, allowLoopback: p.allowLoopback, agentBashAllow: p.agentBashAllow, gates: p.gates,
           tracker: p.tracker ?? null, linear: p.linear ?? null, githubRepo: p.github.repo ?? null, commands: p.commands,
           onboarding: onboardingOf(p, row?.validationJson ? (JSON.parse(row.validationJson) as RepoReport) : null, row?.checkJson ? (JSON.parse(row.checkJson) as CheckRecord) : null, d.config?.factory.workflow.planning_mode),
           validation: report ? { ok: report.ok ?? false, at: ms(row?.lastValidatedAt), protection: report.branchProtection?.status ?? "unknown", findings: (report.findings ?? []).filter((f) => f.severity !== "info").map((f) => `${f.severity}: ${f.message}`) } : null,
@@ -272,6 +273,15 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   });
   app.post<{ Params: { id: string }; Body: { answer?: unknown } }>("/api/jobs/:id/answer", { preHandler: requireToken }, async (req, reply) => {
     try { return { ok: true, job: jobRow(answerJob(db, req.params.id, typeof req.body?.answer === "string" ? req.body.answer : "", actor)) }; }
+    catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
+  });
+  /** A human gate: confirm (continue at the next stage) or ask for changes (the gated stage runs again with the note). */
+  app.post<{ Params: { id: string } }>("/api/jobs/:id/gate/confirm", { preHandler: requireToken }, async (req, reply) => {
+    try { return { ok: true, job: jobRow(confirmGate(db, req.params.id, actor, d.config?.factory.workflow?.planning_mode ?? "speckit")) }; }
+    catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
+  });
+  app.post<{ Params: { id: string }; Body: { note?: unknown } }>("/api/jobs/:id/gate/return", { preHandler: requireToken }, async (req, reply) => {
+    try { return { ok: true, job: jobRow(returnGate(db, req.params.id, typeof req.body?.note === "string" ? req.body.note : "", actor)) }; }
     catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
   });
   /** Approve or deny one thing an agent asked for. Deciding the last open one resumes a job that was waiting for them. */

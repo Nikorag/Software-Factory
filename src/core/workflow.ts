@@ -46,7 +46,7 @@ export function statusForStage(s: StageName): JobStatus {
     case "COMPLETED": return "done";
     case "FAILED": return "failed";
     case "CANCELLED": return "cancelled";
-    case "BLOCKED": case "PAUSED": case "NEEDS_ATTENTION": return "waiting";
+    case "BLOCKED": case "PAUSED": case "NEEDS_ATTENTION": case "AWAITING_CONFIRMATION": return "waiting";
     default: return "queued";
   }
 }

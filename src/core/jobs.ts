@@ -84,7 +84,7 @@ export function recoverExpired(db: FactoryDb, now: Date, exclude: Iterable<strin
   });
 }
 
-const HELD = ["BLOCKED", "FAILED", "NEEDS_ATTENTION", "PAUSED", "CANCELLED"];
+const HELD = ["BLOCKED", "FAILED", "NEEDS_ATTENTION", "AWAITING_CONFIRMATION", "PAUSED", "CANCELLED"];
 
 /** The PR is open and only a human merge is left: the stored status stays queued/waiting (the engine re-polls it), but it is reported as Done. */
 export const isAwaitingMerge = (j: { stage: string; status: string }): boolean => j.stage === "MERGING" && (j.status === "queued" || j.status === "waiting") && !HELD.includes(j.stage);

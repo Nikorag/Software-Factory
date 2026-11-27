@@ -32,6 +32,37 @@ function setup(withEngine = false) {
 const get = (app: ReturnType<typeof setup>["app"], url: string, headers: Record<string, string> = HOST) => app.inject({ method: "GET", url, headers, remoteAddress: "127.0.0.1" });
 const post = (app: ReturnType<typeof setup>["app"], url: string, headers: Record<string, string> = AUTH) => app.inject({ method: "POST", url, headers, remoteAddress: "127.0.0.1", payload: {} });
 
+describe("gate routes", () => {
+  const atGate = (s: ReturnType<typeof setup>) => {
+    const j = s.job();
+    s.db.update(jobs).set({ stage: "AWAITING_CONFIRMATION", status: "waiting", heldFromStage: "REQUIREMENTS_ANALYSIS", lastError: "Waiting for your confirmation: the generated prompt gate." }).where(eq(jobs.id, j.id)).run();
+    return j;
+  };
+  const body = (s: ReturnType<typeof setup>, url: string, payload: unknown, headers: Record<string, string> = AUTH) => s.app.inject({ method: "POST", url, headers, remoteAddress: "127.0.0.1", payload: payload as never });
+  it("need the bearer token", async () => {
+    const s = setup(); const j = atGate(s);
+    for (const u of ["confirm", "return"]) expect((await post(s.app, `/api/jobs/${j.id}/gate/${u}`, HOST)).statusCode).toBe(401);
+    expect(getJob(s.db, j.id)!.stage).toBe("AWAITING_CONFIRMATION");
+  });
+  it("return needs a note (409, nothing changes); then it re-queues the gated stage and records the decision", async () => {
+    const s = setup(); const j = atGate(s);
+    const r = await body(s, `/api/jobs/${j.id}/gate/return`, {});
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toMatch(/note is required/);
+    expect(getJob(s.db, j.id)!.stage).toBe("AWAITING_CONFIRMATION");
+    expect((await body(s, `/api/jobs/${j.id}/gate/return`, { note: "more detail" })).statusCode).toBe(200);
+    expect(getJob(s.db, j.id)).toMatchObject({ stage: "REQUIREMENTS_ANALYSIS", status: "queued" });
+    expect(s.db.select().from(decisions).where(eq(decisions.kind, "gate.returned")).all()).toMatchObject([{ rationale: "more detail" }]);
+  });
+  it("confirm continues at the next stage; a job not at a gate gets 409", async () => {
+    const s = setup(); const j = atGate(s); const other = s.job("JAM-2");
+    expect((await post(s.app, `/api/jobs/${other.id}/gate/confirm`)).statusCode).toBe(409);
+    expect((await post(s.app, `/api/jobs/${j.id}/gate/confirm`)).statusCode).toBe(200);
+    expect(getJob(s.db, j.id)!.stage).not.toBe("AWAITING_CONFIRMATION");
+    expect(s.db.select().from(decisions).where(eq(decisions.kind, "gate.confirmed")).all()).toHaveLength(1);
+  });
+});
+
 describe("dashboard API security", () => {
   it("refuses non-loopback peers, foreign Host headers (DNS rebinding) and foreign Origins", async () => {
     const s = setup();

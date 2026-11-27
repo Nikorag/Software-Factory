@@ -20,6 +20,7 @@ import { FlowChart, FlowLegend, FlowSteps } from "@/components/FlowChart";
 import { toneOf } from "@/components/StatusBadge";
 import { JobHero, NeedsYou } from "@/components/job/JobHero";
 import { Approvals } from "@/components/job/Approvals";
+import { GatePanel } from "@/components/job/GatePanel";
 import { DecisionList, FilesPanel, SectionHead } from "@/components/job/JobSections";
 import { api, apiText, deleteJobRequest, post, send, type DeleteOptions, type SendResult } from "@/lib/api";
 import { ago, dur, HELD, safeUrl, stageLabel, stageText } from "@/lib/format";
@@ -102,6 +103,7 @@ export function JobDetail() {
   const cycles = j.remediationAttempts, cap = d.remediationCap ?? 3;
   // The agent was refused something a person can allow (core/approvals.ts): the step waits for Approve / Deny, not for an answer.
   const asking = held && j.stage === "NEEDS_ATTENTION" && (j.lastError ?? "").startsWith("Waiting for your approval:");
+  const gated = held && j.stage === "AWAITING_CONFIRMATION" && (j.lastError ?? "").startsWith("Waiting for your confirmation:");
   const asks = (d.permissions ?? []).filter((r) => r.status === "pending" || (r.status === "refused" && r.stage === j.heldFromStage));
   const awaitingMerge = !held && j.stage === "MERGING" && ["queued", "waiting"].includes(j.status) && Boolean(pr);
   const canRequest = Boolean(j.prUrl) && (!finished || j.status === "failed" || Boolean(d.feedback?.length));
@@ -166,6 +168,11 @@ export function JobDetail() {
         <NeedsYou tone="wait" label="Needs your permission" title="The agent is asking for access">
           <p className="max-w-2xl text-sm text-muted-foreground">It was refused something it needs for {stageLabel(j.heldFromStage ?? j.stage)}. Decide each request: the step resumes, in the same agent session, once none is left undecided. Anything you allow applies to this job only.</p>
           <Approvals jobId={j.id} requests={asks} locked={locked} onDecided={reload} />
+        </NeedsYou>
+      ) : gated ? (
+        <NeedsYou tone="wait" label="Your move" title={`Review before continuing: ${stageLabel(j.heldFromStage ?? j.stage)}`}>
+          <p className="max-w-2xl text-sm text-muted-foreground">This project asks you to check the generated prompt before the implementation starts. Confirm to continue, or ask for changes: the step runs again with your note. No agent runs while this waits.</p>
+          <GatePanel jobId={j.id} plan={d.plan ?? null} locked={locked} onDecided={reload} />
         </NeedsYou>
       ) : held && j.stage !== "CANCELLED" ? (
         <NeedsYou tone={j.stage === "FAILED" ? "fail" : "wait"} label={j.stage === "FAILED" ? "Failed" : "Needs you"} title={`Stopped at ${stageLabel(j.heldFromStage ?? j.stage)}`}
