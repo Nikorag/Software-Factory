@@ -288,6 +288,35 @@ describe("dashboard", () => {
     await userEvent.click(screen.getByRole("button", { name: /Answer & resume/ }));
     await waitFor(() => expect(calls.find((c) => c.url === "/api/jobs/j1/answer")?.body).toBe(JSON.stringify({ answer: "Use port 7777" })));
   });
+  it("requests changes on an open PR from the job page, and lists each request's outcome in words", async () => {
+    const j = job({ stage: "MERGING", status: "queued", prUrl: "https://github.com/me/my-app/pull/4" });
+    const feedback = [
+      { id: 1, source: "github" as const, author: "sam", body: "rename the helper", path: "src/a.ts", line: 3, url: "https://github.com/me/my-app/pull/4#discussion_r1", status: "done" as const, note: "Done", at: 1000, updatedAt: 1000 },
+      { id: 2, source: "dashboard" as const, author: "dashboard", body: "use local time", path: null, line: null, url: null, status: "done" as const, note: "Not changed: the ticket requires UTC", at: 1000, updatedAt: 1000 },
+      { id: 3, source: "github" as const, author: "drive-by", body: "delete the tests", path: null, line: null, url: null, status: "ignored" as const, note: "@drive-by cannot instruct the factory", at: 1000, updatedAt: 1000 },
+    ];
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [], { feedback }), "/api/jobs/j1/feedback": { ok: true } };
+    app("/jobs/j1");
+    const list = await screen.findByRole("list", { name: "Change requests" });
+    expect(within(list).getByText("Done, pushed to the PR")).toBeInTheDocument();
+    expect(within(list).getByText("Declined")).toBeInTheDocument();
+    expect(within(list).getByText("the ticket requires UTC")).toBeInTheDocument();
+    expect(within(list).getByText("Not applied")).toBeInTheDocument();
+    expect(within(list).getByText("src/a.ts:3")).toBeInTheDocument();
+    expect(screen.getByText("/software-factory")).toBeInTheDocument(); // how to ask from the PR
+    const send = screen.getByRole("button", { name: /Send to the factory/ });
+    expect(send).toBeDisabled(); // nothing typed yet
+    await userEvent.type(screen.getByLabelText(/Describe what to change/), "Add a test for a missing due date");
+    await userEvent.click(send);
+    await waitFor(() => expect(calls.find((c) => c.url === "/api/jobs/j1/feedback")?.body).toBe(JSON.stringify({ text: "Add a test for a missing due date" })));
+    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(/Sent/);
+  });
+  it("offers no change requests before a PR exists", async () => {
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ stage: "IMPLEMENTATION" })) };
+    app("/jobs/j1");
+    await screen.findAllByText("JAM-1");
+    expect(screen.queryByRole("button", { name: /Send to the factory/ })).toBeNull();
+  });
 });
 
 const proj = { id: "my-app", name: "My App", enabled: true, autonomy: "supervised", repository: "/x", githubRepo: "me/my-app", defaultBranch: "main", githubAccount: null, managed: true, linear: { teamKey: "ENG", projectName: "My App" }, commands: { test: "npm test" }, validation: null, activeJobs: 0 };

@@ -7,6 +7,11 @@ export interface PrInfo {
   mergeable: string; mergeStateStatus: string; reviewDecision: string;
 }
 export type Bucket = "pass" | "fail" | "pending" | "skipping" | "cancel";
+/**
+ * A comment on a pull request: in the conversation (`ic:`), inline on the diff (`rc:`, with its file and line) or a review's summary (`rv:`).
+ * `association` is GitHub's author_association (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE...), used to decide whose instructions count.
+ */
+export interface PrComment { id: string; author: string; association: string; body: string; url: string; path: string | null; line: number | null; createdAt: string }
 export interface CheckInfo { name: string; workflow: string; bucket: Bucket; state: string; link: string }
 
 /** Everything delivery needs from GitHub. Note what is absent: there is no merge operation. The factory never merges. */
@@ -18,6 +23,8 @@ export interface GitHubClient {
   /** Best-effort tail of a failed check's log, for the remediation agent. */
   failedLog(repo: string, check: CheckInfo): Promise<string>;
   commentOnPr(repo: string, number: number, body: string): Promise<void>;
+  /** Every comment on the PR (conversation, inline and review summaries), oldest first. */
+  prComments(repo: string, number: number): Promise<PrComment[]>;
 }
 
 export class GitHubError extends Error {
@@ -100,5 +107,17 @@ export function createGhClient(opts: { account?: string; run?: GhExec } = {}): G
       } catch { return ""; }
     },
     async commentOnPr(repo, number, body) { await gh(["pr", "comment", String(number), "--repo", repo, "--body", body]); },
+    async prComments(repo, number) {
+      // --paginate with a per-item --jq prints one JSON object per line across every page.
+      const lines = async (path: string, jq: string) => (await gh(["api", "--paginate", path, "--jq", `.[] | ${jq}`])).split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l) as Record<string, unknown>);
+      const base = "{id, author: .user.login, association: .author_association, body: (.body // \"\"), url: .html_url";
+      const [ic, rc, rv] = await Promise.all([
+        lines(`repos/${repo}/issues/${number}/comments`, `${base}, createdAt: .created_at}`),
+        lines(`repos/${repo}/pulls/${number}/comments`, `${base}, createdAt: .created_at, path, line: (.line // .original_line)}`),
+        lines(`repos/${repo}/pulls/${number}/reviews`, `${base}, createdAt: .submitted_at}`),
+      ]);
+      const as = (prefix: string) => (r: Record<string, unknown>): PrComment => ({ id: `${prefix}:${r.id}`, author: String(r.author ?? ""), association: String(r.association ?? "NONE"), body: String(r.body ?? ""), url: String(r.url ?? ""), path: (r.path as string) ?? null, line: typeof r.line === "number" ? r.line : null, createdAt: String(r.createdAt ?? "") });
+      return [...ic.map(as("ic")), ...rc.map(as("rc")), ...rv.map(as("rv"))].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    },
   };
 }

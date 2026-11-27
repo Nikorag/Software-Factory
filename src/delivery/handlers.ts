@@ -15,9 +15,11 @@ import { WorktreeError } from "../repo/worktrees.js";
 import { conflictAttempts, DEFAULT_MAX_CONFLICT_RESOLUTIONS } from "../implement/conflicts.js";
 import { deferrals, openTasks, triage } from "../implement/history.js";
 import { readSpecBundle } from "../speckit/artifacts.js";
+import { addFeedback, applyingFeedback, asFinding, COMMANDS, dropOpenFeedback, feedbackFindingId, isTrusted, parseCommand, pendingFeedback, quote, setFeedbackStatus, type FeedbackRow } from "../core/feedback.js";
 
 export interface DeliveryTiming { ciPollMs: number; ciMaxMs: number; noCiGraceMs: number; mergePollMs: number; mergeMaxMs: number }
-export const DEFAULT_TIMING: DeliveryTiming = { ciPollMs: 30_000, ciMaxMs: 60 * 60_000, noCiGraceMs: 3 * 60_000, mergePollMs: 10 * 60_000, mergeMaxMs: 14 * 24 * 3600_000 };
+// mergePollMs is also how quickly a `/software-factory` PR comment is noticed while the PR waits for a human (a request from the job page wakes the job at once).
+export const DEFAULT_TIMING: DeliveryTiming = { ciPollMs: 30_000, ciMaxMs: 60 * 60_000, noCiGraceMs: 3 * 60_000, mergePollMs: 2 * 60_000, mergeMaxMs: 14 * 24 * 3600_000 };
 
 export interface DeliveryDeps extends StageKitDeps {
   dataDir: string;
@@ -117,6 +119,66 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
     if (used >= max) return { kind: "needs_attention", reason: `The pull request has merge conflicts with ${pr.baseRefName} (${pr.url}) and ${used} automatic resolution(s) did not settle it. A human must resolve them (the factory never force-pushes).` };
     return { kind: "remediate", to: "CONFLICT_RESOLUTION", reason: `merge conflicts with ${pr.baseRefName} (${pr.url})`, output: { pr: pr.url, base: pr.baseRefName, attempt: used + 1, of: max } };
   };
+  /**
+   * Reads PR comments addressed to the factory into the feedback queue. Best-effort: trouble reading comments never stops delivery
+   * (requests from the job page still work). Only repository collaborators can instruct the factory; anyone else gets one polite reply.
+   */
+  const collectComments = async (gh: GitHubClient, repo: string, number: number, jobId: string): Promise<void> => {
+    let list;
+    try { list = await gh.prComments(repo, number); } catch { return; }
+    const reply = async (body: string) => { try { await gh.commentOnPr(repo, number, body); } catch { /* the request is still recorded */ } };
+    for (const c of list) {
+      const text = parseCommand(c.body);
+      if (text === null) continue;
+      const base = { source: "github" as const, author: c.author, externalId: c.id, path: c.path, line: c.line, url: c.url };
+      if (!isTrusted(c.association)) {
+        if (addFeedback(d.db, jobId, { ...base, body: text || c.body, status: "ignored", note: `@${c.author} cannot instruct the factory (${c.association.toLowerCase()}, not a collaborator)` })) {
+          record(jobId, "feedback.untrusted", `ignored a ${COMMANDS[0]} comment by @${c.author}`, `author_association ${c.association}: only owners, members and collaborators can instruct the factory`);
+          await reply(`@${c.author} only people with write access to this repository can instruct the Software Factory, so this request was not acted on. A maintainer can repeat it.`);
+        }
+        continue;
+      }
+      if (!text) {
+        if (addFeedback(d.db, jobId, { ...base, body: c.body, status: "ignored", note: "no instruction after the command" })) await reply(`@${c.author} tell the factory what to change, for example:\n\n\`${COMMANDS[0]} rename the helper to formatDueDate and add a test for it\``);
+        continue;
+      }
+      const row = addFeedback(d.db, jobId, { ...base, body: text });
+      if (row) record(jobId, "feedback.requested", `PR comment by @${c.author} (#${row.id})`, text.slice(0, 1500));
+    }
+  };
+
+  /**
+   * Requests from the job page or PR comments send the job back through REMEDIATION (then tests, reviews and a push to this same PR).
+   * Requests already sent but never pushed (the run failed and was retried) go again. Not a fix cycle: a person asked for it.
+   */
+  const feedbackHop = async (gh: GitHubClient, repo: string, number: number, jobId: string): Promise<StageResult | undefined> => {
+    await collectComments(gh, repo, number, jobId);
+    const fresh = pendingFeedback(d.db, jobId);
+    const todo = [...applyingFeedback(d.db, jobId), ...fresh];
+    if (todo.length === 0) return undefined;
+    setFeedbackStatus(d.db, fresh.map((f) => f.id), "applying");
+    if (fresh.length) {
+      try { await gh.commentOnPr(repo, number, `**On it.** The Software Factory picked up ${fresh.length === 1 ? "this request" : `${fresh.length} requests`} and will push an update to this pull request:\n\n${fresh.map(quote).join("\n\n")}`); } catch { /* acknowledging is a courtesy */ }
+    }
+    const who = [...new Set(todo.map((f) => (f.source === "github" ? `@${f.author}` : "the job page")))].join(", ");
+    return { kind: "remediate", to: "REMEDIATION", reason: `${todo.length} change request(s) from ${who}`, output: { findings: todo.map(asFinding), feedback: todo.map((f) => f.id) } };
+  };
+
+  /** What became of each request in the fix passes since it was sent: done, declined (with the implementer's reason) or left for a human. */
+  const feedbackOutcomes = (jobId: string, rows: FeedbackRow[]): { lines: string[]; note: (id: number) => string; summary: string } => {
+    const runs = d.db.select().from(stageExecutions).where(and(eq(stageExecutions.jobId, jobId), eq(stageExecutions.stage, "REMEDIATION"), eq(stageExecutions.outcome, "succeeded"))).orderBy(desc(stageExecutions.id)).all()
+      .map((r) => (r.outputJson ? JSON.parse(r.outputJson) : {}) as { rejected?: { id: string; reason: string }[]; deferred?: { id: string; reason: string }[]; summary?: string });
+    const notes = new Map<number, string>();
+    for (const f of rows) {
+      const fid = feedbackFindingId(f.id);
+      const rej = runs.map((r) => r.rejected?.find((x) => x.id === fid)).find(Boolean);
+      const def = runs.map((r) => r.deferred?.find((x) => x.id === fid)).find(Boolean);
+      notes.set(f.id, rej ? `Not changed: ${rej.reason}` : def ? `Left for a human: ${def.reason}` : "Done");
+    }
+    const lines = rows.map((f) => `${quote(f)}\n\n**${notes.get(f.id)!.startsWith("Done") ? "✓ " : ""}${notes.get(f.id)}**`);
+    return { lines, note: (id) => notes.get(id) ?? "Done", summary: runs[0]?.summary ?? "" };
+  };
+
   const prOf = (jobId: string): number | undefined => {
     const url = d.db.select().from(jobs).where(eq(jobs.id, jobId)).get()?.prUrl;
     const m = url ? /\/pull\/(\d+)/.exec(url) : null;
@@ -143,7 +205,14 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
       let pr: PrInfo;
       if (existing) {
         pr = existing; // idempotent: a retry, or new commits after remediation
-        await gh.commentOnPr(repo, pr.number, `Updated by the Software Factory (head ${p.info.branch}@${(await git(p.cwd, ["rev-parse", "--short", "HEAD"]))}).`);
+        const headRef = `${p.info.branch}@${(await git(p.cwd, ["rev-parse", "--short", "HEAD"]))}`;
+        const applied = applyingFeedback(d.db, ctx.job.id);
+        if (applied.length) {
+          const o = feedbackOutcomes(ctx.job.id, applied);
+          await gh.commentOnPr(repo, pr.number, `**Updated by the Software Factory** with the requested changes (head ${headRef}). Checks passed and the reviews approved again.\n\n${o.lines.join("\n\n")}${o.summary ? `\n\n_What changed:_ ${o.summary}` : ""}`);
+          setFeedbackStatus(d.db, applied.map((f) => f.id), "done", o.note);
+          record(ctx.job.id, "feedback.applied", `pushed ${applied.length} change request(s) to ${pr.url}`, applied.map((f) => `#${f.id}: ${o.note(f.id)}`).join("\n"));
+        } else await gh.commentOnPr(repo, pr.number, `Updated by the Software Factory (head ${headRef}).`);
         await postHumanItems(gh, repo, pr.number, ctx.job.id, human);
       } else {
         const humanSection = human.length ? `\n\n${HUMAN_HEADING}\n${human.join("\n")}` : "";
@@ -176,6 +245,7 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
       // GitHub does not run pull_request workflows while a PR conflicts, so look before waiting for checks that will never come.
       const current = await gh.getPr(repo, number);
       if (current.state === "OPEN" && current.mergeable === "CONFLICTING") return conflictHop(ctx.job.id, current);
+      if (current.state === "OPEN") { const f = await feedbackHop(gh, repo, number, ctx.job.id); if (f) return f; }
       const checks = await gh.checks(repo, number);
       const waited = waitedMs(ctx.job.id, "CI_VALIDATION");
       if (checks.length === 0) {
@@ -232,9 +302,11 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
     if (!number) return { kind: "fail", reason: "no pull request recorded for this job" };
     try {
       const repo = await repoSlug(project, git);
-      const pr = await d.github(project).getPr(repo, number);
-      if (pr.state === "CLOSED") return { kind: "fail", reason: `The pull request was closed without merging (${pr.url}).` };
+      const gh = d.github(project);
+      const pr = await gh.getPr(repo, number);
+      if (pr.state === "CLOSED") { dropOpenFeedback(d.db, ctx.job.id, "the pull request was closed without merging"); return { kind: "fail", reason: `The pull request was closed without merging (${pr.url}).` }; }
       if (pr.mergeable === "CONFLICTING") return conflictHop(ctx.job.id, pr);
+      if (pr.state === "OPEN") { const f = await feedbackHop(gh, repo, number, ctx.job.id); if (f) return f; }
       const [owner, name] = repo.split("/") as [string, string];
       const protection = d.hosts && project.host === "bitbucket" ? await d.hosts.protection(project, repo) : await checkBranchProtection({ owner, repo: name }, project.defaultBranch, createGhApi(project.github.account));
       const notes = [
@@ -260,10 +332,18 @@ export function createDeliveryHandlers(d: DeliveryDeps) {
     if (!number) return { kind: "fail", reason: "no pull request recorded for this job" };
     try {
       const repo = await repoSlug(project, git);
-      const pr = await d.github(project).getPr(repo, number);
-      if (pr.state === "MERGED") { record(ctx.job.id, "pr.merged", pr.url, `merged by a human at ${pr.mergedAt}`); return { kind: "ok", output: { merged: true, mergedAt: pr.mergedAt } }; }
-      if (pr.state === "CLOSED") return { kind: "fail", reason: `The pull request was closed without merging (${pr.url}).` };
+      const gh = d.github(project);
+      const pr = await gh.getPr(repo, number);
+      if (pr.state === "MERGED") {
+        record(ctx.job.id, "pr.merged", pr.url, `merged by a human at ${pr.mergedAt}`);
+        const dropped = dropOpenFeedback(d.db, ctx.job.id, "the pull request was merged before this request was applied");
+        if (dropped) record(ctx.job.id, "feedback.dropped", `${dropped} change request(s) not applied`, "the pull request was merged first");
+        return { kind: "ok", output: { merged: true, mergedAt: pr.mergedAt } };
+      }
+      if (pr.state === "CLOSED") { dropOpenFeedback(d.db, ctx.job.id, "the pull request was closed without merging"); return { kind: "fail", reason: `The pull request was closed without merging (${pr.url}).` }; }
       if (pr.mergeable === "CONFLICTING") return conflictHop(ctx.job.id, pr); // the target moved while a human was deciding
+      const f = await feedbackHop(gh, repo, number, ctx.job.id);
+      if (f) return f;
       if (waitedMs(ctx.job.id, "MERGING") > t.mergeMaxMs) return { kind: "needs_attention", reason: `The pull request has been open for ${Math.round(t.mergeMaxMs / 86_400_000)} days without being merged (${pr.url}).` };
       return { kind: "wait", reason: `awaiting a human to merge ${pr.url}`, delayMs: t.mergePollMs };
     } catch (e) {

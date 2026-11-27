@@ -105,6 +105,31 @@ export const decisions = sqliteTable("decisions", {
   createdAt: ts("created_at").notNull().default(now),
 });
 
+/**
+ * Change requests on a job's open pull request: typed on the job page, or a PR comment starting with `/software-factory` (or `/factory`).
+ * Each is applied by a REMEDIATION pass and then pushed to the same PR. `external_id` dedupes PR comments (`ic:`, `rc:`, `rv:` + GitHub id).
+ */
+export const prFeedback = sqliteTable(
+  "pr_feedback",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    jobId: text("job_id").notNull().references(() => jobs.id),
+    source: text("source", { enum: ["dashboard", "github"] }).notNull(),
+    externalId: text("external_id"),
+    author: text("author").notNull(),
+    body: text("body").notNull(),
+    path: text("path"), // an inline review comment's file
+    line: integer("line"),
+    url: text("url"),
+    // pending: waiting to be picked up; applying: sent to remediation; done: pushed (note = what happened); ignored: not acted on (note = why)
+    status: text("status", { enum: ["pending", "applying", "done", "ignored"] }).notNull().default("pending"),
+    note: text("note"),
+    createdAt: ts("created_at").notNull().default(now),
+    updatedAt: ts("updated_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("pr_feedback_external").on(t.jobId, t.externalId), index("pr_feedback_job_status").on(t.jobId, t.status)],
+);
+
 // Singleton control row: global pause and emergency stop survive restarts.
 export const factoryState = sqliteTable("factory_state", {
   id: integer("id").primaryKey(),

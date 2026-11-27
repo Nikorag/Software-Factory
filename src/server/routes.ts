@@ -10,6 +10,7 @@ import { agentInvocations, artifacts, decisions, jobs, linearOutbox, projects, s
 import * as control from "../core/control.js";
 import type { Engine } from "../core/engine.js";
 import { answerJob, archiveJob, cancelJob, deleteJob, getJob, JobError, retryJob } from "../core/jobs.js";
+import { listFeedback, requestChanges } from "../core/feedback.js";
 import { WorktreeError } from "../repo/worktrees.js";
 import type { Scheduler } from "../service/scheduler.js";
 import { cachedSystemInfo, counts, type HealthChecker } from "../service/metrics.js";
@@ -180,6 +181,8 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
       /** The prompt Haiku wrote for the implementer and its acceptance criteria (haiku_prompt mode); null in Spec Kit mode or before it exists. */
       plan: latestPlan(db, id) ?? null,
       worktree: db.select().from(worktrees).where(eq(worktrees.jobId, id)).get() ?? null,
+      /** Change requests on the job's pull request (job page or `/software-factory` PR comments), oldest first. */
+      feedback: listFeedback(db, id).map((f) => ({ id: f.id, source: f.source, author: f.author, body: clip(f.body, 4000), path: f.path, line: f.line, url: f.url, status: f.status, note: clip(f.note, 1000), at: ms(f.createdAt), updatedAt: ms(f.updatedAt) })),
       outbox: db.select().from(linearOutbox).where(eq(linearOutbox.jobId, id)).orderBy(asc(linearOutbox.id)).all()
         .map((o) => ({ id: o.id, kind: o.kind, status: o.status, attempts: o.attempts, lastError: clip(o.lastError, 300) })),
     };
@@ -262,6 +265,11 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   });
   app.post<{ Params: { id: string }; Body: { answer?: unknown } }>("/api/jobs/:id/answer", { preHandler: requireToken }, async (req, reply) => {
     try { return { ok: true, job: jobRow(answerJob(db, req.params.id, typeof req.body?.answer === "string" ? req.body.answer : "", actor)) }; }
+    catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
+  });
+  /** "Request changes" on a job whose PR is open: queued, then applied by a fix pass and pushed to the same PR. */
+  app.post<{ Params: { id: string }; Body: { text?: unknown } }>("/api/jobs/:id/feedback", { preHandler: requireToken }, async (req, reply) => {
+    try { const r = requestChanges(db, req.params.id, typeof req.body?.text === "string" ? req.body.text : "", actor); return { ok: true, job: jobRow(r.job), feedbackId: r.feedback.id }; }
     catch (e) { return reply.code(409).send({ error: e instanceof JobError ? e.message : "failed" }); }
   });
   for (const [name, archived] of [["archive", true], ["unarchive", false]] as const) {

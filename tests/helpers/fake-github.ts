@@ -1,4 +1,4 @@
-import { GitHubError, type CheckInfo, type GitHubClient, type PrInfo } from "../../src/github/client.js";
+import { GitHubError, type CheckInfo, type GitHubClient, type PrComment, type PrInfo } from "../../src/github/client.js";
 
 /**
  * In-memory GitHub. NOTE what it cannot do: there is no merge method, mirroring the real `GitHubClient`. A "human merge"
@@ -34,6 +34,11 @@ export class FakeGitHub implements GitHubClient {
   async checks(_repo: string, _n: number) { this.calls.push("checks"); this.maybeFail("checks"); const r = this.checkPolls[Math.min(this.poll, this.checkPolls.length - 1)]!; this.poll++; return r; }
   async failedLog(_repo: string, c: CheckInfo) { return this.logs[c.name] ?? ""; }
   async commentOnPr(_repo: string, _n: number, body: string) { this.comments.push(body); }
+  /** Comments people have written on the PR (the factory's own are in `comments`). */
+  prCommentList: PrComment[] = [];
+  async prComments() { this.calls.push("prComments"); this.maybeFail("prComments"); return this.prCommentList; }
+  /** Test-only: someone comments on the PR in GitHub. */
+  humanComments(body: string, o: Partial<PrComment> = {}) { const n = this.prCommentList.length + 1; this.prCommentList.push({ id: `ic:${n}`, author: "jamie", association: "OWNER", body, url: `https://github.com/o/r/pull/1#issuecomment-${n}`, path: null, line: null, createdAt: new Date(Date.now() + n).toISOString(), ...o }); }
 
   /** Test-only: what a person does in the GitHub UI. */
   humanMerges(number = 1) { const p = this.prs.find((x) => x.number === number)!; p.state = "MERGED"; p.mergedAt = new Date().toISOString(); }

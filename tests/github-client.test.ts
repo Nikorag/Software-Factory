@@ -18,6 +18,19 @@ const fake = (responses: Record<string, string | Error>) => {
 };
 
 describe("createGhClient (argument building and parsing; verified field names from real gh 2.105 output)", () => {
+  it("prComments reads conversation, inline and review comments (every page), with their author_association, oldest first", async () => {
+    const { run, calls } = fake({
+      "issues/5/comments": `{"id":11,"author":"jamie","association":"OWNER","body":"/factory tidy up","url":"u1","createdAt":"2026-11-27T10:00:02Z"}\n`,
+      "pulls/5/comments": `{"id":22,"author":"sam","association":"COLLABORATOR","body":"/software-factory rename","url":"u2","createdAt":"2026-11-27T10:00:01Z","path":"src/a.ts","line":7}\n`,
+      "pulls/5/reviews": `{"id":33,"author":"bot","association":"NONE","body":"","url":"u3","createdAt":"2026-11-27T10:00:03Z"}\n`,
+    });
+    const list = await createGhClient({ run }).prComments("o/r", 5);
+    expect(list.map((c) => c.id)).toEqual(["rc:22", "ic:11", "rv:33"]);
+    expect(list[0]).toMatchObject({ author: "sam", association: "COLLABORATOR", path: "src/a.ts", line: 7, body: "/software-factory rename" });
+    expect(list[1]).toMatchObject({ path: null, line: null });
+    for (const c of calls) expect(c.slice(0, 2)).toEqual(["api", "--paginate"]);
+    expect(calls.map((c) => c[2])).toEqual(["repos/o/r/issues/5/comments", "repos/o/r/pulls/5/comments", "repos/o/r/pulls/5/reviews"]);
+  });
   it("findPr asks for the head branch across all states, prefers the open PR, and ignores other branches", async () => {
     const { run, calls } = fake({ "pr list": JSON.stringify([pr({ number: 3, state: "CLOSED" }), pr({ number: 9 }), pr({ number: 4, headRefName: "other" })]) });
     const p = await createGhClient({ run }).findPr("o/r", "factory/JAM-1");

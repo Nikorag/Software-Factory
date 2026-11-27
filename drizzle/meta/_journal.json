@@ -57,6 +57,13 @@
       "when": 1795739191134,
       "tag": "0007_chunky_matthew_murdock",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1795775089683,
+      "tag": "0008_wandering_slipstream",
+      "breakpoints": true
     }
   ]
 }

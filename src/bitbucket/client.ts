@@ -105,6 +105,9 @@ export function createBitbucketClient(o: BitbucketClientOptions): BitbucketClien
       } catch { return ""; }
     },
     async commentOnPr(repo, number, body) { await must(`${prs(repo)}/${number}/comments`, { method: "POST", body: { content: { raw: body } } }); },
+    // Not yet: Bitbucket comments carry no equivalent of GitHub's author_association, so the factory cannot tell whether a commenter
+    // may instruct it. Bitbucket projects take change requests from the job page only.
+    async prComments() { return []; },
     async repository(repo) { const j = await must(`/repositories/${repo}`); return { name: String(j.full_name ?? repo), isPrivate: Boolean(j.is_private), mainBranch: j.mainbranch?.name ?? null }; },
     async protection(repo, branch): Promise<Protection> {
       const r = await call(`/repositories/${repo}`);

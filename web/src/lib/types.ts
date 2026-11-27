@@ -34,6 +34,12 @@ export interface JobDetail {
   plan?: { prompt: string; criteria: { id: string; text: string }[] } | null;
   worktree: { path: string; state: string; branch: string } | null;
   outbox: { id: number; kind: string; status: string; attempts: number; lastError: string | null }[];
+  /** Change requests on the job's pull request, oldest first (absent from servers that predate them). */
+  feedback?: Feedback[];
+}
+export interface Feedback {
+  id: number; source: "dashboard" | "github"; author: string; body: string; path: string | null; line: number | null; url: string | null;
+  status: "pending" | "applying" | "done" | "ignored"; note: string | null; at: number | null; updatedAt: number | null;
 }
 export interface Project {
   host?: "github" | "bitbucket"; bitbucketRepo?: string | null; bitbucketCredential?: string;

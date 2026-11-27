@@ -16,6 +16,7 @@ import { Pager } from "@/components/Pager";
 import { matches, usePaged } from "@/lib/paging";
 import { Peek } from "@/components/Peek";
 import { JobChat } from "@/components/JobChat";
+import { RequestChanges } from "@/components/RequestChanges";
 import { PeekButton, Timeline } from "@/components/Timeline";
 import { FlowChart, FlowLegend, FlowSteps } from "@/components/FlowChart";
 import { StatusBadge, toneOf } from "@/components/StatusBadge";
@@ -211,6 +212,9 @@ export function JobDetail() {
           <div className="min-w-0 flex-1 basis-[360px]"><div className="font-semibold text-loop">Awaiting your merge</div><div className="mt-0.5 text-[13px] text-[#C4C4CC]">The pull request is ready. The factory runs in PR-only mode, so it will not merge for you.</div></div>
           <Button asChild className="bg-loop text-background hover:bg-loop/90"><a href={pr} target="_blank" rel="noopener noreferrer">Review pull request</a></Button>
         </section>
+      ) : null}
+      {j.prUrl && (!finished || j.status === "failed" || d.feedback?.length) ? (
+        <RequestChanges jobId={j.id} feedback={d.feedback ?? []} open={!["done", "cancelled"].includes(j.status)} github={Boolean(pr)} locked={offline} onSent={reload} />
       ) : null}
       {j.lastError ? <Alert variant="destructive"><AlertDescription className="whitespace-pre-wrap">{stageText(j.lastError)}</AlertDescription></Alert> : null}
       {held ? <Alert><AlertDescription>Held at {stageLabel(j.stage)}{j.heldFromStage ? ` (was ${stageLabel(j.heldFromStage)})` : ""}. Retry resumes there, with fresh counters.</AlertDescription></Alert> : null}

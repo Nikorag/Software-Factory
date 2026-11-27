@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNull, lte, lt, or } from "drizzle-orm";
 import type { FactoryDb } from "../db/client.js";
-import { agentInvocations, artifacts, decisions, jobs, linearOutbox, stageExecutions, worktrees } from "../db/schema.js";
+import { agentInvocations, artifacts, decisions, jobs, linearOutbox, prFeedback, stageExecutions, worktrees } from "../db/schema.js";
 import type { StageName } from "../config/schema.js";
 import { fixCycleHistory } from "./fix-cycles.js";
 
@@ -198,6 +198,7 @@ export function deleteJob(db: FactoryDb, id: string): { logPaths: string[] } {
     tx.delete(artifacts).where(eq(artifacts.jobId, id)).run();
     tx.delete(linearOutbox).where(eq(linearOutbox.jobId, id)).run();
     tx.delete(decisions).where(eq(decisions.jobId, id)).run();
+    tx.delete(prFeedback).where(eq(prFeedback.jobId, id)).run();
     tx.delete(agentInvocations).where(eq(agentInvocations.jobId, id)).run();
     tx.delete(stageExecutions).where(eq(stageExecutions.jobId, id)).run();
     tx.delete(jobs).where(eq(jobs.id, id)).run();
