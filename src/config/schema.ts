@@ -79,6 +79,14 @@ const ModelRoute = z.object({
   // (see `factory doctor`); for `anthropic` it is passed to Claude Code via --model.
   model: z.string().min(1),
 });
+// The independent reviewer: any OpenAI-compatible endpoint. `baseUrl` + `model` (+ optional `apiKeyEnv`, the NAME of an
+// environment variable holding the key: the key itself is never stored). Absent or null = no independent review (skipped).
+// provider `local` without a baseUrl uses `local.baseUrl`; provider `anthropic` runs a Claude reviewer (older setups).
+export const ReviewerRoute = ModelRoute.extend({
+  baseUrl: z.string().url().optional(),
+  apiKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "an environment variable name").max(100).optional(),
+}).refine((r) => r.provider === "local" || (!r.baseUrl && !r.apiKeyEnv), { message: "baseUrl and apiKeyEnv only apply to provider `local` (an OpenAI-compatible endpoint)" });
+export type ReviewerRoute = z.infer<typeof ReviewerRoute>;
 export const ModelsConfig = z
   .object({
   local: z
@@ -95,7 +103,7 @@ export const ModelsConfig = z
     classification: ModelRoute,
     specification: ModelRoute,
     implementation: ModelRoute,
-    independent_review: ModelRoute,
+    independent_review: ReviewerRoute.nullish(),
     final_review: ModelRoute,
     // Writes the implementer's prompt (haiku_prompt planning mode). Reads the repository, so it must be Claude Code. Optional: Haiku by default.
     prompt_generation: ModelRoute.default({ provider: "anthropic", model: "haiku" }),
@@ -114,7 +122,8 @@ export const ProjectOverrides = z.object({
   maxRemediationAttempts: z.number().int().min(0).max(10).optional(),
   maxImplementationPasses: z.number().int().min(1).max(10).optional(),
   agentAccess: z.enum(["restricted", "unrestricted"]).optional(), // this project's override of factory.agentAccess
-  models: z.object(Object.fromEntries(RouteName.map((r) => [r, ModelRoute.optional()])) as Record<(typeof RouteName)[number], z.ZodOptional<typeof ModelRoute>>)
+  // independent_review: null = this project skips the independent review; left out = follow the global setting.
+  models: z.object({ ...(Object.fromEntries(RouteName.map((r) => [r, ModelRoute.optional()])) as Record<Exclude<(typeof RouteName)[number], "independent_review">, z.ZodOptional<typeof ModelRoute>>), independent_review: ReviewerRoute.nullish() })
     .refine((m) => (m.specification?.provider ?? "anthropic") === "anthropic" && (m.implementation?.provider ?? "anthropic") === "anthropic" && (m.prompt_generation?.provider ?? "anthropic") === "anthropic", {
       message: "specification, implementation and prompt_generation need file and shell tools, so they must use provider `anthropic` (Claude Code)",
     }).optional(),

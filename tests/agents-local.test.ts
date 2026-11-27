@@ -21,7 +21,9 @@ type Handler = (body: { model: string; messages: { role: string; content: string
 let server: Server | undefined;
 async function serve(handler: Handler, models = ["qwen-test"]) {
   let inflight = 0, maxInflight = 0, n = 0;
+  const auth: (string | undefined)[] = [];
   server = createServer(async (rq: IncomingMessage, rs) => {
+    auth.push(rq.headers.authorization);
     if (rq.url === "/v1/models") { rs.end(JSON.stringify({ data: models.map((id) => ({ id })) })); return; }
     let raw = ""; for await (const c of rq) raw += c;
     inflight++; maxInflight = Math.max(maxInflight, inflight);
@@ -29,7 +31,7 @@ async function serve(handler: Handler, models = ["qwen-test"]) {
     finally { inflight--; }
   });
   await new Promise<void>((r) => server!.listen(0, "127.0.0.1", r));
-  return { baseUrl: `http://127.0.0.1:${(server!.address() as AddressInfo).port}/v1`, max: () => maxInflight };
+  return { baseUrl: `http://127.0.0.1:${(server!.address() as AddressInfo).port}/v1`, max: () => maxInflight, auth };
 }
 afterEach(async () => { await new Promise((r) => (server ? server.close(r) : r(null))); server = undefined; });
 const completion = (content: string) => ({ body: { choices: [{ message: { content } }], usage: { prompt_tokens: 5, completion_tokens: 7 } } });
@@ -49,6 +51,20 @@ describe("LocalModelClient", () => {
   it("lists the models the server really has", async () => {
     const s = await serve(() => completion("x"), ["a", "b"]);
     expect(await new LocalModelClient({ baseUrl: s.baseUrl }).listModels()).toEqual(["a", "b"]);
+  });
+  it("sends a bearer Authorization header when a key variable is configured, and none otherwise", async () => {
+    const s = await serve(() => completion("ok"));
+    await new LocalModelClient({ baseUrl: s.baseUrl }).run(rq());
+    expect(s.auth).toEqual([undefined]);
+    await new LocalModelClient({ baseUrl: s.baseUrl, apiKeyEnv: "REVIEW_KEY", env: { REVIEW_KEY: "sk-secret-value" } }).run(rq());
+    expect(s.auth[1]).toBe("Bearer sk-secret-value");
+  });
+  it("fails clearly, naming the variable and not leaking anything, when the key variable is not set; and sends no request", async () => {
+    const s = await serve(() => completion("ok"));
+    const r = await new LocalModelClient({ baseUrl: s.baseUrl, apiKeyEnv: "REVIEW_KEY", env: {} }).run(rq());
+    expect(r).toMatchObject({ ok: false, failure: "error" });
+    expect(r.error).toContain("REVIEW_KEY");
+    expect(s.auth).toEqual([]);
   });
   it("returns text and usage, stripping reasoning", async () => {
     const s = await serve(() => completion("<think>plan</think>All good."));
@@ -132,6 +148,46 @@ describe("ModelRouter + config", () => {
   it("refuses to route to a local model with no real id", async () => {
     const router = new ModelRouter(routes, { local: stub("local"), anthropic: stub("anthropic") });
     await expect(router.run("independent_review", rq())).rejects.toBeInstanceOf(ConfigError);
+  });
+  const base = { classification: { provider: "anthropic", model: "haiku" }, specification: { provider: "anthropic", model: "default" }, implementation: { provider: "anthropic", model: "default" }, final_review: { provider: "anthropic", model: "default" } };
+  it("has no independent reviewer when none is configured (absent or null), globally or cleared by a project", () => {
+    const [none, nul] = [ModelsConfig.parse({ routes: base }), ModelsConfig.parse({ routes: { ...base, independent_review: null } })];
+    const [l, a] = [stub("local"), stub("anthropic")];
+    expect(new ModelRouter(none, { local: l, anthropic: a }).reviewer()).toBeNull();
+    expect(new ModelRouter(nul, { local: l, anthropic: a }).reviewer()).toBeNull();
+    const own = { provider: "anthropic" as const, model: "sonnet" };
+    const router = new ModelRouter(ModelsConfig.parse({ routes: { ...base, independent_review: own } }), { local: l, anthropic: a }, (id) => (id === "skip" ? { independent_review: null } : undefined));
+    expect(router.reviewer("other")).toEqual(own);
+    expect(router.reviewer("skip")).toBeNull();
+    expect(() => router.route("independent_review", "skip")).toThrow(ConfigError);
+  });
+  it("still runs an explicit Claude independent reviewer", async () => {
+    const [l, a] = [stub("local"), stub("anthropic")];
+    const router = new ModelRouter(ModelsConfig.parse({ routes: { ...base, independent_review: { provider: "anthropic", model: "haiku" } } }), { local: l, anthropic: a });
+    await router.run("independent_review", rq());
+    expect(a.calls).toHaveLength(1);
+    expect(l.calls).toHaveLength(0);
+  });
+  it("sends the independent review to its own OpenAI-compatible endpoint, read-only, with the key from its environment variable", async () => {
+    const s = await serve(() => completion("fine"));
+    process.env.TEST_REVIEWER_KEY = "sk-from-env";
+    try {
+      const [l, a] = [stub("local"), stub("anthropic")];
+      const router = new ModelRouter(ModelsConfig.parse({ routes: { ...base, independent_review: { provider: "local", model: "qwen-test", baseUrl: s.baseUrl, apiKeyEnv: "TEST_REVIEWER_KEY" } } }), { local: l, anthropic: a });
+      const r = await router.run("independent_review", rq());
+      expect(r).toMatchObject({ ok: true, text: "fine" });
+      expect(s.auth).toEqual(["Bearer sk-from-env"]);
+      expect(l.calls).toHaveLength(0);
+      expect(JSON.stringify(r.route)).not.toContain("sk-from-env"); // the route carries the variable's name only
+      expect((await router.run("independent_review", rq({ profile: "implementer" }))).error).toMatch(/read-only/);
+    } finally { delete process.env.TEST_REVIEWER_KEY; }
+  });
+  it("rejects a reviewer with an invalid URL or key variable name, or an endpoint on a Claude route", () => {
+    const bad = (r: object) => ModelsConfig.safeParse({ routes: { ...base, independent_review: r } }).success;
+    expect(bad({ provider: "local", model: "m", baseUrl: "not a url" })).toBe(false);
+    expect(bad({ provider: "local", model: "m", baseUrl: "https://x.test/v1", apiKeyEnv: "sk-live key" })).toBe(false);
+    expect(bad({ provider: "anthropic", model: "haiku", baseUrl: "https://x.test/v1" })).toBe(false);
+    expect(bad({ provider: "local", model: "m", baseUrl: "https://x.test/v1", apiKeyEnv: "MY_KEY" })).toBe(true);
   });
   it("rejects configs that put specification or implementation on the local model", () => {
     const bad = (k: string) => ModelsConfig.safeParse({ routes: { ...routes.routes, [k]: { provider: "local", model: "q" } } }).success;

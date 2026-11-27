@@ -17,7 +17,7 @@ import { makeRepo, sh } from "./helpers/git-fixture.js";
 
 interface Harness { ctx: Context; claude: ScriptedAgent; local: ScriptedAgent; linear: FakeLinear; repo: string; jobId: string; engine: Engine; stages: () => string[]; hist: () => string[] }
 
-function harness(o: { initialised?: boolean; localModel?: string; fallback?: "claude" | "block"; noLinear?: boolean } = {}): Harness {
+function harness(o: { initialised?: boolean; localModel?: string; fallback?: "claude" | "block"; noLinear?: boolean; noReviewer?: boolean } = {}): Harness {
   const { repo } = makeRepo(o.initialised === false ? { "README.md": "x" } : { "README.md": "x", ".specify/init-options.json": "{}", ".specify/.gitignore": "feature.json\n", ".claude/skills/speckit-specify/SKILL.md": "skill" });
   const base = fixtureConfig();
   const project = ProjectConfig.parse({ id: "p", name: "P", repository: repo, linear: { teamKey: "JAM" }, commands: { test: "npm test" } });
@@ -31,7 +31,7 @@ function harness(o: { initialised?: boolean; localModel?: string; fallback?: "cl
       routes: {
         // default: Claude Haiku does classification and the independent review; `localModel` switches those two to a local route
         classification: o.localModel ? route("local", o.localModel) : route("anthropic", "haiku"), specification: route("anthropic", "default"), implementation: route("anthropic", "default"),
-        independent_review: o.localModel ? route("local", o.localModel) : route("anthropic", "haiku"), final_review: route("anthropic", "default"),
+        independent_review: o.noReviewer ? undefined : o.localModel ? route("local", o.localModel) : route("anthropic", "haiku"), final_review: route("anthropic", "default"),
       },
     }),
   };
@@ -156,6 +156,26 @@ describe("requirements analysis", () => {
     await h.engine.tick();
     expect(decisionKinds(h)).toContain("classification.skipped");
     expect(h.stages()).toContain("SPECIFICATION_VALIDATION");
+  });
+});
+
+describe("no independent reviewer configured", () => {
+  it("skips the spec review without calling any model, records why, and carries on", async () => {
+    const h = harness({ noReviewer: true });
+    await h.engine.tick();
+    expect(h.hist()).toContain("SPECIFICATION_REVIEW:succeeded");
+    expect(h.stages()).toContain("SPECIFICATION_VALIDATION");
+    expect(decisionKinds(h)).toContain("review.skipped");
+    expect(decisionKinds(h)).not.toContain("review.degraded");
+    expect(h.local.calls).toHaveLength(0);
+    expect(h.claude.calls.some((c) => c.role === "spec-reviewer" && c.model === "haiku")).toBe(false); // what the independent route would have run (later validation uses the Claude review route)
+  });
+  it("uses a local reviewer when one is configured (and does not record a skip)", async () => {
+    const h = harness({ localModel: "qwen-x" });
+    h.local.b = defaults();
+    await h.engine.tick();
+    expect(h.local.calls.some((c) => c.role === "spec-reviewer")).toBe(true);
+    expect(decisionKinds(h)).not.toContain("review.skipped");
   });
 });
 

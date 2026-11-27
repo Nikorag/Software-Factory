@@ -238,6 +238,18 @@ describe.skipIf(!sandboxAvailable())("secrets, protected paths and security: the
     expect(job(h).lastError).toMatch(/Critical security finding.*src\/runner\.js:2.*shell injection/s);
     expect(h.stages()).not.toContain("REMEDIATION");
   });
+  it("with no independent reviewer the review is skipped (no model call, a skip is recorded) but the security review still runs", async () => {
+    const h = await harness({ noReviewer: true });
+    h.claude.b.implement = (cwd, dir) => { write(cwd, "src/due.js", GOOD_SRC); write(cwd, "src/runner.js", "import { execSync } from 'node:child_process';\nexport const run = (c) => execSync(c);\n"); write(cwd, "test/due.test.js", GOOD_TEST); tickTasks(cwd, dir); };
+    h.claude.b.security = () => ({ findings: [] });
+    await h.engine.tick();
+    expect(h.hist()).toContain("LOCAL_MODEL_REVIEW:succeeded");
+    expect(decisionKinds(h)).toContain("review.skipped");
+    expect(decisionKinds(h)).not.toContain("code-review.independent");
+    expect(h.claude.calls.some((c) => c.role === "qa-reviewer" && c.model === "haiku")).toBe(false); // the independent reviewer was never called
+    expect(h.claude.calls.some((c) => c.role === "security-reviewer")).toBe(true);
+    expect(h.stages()).toContain("CLAUDE_REVIEW");
+  });
   it("a HIGH security finding is remediated like any other blocking finding", async () => {
     const h = await harness();
     h.claude.b.implement = (cwd, dir) => { write(cwd, "src/due.js", GOOD_SRC); write(cwd, "src/auth.js", "export const ok = (u) => u === 'admin';\n"); write(cwd, "test/due.test.js", GOOD_TEST); tickTasks(cwd, dir); };

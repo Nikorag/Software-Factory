@@ -50,9 +50,12 @@ export async function checkLocalModels(baseUrl: string, fetchImpl: typeof fetch 
   }
 }
 
+const hasEndpoint = (r: object): boolean => "baseUrl" in r && Boolean(r.baseUrl);
+
 /** Each route that uses the local model must name a model the server really reports. */
 export async function checkLocalRoutes(config: LoadedConfig, fetchImpl: typeof fetch = fetch): Promise<CheckResult[]> {
-  const local = Object.entries(config.models.routes).filter(([, r]) => r.provider === "local");
+  // A route with its own endpoint (the independent reviewer) is not on the local server.
+  const local = Object.entries(config.models.routes).filter((e): e is [string, NonNullable<(typeof e)[1]>] => !!e[1] && e[1].provider === "local" && !hasEndpoint(e[1]));
   if (local.length === 0) return [];
   let ids: string[] = [];
   try {
@@ -67,7 +70,7 @@ export async function checkLocalRoutes(config: LoadedConfig, fetchImpl: typeof f
   });
 }
 
-const usesLocal = (c: LoadedConfig) => Object.values(c.models.routes).some((r) => r.provider === "local");
+const usesLocal = (c: LoadedConfig) => Object.values(c.models.routes).some((r) => r?.provider === "local" && !hasEndpoint(r));
 
 /** The local model server is only checked (and only required) when a route actually uses it. */
 async function localChecks(config: LoadedConfig, fetchImpl: typeof fetch): Promise<CheckResult[]> {
@@ -78,6 +81,7 @@ async function localChecks(config: LoadedConfig, fetchImpl: typeof fetch): Promi
 /** A reviewer that is the same model as the author is not independent. */
 export function reviewerIndependence(config: LoadedConfig): CheckResult[] {
   const { specification: a, independent_review: r } = config.models.routes;
+  if (!r) return [{ name: "reviewer independence", status: "ok", detail: "no independent reviewer set: the independent review step is skipped" }];
   return a.provider === r.provider && a.model === r.model
     ? [{ name: "reviewer independence", status: "warn", detail: `independent_review uses the same model as specification (${r.model}); pick a different one` }]
     : [{ name: "reviewer independence", status: "ok", detail: `${r.provider}/${r.model} reviews ${a.provider}/${a.model}` }];

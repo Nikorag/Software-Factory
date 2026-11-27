@@ -55,7 +55,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
   const port = opts.port ?? config.factory.server.port;
   const token = loadOrCreateToken(config.factory.dataDir);
 
-  const usesLocal = Object.values(config.models.routes).some((r) => r.provider === "local");
+  const usesLocal = Object.values(config.models.routes).some((r) => r?.provider === "local" && !("baseUrl" in r && r.baseUrl));
   const health = new HealthChecker({
     claudeAuth: async () => (await run("claude", ["auth", "status"], { timeout: 10_000 })).stdout,
     trackers: () => trackerIdsInUse(config).map((id) => ({ name: id === "github" ? "github-issues" : id /* "github" is already the gh sign-in probe */, viewer: async () => ctx.trackers.client(id).viewer() })),

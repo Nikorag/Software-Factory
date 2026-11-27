@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { isMap, isSeq, parseDocument, type Document, type YAMLMap } from "yaml";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir, loadConfig } from "./load.js";
-import { BUILTIN_TRACKER_IDS, GithubIssuesConfig, JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, KIND_NAME, ProjectInput, TrackerId, TrackerKind, ProjectOverrides, type LoadedConfig } from "./schema.js";
+import { BUILTIN_TRACKER_IDS, GithubIssuesConfig, JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, KIND_NAME, ProjectInput, ReviewerRoute, TrackerId, TrackerKind, ProjectOverrides, type LoadedConfig } from "./schema.js";
 
 const FILES = ["factory.yaml", "linear.yaml", "models.yaml", "workflows.yaml", "projects.yaml"];
 /** Files that describe tracker connections: every validation copy needs them, or a project naming one would look unknown. */
@@ -115,7 +115,7 @@ export const GlobalSettings = z.object({
   maxRemediationAttempts: z.number().int().min(0).max(10),
   maxImplementationPasses: z.number().int().min(1).max(10).optional(),
   planningMode: z.enum(["haiku_prompt", "speckit"]).optional(),
-  routes: z.object({ classification: Route, specification: Route, implementation: Route, independent_review: Route, final_review: Route, prompt_generation: Route.optional() }),
+  routes: z.object({ classification: Route, specification: Route, implementation: Route, independent_review: ReviewerRoute.nullish(), final_review: Route, prompt_generation: Route.optional() }),
 });
 export type GlobalSettings = z.infer<typeof GlobalSettings>;
 
@@ -134,6 +134,7 @@ export function updateGlobalSettings(input: unknown, dir = seedHomeConfig()): Lo
   if (g.planningMode) factory.setIn(["workflow", "planning_mode"], g.planningMode);
   if (g.githubAccount) factory.set("githubAccount", g.githubAccount); else if (g.githubAccount === "") factory.delete("githubAccount");
   for (const [task, route] of Object.entries(g.routes)) {
+    if (!route) { models.deleteIn(["routes", task]); continue; } // a cleared independent reviewer: the step is skipped
     const node = models.createNode(route) as YAMLMap; node.flow = true;
     models.setIn(["routes", task], node);
   }
@@ -157,6 +158,7 @@ export function applyGlobal(live: LoadedConfig, fresh: LoadedConfig): void {
   live.factory.workflow.planning_mode = fresh.factory.workflow.planning_mode; // the next stage of every job follows it
   applyProjects(live, fresh); // projects that follow the profile's default GitHub account pick up the change
   Object.assign(live.models.routes, fresh.models.routes);
+  live.models.routes.independent_review = fresh.models.routes.independent_review; // Object.assign keeps a stale value when the reviewer was cleared
 }
 
 // ---- tracker: which one this profile uses, and the Jira connection and mapping ----

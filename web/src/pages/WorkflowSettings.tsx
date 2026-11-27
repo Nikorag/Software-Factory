@@ -4,12 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ModelPicker } from "@/components/ModelPicker";
+import { ModelPicker, ReviewerPicker } from "@/components/ModelPicker";
 import { api, send } from "@/lib/api";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { GhAccounts } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
-import { DEFAULT_PROMPT_ROUTE, TASKS, type GlobalSettings } from "@/lib/tasks";
+import { DEFAULT_PROMPT_ROUTE, TASKS, type GlobalSettings, type RouteCfg } from "@/lib/tasks";
 
 /** A number box you can clear and retype: it only commits a value once something valid is typed, clamps to the range, and restores on blur if left empty. */
 function NumberField({ id, value, min, max, onChange }: { id: string; value: number; min: number; max: number; onChange: (n: number) => void }) {
@@ -78,10 +78,12 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
           {TASKS.map((t) => (
             <div key={t.id} className="grid gap-1.5 border-b pb-4 last:border-0 last:pb-0">
               <div className="flex flex-wrap items-baseline gap-x-3"><b className="text-sm">{t.label}</b><span className="text-xs text-muted-foreground">{t.steps}</span></div>
-              <ModelPicker label={t.label} allowLocal={t.local} value={g.routes[t.id] ?? DEFAULT_PROMPT_ROUTE} onChange={(v) => { setSaved(false); setG({ ...g, routes: { ...g.routes, [t.id]: v } }); }} />
+              {t.id === "independent_review"
+                ? <ReviewerPicker label={t.label} value={g.routes.independent_review} onChange={(v) => { setSaved(false); setG({ ...g, routes: { ...g.routes, independent_review: v } }); }} />
+                : <ModelPicker label={t.label} allowLocal={t.local} value={(g.routes[t.id] ?? DEFAULT_PROMPT_ROUTE) as RouteCfg} onChange={(v) => { setSaved(false); setG({ ...g, routes: { ...g.routes, [t.id]: v } }); }} />}
             </div>
           ))}
-          {g.routes.independent_review.model === g.routes.specification.model && g.routes.independent_review.provider === g.routes.specification.provider
+          {g.routes.independent_review && g.routes.independent_review.model === g.routes.specification.model && g.routes.independent_review.provider === g.routes.specification.provider
             ? <Alert><AlertDescription>Independent review uses the same model as Specification, so it is partly marking its own work. Pick a different one for a genuinely independent review.</AlertDescription></Alert> : null}
         </CardContent></Card>
       <div className="flex flex-wrap items-center gap-3 max-md:sticky max-md:bottom-0 max-md:z-10 max-md:-mx-4 max-md:gap-2 max-md:border-t max-md:border-line max-md:bg-background/95 max-md:px-4 max-md:pb-[calc(env(safe-area-inset-bottom)+0.75rem)] max-md:pt-3 max-md:backdrop-blur">

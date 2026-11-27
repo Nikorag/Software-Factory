@@ -216,6 +216,37 @@ describe("workflow settings (global) and per-project overrides", () => {
     expect(() => upsertProject({ ...app1, overrides: { maxConcurrentJobs: 99 } }, dir)).toThrow();
     expect(() => upsertProject({ ...app1, overrides: { models: { specification: route("m", "local") } } }, dir)).toThrow();
   });
+  it("saves an independent reviewer endpoint (URL, model, key variable name), then clears it (skip), live and on disk", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    const live = loadConfig(dir);
+    expect(live.models.routes.independent_review).toBeUndefined(); // the seeded default: none
+    const ep = { provider: "local", model: "gpt-x", baseUrl: "https://api.example.test/v1", apiKeyEnv: "REVIEW_KEY" };
+    applyGlobal(live, updateGlobalSettings(global({ routes: { ...global().routes, independent_review: ep } }), dir));
+    expect(live.models.routes.independent_review).toEqual(ep);
+    expect(readFileSync(join(dir, "models.yaml"), "utf8")).toContain("REVIEW_KEY");
+    expect(readFileSync(join(dir, "models.yaml"), "utf8")).not.toMatch(/sk-/);
+    applyGlobal(live, updateGlobalSettings(global({ routes: { ...global().routes, independent_review: null } }), dir));
+    expect(live.models.routes.independent_review).toBeUndefined();
+    expect(loadConfig(dir).models.routes.independent_review).toBeUndefined();
+    expect(readFileSync(join(dir, "models.yaml"), "utf8")).toContain("# Model routing."); // comments kept
+  });
+  it("refuses an invalid reviewer URL or key variable name and writes nothing", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    const before = readFileSync(join(dir, "factory.yaml"), "utf8") + readFileSync(join(dir, "models.yaml"), "utf8");
+    for (const bad of [{ provider: "local", model: "m", baseUrl: "not a url" }, { provider: "local", model: "m", baseUrl: "https://x.test/v1", apiKeyEnv: "has space" }, { provider: "anthropic", model: "haiku", baseUrl: "https://x.test/v1" }]) {
+      expect(() => updateGlobalSettings(global({ maxConcurrentJobs: 4, routes: { ...global().routes, independent_review: bad } }), dir)).toThrow();
+    }
+    expect(readFileSync(join(dir, "factory.yaml"), "utf8") + readFileSync(join(dir, "models.yaml"), "utf8")).toBe(before);
+  });
+  it("saves a project override that clears the reviewer (null = skip for this project), and refuses an invalid one", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    const c = upsertProject({ ...app1, overrides: { models: { independent_review: null } } }, dir);
+    expect(c.projects.projects[0]!.overrides).toEqual({ models: { independent_review: null } });
+    expect(loadConfig(dir).projects.projects[0]!.overrides?.models?.independent_review).toBeNull();
+    const before = readFileSync(join(dir, "projects.yaml"), "utf8");
+    expect(() => upsertProject({ ...app1, overrides: { models: { independent_review: { provider: "local", model: "m", baseUrl: "nope" } } } }, dir)).toThrow();
+    expect(readFileSync(join(dir, "projects.yaml"), "utf8")).toBe(before);
+  });
   it("is served and saved through the API, live, from the dashboard", async () => {
     const s = server();
     const r0 = await send(s.app, "GET", "/api/settings/global", HOST);
