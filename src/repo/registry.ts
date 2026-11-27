@@ -2,7 +2,7 @@ import type { Hosts } from "../host/index.js";
 import { onboardingOf, type CheckRecord, type Onboarding } from "./readiness.js";
 import { eq } from "drizzle-orm";
 import { expandHome } from "../config/load.js";
-import type { ProjectConfig } from "../config/schema.js";
+import type { PlanningMode, ProjectConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { projects } from "../db/schema.js";
 import { inspectRepository, type GhApi, type RepoReport } from "./inspect.js";
@@ -51,7 +51,7 @@ export const repoPathOf = (db: FactoryDb, id: string): string => {
 };
 
 /** The project's onboarding status from what the factory has recorded (its last validation and last command check). */
-export function onboardingFor(db: FactoryDb, project: ProjectConfig): Onboarding {
+export function onboardingFor(db: FactoryDb, project: ProjectConfig, mode?: PlanningMode): Onboarding {
   const row = db.select().from(projects).where(eq(projects.id, project.id)).get();
-  return onboardingOf(project, row?.validationJson ? (JSON.parse(row.validationJson) as RepoReport) : null, row?.checkJson ? (JSON.parse(row.checkJson) as CheckRecord) : null);
+  return onboardingOf(project, row?.validationJson ? (JSON.parse(row.validationJson) as RepoReport) : null, row?.checkJson ? (JSON.parse(row.checkJson) as CheckRecord) : null, mode);
 }

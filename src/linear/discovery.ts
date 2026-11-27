@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { Logger } from "pino";
-import { pickupModeOf, type LinearConfig, type ProjectConfig } from "../config/schema.js";
+import { pickupModeOf, type LinearConfig, type PlanningMode, type ProjectConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { decisions, jobs } from "../db/schema.js";
 import { enqueue } from "../core/jobs.js";
@@ -30,6 +30,8 @@ export async function discoverIssues(deps: {
   pickupMode?: "automatic" | "manual";
   /** Skip tickets of projects whose onboarding is not complete (the service turns this on). */
   requireOnboarding?: boolean;
+  /** The profile's planning mode: Spec Kit only counts as an onboarding step in `speckit` mode. */
+  planningMode?: PlanningMode;
 }): Promise<DiscoveryReport> {
   const { db, client, linear, logger } = deps;
   const report: DiscoveryReport = { enqueued: [], skipped: [], errors: [] };
@@ -74,7 +76,7 @@ export async function discoverIssues(deps: {
     const prior = db.select().from(jobs).where(and(eq(jobs.projectId, project.id), eq(jobs.externalId, issue.id))).orderBy(desc(jobs.createdAt)).limit(1).get();
     const verdict = evaluateEligibility(issue, project, names, { projectRunnable: isRunnable(db, project.id), existingJobStatus: prior?.status });
     if (verdict.eligible && deps.requireOnboarding) {
-      const ob = onboardingFor(db, project);
+      const ob = onboardingFor(db, project, deps.planningMode);
       if (ob.status !== "ready") {
         const todo = ob.steps.filter((x) => !x.ok).map((x) => x.label.toLowerCase());
         if (!prior) report.skipped.push({ key: issue.identifier, projectId: project.id, reasons: [`project ${project.id} is not onboarded yet (still to do: ${todo.join("; ")}): finish it in Settings > Projects`] });

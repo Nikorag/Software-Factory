@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { Shell } from "@/components/Shell";
-import { deriveFlow } from "@/lib/pipeline";
+import { deriveFlow, edgesFor, nodesFor, stripStates } from "@/lib/pipeline";
 import { JobDetail } from "@/pages/JobDetail";
 import { Settings } from "@/pages/Settings";
 import { Setup } from "@/pages/Setup";
@@ -55,6 +55,29 @@ describe("flow derivation (from the stage history the factory already stores)", 
   it("a spec review that sends work to Fix spec skips the direct route to validation", () => {
     const f = deriveFlow(job({ stage: "SPECIFICATION_VALIDATION" }), [exec("SPECIFICATION_REVIEW", "succeeded", 1), exec("SPECIFICATION_REMEDIATION", "succeeded", 2)], []);
     expect(f.loopsUsed.has("srev>sfix")).toBe(true); expect(f.skipped.has("srev>sval")).toBe(true);
+  });
+});
+
+describe("flow chart follows the planning mode", () => {
+  const haiku = (o = {}) => job({ planningMode: "haiku_prompt", ...o });
+  it("haiku_prompt draws no Spec Kit steps at all (not skipped ones), and the prompt step replaces them", () => {
+    const ids = nodesFor("haiku_prompt").map((n) => n.id);
+    expect(ids.some((i) => ["gen", "srev", "sval", "sfix"].includes(i))).toBe(false);
+    expect(nodesFor("haiku_prompt").find((n) => n.id === "req")!.label).toBe("Write prompt");
+    expect(edgesFor("haiku_prompt").map((e) => e.id)).toEqual(expect.arrayContaining(["req>prep", "mr>conf", "conf>test"]));
+    expect(edgesFor("haiku_prompt").some((e) => e.from === "gen" || e.to === "sval" || e.from === "sfix")).toBe(false);
+    expect(nodesFor("speckit").map((n) => n.id)).toEqual(expect.arrayContaining(["gen", "srev", "sval", "sfix", "conf"]));
+  });
+  it("the per-job strip drops the Spec Kit squares in haiku_prompt, and a Spec Kit job keeps them whatever the profile says now", () => {
+    expect(stripStates(haiku({ stage: "IMPLEMENTATION" }))).toHaveLength(14);
+    expect(stripStates(job({ stage: "IMPLEMENTATION" }))).toHaveLength(17);
+    const f = deriveFlow(haiku({ stage: "IMPLEMENTATION" }), [exec("SPECIFICATION_GENERATION", "succeeded", 1)], []);
+    expect(f.mode).toBe("speckit");
+    expect(deriveFlow(haiku({ stage: "IMPLEMENTATION" }), [exec("REQUIREMENTS_ANALYSIS", "succeeded", 1)], []).mode).toBe("haiku_prompt");
+  });
+  it("conflict resolution lights its own route, so a conflict is visible rather than hidden in a retry", () => {
+    const f = deriveFlow(haiku({ stage: "MERGING" }), [exec("PULL_REQUEST_CREATION", "succeeded", 1), exec("MERGE_VALIDATION", "succeeded", 2), exec("CONFLICT_RESOLUTION", "succeeded", 3)], []);
+    expect(f.state["conf"]).toBe("done"); expect(f.loopsUsed.has("mr>conf")).toBe(true); expect(f.loopsUsed.has("conf>test")).toBe(true);
   });
 });
 

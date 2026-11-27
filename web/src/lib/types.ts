@@ -1,4 +1,6 @@
 export interface Job {
+  /** How the job is planned; absent (an older server) means Spec Kit, the original flow. */
+  planningMode?: "haiku_prompt" | "speckit";
   id: string; key: string; project: string; workflow: string; stage: string; status: string; heldFromStage: string | null;
   remediationAttempts: number; stageAttempts: number; autonomous: boolean; dryRun: boolean; prUrl: string | null;
   lastError: string | null; notBefore: number | null; createdAt: number | null; updatedAt: number | null; archivedAt?: number | null;

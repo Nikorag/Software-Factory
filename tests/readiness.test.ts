@@ -38,6 +38,19 @@ describe("onboarding status (derived from the repository, never a flag)", () => 
   });
 });
 
+describe("Spec Kit is an onboarding step only in speckit mode", () => {
+  it("haiku_prompt: a project with no .specify/ is fully ready, and there is no Spec Kit step", () => {
+    const o = onboardingOf(project(), report({ hasSpecKit: false }), { ok: true, at: Date.now() }, "haiku_prompt");
+    expect(o.steps.map((s) => s.id)).toEqual(["repo", "test", "linear", "checks"]);
+    expect(o.status).toBe("ready");
+  });
+  it("speckit: the same project is still not ready until Spec Kit is merged", () => {
+    const o = onboardingOf(project(), report({ hasSpecKit: false }), { ok: true, at: Date.now() }, "speckit");
+    expect(o.steps.map((s) => s.id)).toContain("speckit");
+    expect(o.status).not.toBe("ready");
+  });
+});
+
 describe("Spec Kit detection judges origin's default branch, not a stale checkout", () => {
   it("sees Spec Kit that was merged upstream even though the local checkout does not have it yet (the JAM-418 situation)", async () => {
     const { origin, repo } = makeRepo({ "a.txt": "1\n" });

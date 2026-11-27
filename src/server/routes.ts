@@ -50,7 +50,8 @@ export interface ApiDeps {
 }
 
 const ms = (d: Date | null | undefined) => (d ? d.getTime() : null);
-const jobRow = (j: typeof jobs.$inferSelect) => ({
+const baseJobRow = (j: typeof jobs.$inferSelect, planningMode: string) => ({
+  planningMode, // how this job is planned: the dashboard draws the matching flow chart
   id: j.id, key: j.externalKey, project: j.projectId, workflow: j.workflow, stage: j.stage, status: j.status, heldFromStage: j.heldFromStage,
   remediationAttempts: j.remediationAttempts, stageAttempts: j.stageAttempts, autonomous: j.autonomous, dryRun: j.dryRun, prUrl: j.prUrl,
   lastError: j.lastError, notBefore: ms(j.notBefore), createdAt: ms(j.createdAt), updatedAt: ms(j.updatedAt), archivedAt: ms(j.archivedAt),
@@ -98,6 +99,8 @@ function removeLog(dataDir: string, path: string): void {
 export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>): void {
   const { db } = d;
   const actor = "dashboard";
+  /** A job that is in (or was held at) a Spec Kit stage is a Spec Kit job whatever the profile says now; otherwise the profile's current mode. */
+  const jobRow = (j: typeof jobs.$inferSelect) => baseJobRow(j, /^SPECIFICATION_/.test(j.stage) || /^SPECIFICATION_/.test(j.heldFromStage ?? "") ? "speckit" : d.config?.factory.workflow.planning_mode ?? "speckit");
   const systemInfo = cachedSystemInfo(); // polled every few seconds: do not spawn memory_pressure on every request
 
   /** Latest Claude plan-limit reading (from Claude Code's own stream) and the list-price estimate of recent runs. Never a charge: subscription auth is not billed per token. */
@@ -207,7 +210,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
         return {
           id: p.id, name: p.name, enabled: p.enabled, autonomy: p.autonomy, repository: p.repository, managed: p.managed, defaultBranch: p.defaultBranch, githubAccount: p.github.account ?? null, host: p.host, bitbucketRepo: p.bitbucket.repo ?? null, bitbucketCredential: p.bitbucket.credential, overrides: p.overrides ?? null, specKit: p.specKit, allowLoopback: p.allowLoopback, agentBashAllow: p.agentBashAllow,
           tracker: p.tracker ?? null, linear: p.linear ?? null, githubRepo: p.github.repo ?? null, commands: p.commands,
-          onboarding: onboardingOf(p, row?.validationJson ? (JSON.parse(row.validationJson) as RepoReport) : null, row?.checkJson ? (JSON.parse(row.checkJson) as CheckRecord) : null),
+          onboarding: onboardingOf(p, row?.validationJson ? (JSON.parse(row.validationJson) as RepoReport) : null, row?.checkJson ? (JSON.parse(row.checkJson) as CheckRecord) : null, d.config?.factory.workflow.planning_mode),
           validation: report ? { ok: report.ok ?? false, at: ms(row?.lastValidatedAt), protection: report.branchProtection?.status ?? "unknown", findings: (report.findings ?? []).filter((f) => f.severity !== "info").map((f) => `${f.severity}: ${f.message}`) } : null,
           activeJobs: db.select().from(jobs).where(and(eq(jobs.projectId, p.id), inArray(jobs.status, ["queued", "running", "waiting"]))).all().length,
         };

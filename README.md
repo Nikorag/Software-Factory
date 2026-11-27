@@ -95,7 +95,7 @@ That starts the factory in the background, opens the app window and gives you yo
 2. connects your issue tracker (for Linear, your key is verified, then stored in your macOS keychain, never in a file) and offers to create the statuses and labels it needs;
 3. adds your first project: a GitHub or Bitbucket repository, its tracker project, and the commands that run its tests.
 
-Then start a ticket one of two ways: in **automatic** mode, label it **`factory:enabled`** in the tracker and move it to its pickup status (**Ready for specification** by default); in **manual** mode, open the **Board**, find it (search by number works) and press **Start**. A project must be fully onboarded first (Settings → Projects shows what is left). Open the app and watch it go.
+Then start a ticket one of two ways: in **automatic** mode, label it **`factory:enabled`** in the tracker and move it to its pickup status (**Ready for specification** by default); in **manual** mode, open the **Board**, find it (search by number works) and press **Start**. A project must be fully onboarded first (Settings → Projects shows what is left: a reachable repository, a test command, a tracker binding and verified commands; plus Spec Kit in `speckit` mode only). Open the app and watch it go.
 
 The factory keeps working after you close the window, and a **menu bar icon** stays behind: it shows how many jobs are running, and one click reopens the app. Stop the factory with `software-factory shutdown` (or "Stop the Factory and Quit…" from the menu bar icon).
 

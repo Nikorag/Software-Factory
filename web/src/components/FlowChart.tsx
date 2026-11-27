@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Maximize2, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { EDGES, H, NODES, W, type Flow, type NodeState } from "@/lib/pipeline";
+import { edgesFor, H, nodesFor, W, type Flow, type NodeState } from "@/lib/pipeline";
 
 // Labels sit clear of the long return routes (y=262 and y=534); the last band's label goes to the free space right of its row.
-const BANDS = [
-  { t: "Understand the ticket", s: "Requirements, Spec Kit, independent spec review", x: 24, y: 40, sy: 40, anchor: "start" as const },
+const bands = (mode: "haiku_prompt" | "speckit") => [
+  { t: "Understand the ticket", s: mode === "speckit" ? "Requirements, Spec Kit, independent spec review" : "Requirements, then Haiku writes the implementer's prompt", x: 24, y: 40, sy: 40, anchor: "start" as const },
   { t: "Build and verify", s: "Sandboxed implementation, checks, two reviews, final gates", x: 24, y: 290, sy: 290, anchor: "start" as const },
-  { t: "Deliver", s: "Pull request, CI, then your merge", x: 960, y: 570, sy: 588, anchor: "start" as const },
+  { t: "Deliver", s: "Pull request, CI, conflicts resolved if needed, then your merge", x: 24, y: 632, sy: 632, anchor: "start" as const },
 ];
 
 function Icon({ kind, cx, cy }: { kind: NodeState; cx: number; cy: number }) {
@@ -93,6 +93,7 @@ const W_FULL = 1180, H_FULL = 640;
 
 export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: string | null; onSelect: (id: string) => void }) {
   const st = (id: string): NodeState => flow.state[id] ?? "idle";
+  const NODES = nodesFor(flow.mode), EDGES = edgesFor(flow.mode);
   const pz = usePanZoom();
   const btn = "flex size-8 items-center justify-center rounded-md border border-input bg-background/90 text-muted-foreground hover:text-foreground";
   return (
@@ -105,7 +106,7 @@ export function FlowChart({ flow, selected, onSelect }: { flow: Flow; selected: 
             <marker key={id} id={id} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" className={c} /></marker>
           ))}
         </defs>
-        {BANDS.map((b) => (
+        {bands(flow.mode).map((b) => (
           <g key={b.t}>
             <text x={b.x} y={b.y} textAnchor={b.anchor} className="fill-muted-foreground text-[11px] font-semibold uppercase tracking-widest">{b.t}</text>
             {b.sy === b.y ? <text x={b.x + b.t.length * 8.2 + 16} y={b.sy} className="fill-muted-foreground text-[11px]">{b.s}</text> : <text x={b.x} y={b.sy} className="fill-muted-foreground text-[11px]">{b.s}</text>}

@@ -70,7 +70,7 @@ export function registerBoardRoutes(app: FastifyInstance, d: BoardDeps, requireT
       if (["completed", "canceled"].includes(i.state.type)) reason = `already ${i.state.name}`;
       else if (job && (ACTIVE as readonly string[]).includes(job.status)) reason = "the factory is already working on it";
       else if (!isRunnable(d.db, p.id)) reason = "the project has not passed validation (Settings → Projects → Validate)";
-      else if (onboardingFor(d.db, p).status !== "ready") reason = "the project is not onboarded yet (Settings → Projects)";
+      else if (onboardingFor(d.db, p, d.config.factory.workflow.planning_mode).status !== "ready") reason = "the project is not onboarded yet (Settings → Projects)";
       return [{ id: i.id, key: i.identifier, title: i.title, url: i.url, state: i.state.name, stateType: i.state.type, labels: i.labels.map((l) => l.name), linearProject: i.project?.name ?? null,
         projectId: p.id, projectName: p.name, mode: pickupModeOf(p, d.config.factory), job, canStart: reason === null, reason }];
     });
@@ -95,7 +95,7 @@ export function registerBoardRoutes(app: FastifyInstance, d: BoardDeps, requireT
     const prior = d.db.select().from(jobs).where(and(eq(jobs.projectId, project.id), eq(jobs.externalId, issue.id))).orderBy(desc(jobs.createdAt)).limit(1).get();
     const v = evaluateEligibility(issue, project, trackerNames(d.config, tid), { projectRunnable: isRunnable(d.db, project.id), existingJobStatus: prior?.status, manual: true });
     if (!v.eligible) return reply.code(409).send({ error: `${issue.identifier}: ${v.reasons.join("; ")}` });
-    const ob = onboardingFor(d.db, project);
+    const ob = onboardingFor(d.db, project, d.config.factory.workflow.planning_mode);
     if (ob.status !== "ready") return reply.code(409).send({ error: `${project.name} is not onboarded yet (still to do: ${ob.steps.filter((s) => !s.ok).map((s) => s.label.toLowerCase()).join("; ")})` });
     const { job, created } = enqueue(d.db, { projectId: project.id, externalId: issue.id, externalKey: issue.identifier, workflow: v.workflow, autonomous: v.autonomous, dryRun: d.config.factory.dryRun, manual: true });
     if (!created) return reply.code(409).send({ error: `${issue.identifier} already has an active job` });
