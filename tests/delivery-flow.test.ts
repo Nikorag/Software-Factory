@@ -66,6 +66,16 @@ describe.skipIf(!sandboxAvailable())("PR-only delivery: push, open the PR, watch
     expect(h.github.calls.filter((c) => /merge/i.test(c))).toEqual([]); // still: the factory never merged
   });
 
+  it("opens the PR body with a summary built from the ticket title and commits when the implementer gave none", async () => {
+    const h = await harness({ timing: FAST });
+    h.claude.b.implementResult = () => ({ summary: "", tasksDone: ["T001"], tasksSkipped: [], deferred: [] });
+    await until(h, () => stageOf(h) === "MERGING");
+    const body = h.github.created[0]!.body;
+    expect(body.startsWith("## Summary\nImplements: Optional due dates for todos.")).toBe(true);
+    expect(body).not.toMatch(/## Summary\n\s*(\n|$)/);
+    expect(body.indexOf("## Summary")).toBeLessThan(body.indexOf("Acceptance criteria"));
+  });
+
   it("STRUCTURAL GUARANTEE: there is no merge capability anywhere in the GitHub client or delivery code", () => {
     const src = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
     for (const f of ["src/github/client.ts", "src/bitbucket/client.ts", "src/host/index.ts", "src/delivery/handlers.ts", "src/repo/push.ts"]) {
