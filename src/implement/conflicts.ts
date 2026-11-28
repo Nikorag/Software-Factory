@@ -45,6 +45,7 @@ export function createConflictHandler(d: ConflictDeps, kit: ReturnType<typeof cr
   wrapperFor: (jobId: string, wt: string, commands: ProjectConfig["commands"], loopback: boolean) => Promise<{ path: string; checks: string[] }>;
   secretStop: (wt: string, base: string) => Promise<StageResult | undefined>;
   agentAccess?: (projectId: string) => "restricted" | "unrestricted";
+  agentBashAny?: (projectId: string) => boolean;
 }): StageHandler {
   const git = d.git ?? realGit;
   const { prepare, record } = kit;
@@ -99,7 +100,7 @@ export function createConflictHandler(d: ConflictDeps, kit: ReturnType<typeof cr
         const { path: wrapper, checks } = await kit.wrapperFor(ctx.job.id, p.cwd, project.commands, project.allowLoopback);
         const r = await kit.implementer(ctx, {
           task: "implementation", role: "implementer", cwd: p.cwd, baseRef: upstream, timeoutMs: 40 * MIN, schema: ConflictResolution, bashAllow: [wrapper],
-          prompt: conflictPrompt({ base, files, ticket: p.ticket, brief: latestPlan(d.db, ctx.job.id)?.prompt, wrapper, checks, unrestricted: kit.agentAccess?.(project.id) === "unrestricted" }),
+          prompt: conflictPrompt({ base, files, ticket: p.ticket, brief: latestPlan(d.db, ctx.job.id)?.prompt, wrapper, checks, unrestricted: kit.agentAccess?.(project.id) === "unrestricted", bashAny: kit.agentBashAny?.(project.id) }),
         }, p.cwd, upstream);
         if (!r.ok) { await abort(); return r.stop; }
         const res = r.data!;

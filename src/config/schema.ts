@@ -174,6 +174,8 @@ export const ProjectConfig = z.object({
   overrides: ProjectOverrides.optional(),
   // Extra shell command prefixes the (restricted) implementer may run, e.g. "GOLDEN_OUT=/tmp/golden godot --headless". Ignored when unrestricted.
   agentBashAllow: z.array(z.string()).default([]),
+  // Opt-in: the restricted implementer may run any Bash command. The always-denied list (git push/remote/config, gh, curl, ssh, sudo, rm -rf, docker, ...) and protected paths stay in force. Ignored when unrestricted.
+  agentBashAny: z.boolean().default(false),
   // Let this project's test/lint/build commands use TCP on this machine only (e.g. tests that start PGlite or a mock server). Off by default.
   allowLoopback: z.boolean().default(false),
   // Human gates: after these stages succeed the job waits for a person to confirm or ask for changes. projects.yaml only: a repository file cannot set them.

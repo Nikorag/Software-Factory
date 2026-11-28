@@ -41,6 +41,7 @@ export class AgentRunner {
     usageFile?: string; // where the latest Claude plan-limit reading is kept
     access?: (projectId?: string) => "restricted" | "unrestricted"; // per project; default restricted
     projectBashAllow?: (projectId?: string) => string[]; // per project extra shell prefixes for the restricted implementer
+    projectBashAny?: (projectId?: string) => boolean; // per project opt-in: any Bash command (bar the deny list) for the restricted implementer
     readGrants?: (jobId: string) => string[]; // folders outside the worktree a person approved this job's agents to read
   }) {}
 
@@ -68,6 +69,7 @@ export class AgentRunner {
     const result = await router.run(step.task, {
       role: step.role, profile, prompt: step.prompt, cwd: step.cwd, timeoutMs: step.timeoutMs, signal: step.signal,
       systemPrompt: readNote(rolePrompt(step.role), grants), readPaths: grants, protectedPaths: this.d.protectedPaths, access, bashAllow: [...(step.bashAllow ?? []), ...(this.d.projectBashAllow?.(step.projectId) ?? [])],
+      bashAny: profile === "implementer" && access === "restricted" && (this.d.projectBashAny?.(step.projectId) ?? false),
       jsonSchema: step.jsonSchema, resumeSessionId: step.resumeSessionId, persistSession: profile === "implementer", logFile,
     }, step.projectId);
 

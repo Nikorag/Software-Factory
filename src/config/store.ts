@@ -37,6 +37,7 @@ export const ProjectSettings = z.object({
   overrides: ProjectOverrides.optional(),
   specKit: z.boolean().optional(), // run the SpecKit specification workflow for this project (default true)
   allowLoopback: z.boolean().optional(), // sandbox: let test/lint/build commands use TCP on this machine only
+  agentBashAny: z.boolean().optional(), // opt-in to general Bash for the restricted implementer (ADR 0017)
   agentBashAllow: z.array(z.string().max(200)).max(50).optional(), // extra shell prefixes for the restricted implementer (edited in projects.yaml)
   gates: z.array(GatePoint).max(10).optional(), // human gates (confirm or ask for changes); absent keeps what projects.yaml has
   commands: z.object({ install: z.string().max(500).optional(), build: z.string().max(500).optional(), test: z.string().max(500).optional(), lint: z.string().max(500).optional(), typecheck: z.string().max(500).optional(), visual: z.string().max(500).optional() }).default({}),
@@ -85,9 +86,9 @@ export function upsertProject(input: unknown, dir = seedHomeConfig()): LoadedCon
   if (isSeq(list)) list.flow = false; // an empty `projects: []` is flow style: a project list should read as a normal block list
   const at = list.items.findIndex((x) => x.toJSON().id === p.id);
   // Fields the form does not edit survive a save: an absent value keeps what the file already has.
-  const before = at >= 0 ? (list.items[at]!.toJSON() as { allowLoopback?: boolean; agentBashAllow?: string[]; gates?: string[] }) : {};
-  const keep = { allowLoopback: p.allowLoopback ?? before.allowLoopback, agentBashAllow: p.agentBashAllow ?? before.agentBashAllow, gates: p.gates ?? before.gates };
-  const node = doc.createNode(clean({ ...p, specKit: p.specKit === false ? false : undefined, allowLoopback: keep.allowLoopback || undefined, agentBashAllow: keep.agentBashAllow, gates: keep.gates?.length ? [...new Set(keep.gates)] : undefined, linear: p.linear && clean(p.linear), host: p.host === "bitbucket" ? "bitbucket" : undefined, github: clean(p.github), bitbucket: clean(p.bitbucket), commands: clean(p.commands), overrides: deepClean(p.overrides) }));
+  const before = at >= 0 ? (list.items[at]!.toJSON() as { allowLoopback?: boolean; agentBashAllow?: string[]; agentBashAny?: boolean; gates?: string[] }) : {};
+  const keep = { allowLoopback: p.allowLoopback ?? before.allowLoopback, agentBashAny: p.agentBashAny ?? before.agentBashAny,agentBashAllow: p.agentBashAllow ?? before.agentBashAllow, gates: p.gates ?? before.gates };
+  const node = doc.createNode(clean({ ...p, specKit: p.specKit === false ? false : undefined, allowLoopback: keep.allowLoopback || undefined, agentBashAllow: keep.agentBashAllow, agentBashAny: keep.agentBashAny || undefined, gates: keep.gates?.length ? [...new Set(keep.gates)] : undefined, linear: p.linear && clean(p.linear), host: p.host === "bitbucket" ? "bitbucket" : undefined, github: clean(p.github), bitbucket: clean(p.bitbucket), commands: clean(p.commands), overrides: deepClean(p.overrides) }));
   (node as YAMLMap).flow = false;
   const i = list.items.findIndex((x) => x.toJSON().id === p.id);
   if (i >= 0) list.set(i, node); else list.add(node);

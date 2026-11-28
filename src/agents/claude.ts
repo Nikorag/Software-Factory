@@ -18,7 +18,7 @@ export function buildClaudeArgs(req: AgentRequest): string[] {
     "--permission-mode", "auto", // the same mode an interactive auto-mode session uses; settings files load as they would there
     "--strict-mcp-config",
   ]);
-  const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow, roots: pathRoots(req.cwd), readPaths: req.readPaths });
+  const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow, bashAny: req.bashAny, roots: pathRoots(req.cwd), readPaths: req.readPaths });
   return finishArgs(req, [
     "-p",
     "--output-format", "stream-json", "--verbose", // one JSON event per line, as it happens: the whole conversation is logged live, and the last line is the result
