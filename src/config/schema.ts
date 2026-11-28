@@ -5,7 +5,14 @@ export function validHubUrl(u: string): boolean {
   try { const x = new URL(u); return x.protocol === "https:" || (x.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(x.hostname)); } catch { return false; }
 }
 
-export const AutonomyLevel = z.enum(["full", "supervised", "off"]);
+export const MAX_SKILLS = 50;
+export const SkillRef = z.object({
+  name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "a skill name is lowercase letters, numbers and hyphens (max 64)"),
+  path: z.string().min(1).max(500),
+});
+export type SkillRef = z.infer<typeof SkillRef>;
+
+export const AutonomyLevel =z.enum(["full", "supervised", "off"]);
 export type AutonomyLevel = z.infer<typeof AutonomyLevel>;
 
 /**
@@ -47,6 +54,8 @@ export const FactoryConfig = z.object({
     max_conflict_resolutions: z.number().int().min(0).max(10).default(3),
   }).prefault({}),
   dryRun: z.boolean().default(false),
+  // Skills (SKILL.md files) every agent run of this profile receives, unless a project has a skill of the same name. Operator-trusted input.
+  skills: z.array(SkillRef).max(MAX_SKILLS).default([]),
   maxRemediationAttempts: z.number().int().min(0).max(10).default(3),
   // How many implement-then-check-against-the-spec rounds one implementation stage may take before it stops for a person. (Not the fix cycle limit: that is review and CI fixes.)
   maxImplementationPasses: z.number().int().min(1).max(10).default(3),
@@ -180,6 +189,8 @@ export const ProjectConfig = z.object({
   allowLoopback: z.boolean().default(false),
   // Human gates: after these stages succeed the job waits for a person to confirm or ask for changes. projects.yaml only: a repository file cannot set them.
   gates: z.array(GatePoint).default([]),
+  // Skills (SKILL.md files) appended to every agent run's system prompt for this project; they replace profile skills of the same name. projects.yaml only.
+  skills: z.array(SkillRef).max(MAX_SKILLS).default([]),
   commands: ProjectCommands.default({}),
   // Runtime only (never written to projects.yaml): why this project's `.software-factory.yml` was not applied. See src/config/repo-file.ts.
   repoFileError: z.string().optional(),

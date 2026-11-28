@@ -7,7 +7,7 @@ export type Routes = Record<Exclude<TaskId, "prompt_generation" | "independent_r
 export const DEFAULT_PROMPT_ROUTE: RouteCfg = { provider: "anthropic", model: "haiku" };
 export type PickupMode = "automatic" | "manual";
 export type PlanningMode = "haiku_prompt" | "speckit";
-export interface GlobalSettings { planningMode?: PlanningMode; maxImplementationPasses?: number; pickupMode?: PickupMode; githubAccount?: string; maxConcurrentJobs: number; maxRemediationAttempts: number; routes: Routes }
+export interface GlobalSettings { planningMode?: PlanningMode; maxImplementationPasses?: number; pickupMode?: PickupMode; githubAccount?: string; skills?: { name: string; path: string }[]; maxConcurrentJobs: number; maxRemediationAttempts: number; routes: Routes }
 
 /** The model choices the factory makes, and the workflow steps each one drives (as drawn on the job's flow chart). */
 export const TASKS: { id: TaskId; label: string; steps: string; local: boolean }[] = [

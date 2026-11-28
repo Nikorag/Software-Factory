@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import { eq } from "drizzle-orm";
 import type { FactoryDb } from "../db/client.js";
 import { agentInvocations, decisions } from "../db/schema.js";
+import { skillsPromptBlock } from "../config/skills.js";
+import type { SkillRef } from "../config/schema.js";
 import { git as realGit, type GitFn } from "../repo/git.js";
 import { findProtectedChanges } from "./guard.js";
 import { writeLimits } from "./usage.js";
@@ -42,6 +44,7 @@ export class AgentRunner {
     access?: (projectId?: string) => "restricted" | "unrestricted"; // per project; default restricted
     projectBashAllow?: (projectId?: string) => string[]; // per project extra shell prefixes for the restricted implementer
     projectBashAny?: (projectId?: string) => boolean; // per project opt-in: any Bash command (bar the deny list) for the restricted implementer
+    skills?: (projectId?: string) => SkillRef[]; // the effective skills (profile's, overridden by the project's); see effectiveSkills
     readGrants?: (jobId: string) => string[]; // folders outside the worktree a person approved this job's agents to read
   }) {}
 
@@ -53,6 +56,12 @@ export class AgentRunner {
     const access = profile === "implementer" ? (this.d.access?.(step.projectId) ?? "restricted") : "restricted";
     if (access === "unrestricted" && step.jobId) {
       db.insert(decisions).values({ jobId: step.jobId, kind: "agent.unrestricted", decision: `${step.role} runs with unrestricted access (Claude Code auto mode)`, rationale: "agentAccess is `unrestricted`", actor: "factory" }).run();
+    }
+    // Skills are read now, before anything is recorded: a missing or oversize file fails the run with a clear error instead of being dropped.
+    const skills = this.d.skills?.(step.projectId) ?? [];
+    const skillBlock = skillsPromptBlock(skills);
+    if (skills.length && step.jobId) {
+      db.insert(decisions).values({ jobId: step.jobId, kind: "agent.skills", decision: `${step.role} runs with skills: ${skills.map((s) => s.name).join(", ")}`, rationale: "configured in projects.yaml / the profile settings (operator-trusted)", actor: "factory" }).run();
     }
     const logFile = join(this.d.logDir, step.jobId ?? "_unattached", `${Date.now()}-${step.role}.log`);
     const grants = step.jobId ? (this.d.readGrants?.(step.jobId) ?? []) : [];
@@ -68,7 +77,7 @@ export class AgentRunner {
     const before = profile === "read-only" && route.provider === "anthropic" ? await git(step.cwd, ["status", "--porcelain", "--untracked-files=all"]).catch(() => null) : null;
     const result = await router.run(step.task, {
       role: step.role, profile, prompt: step.prompt, cwd: step.cwd, timeoutMs: step.timeoutMs, signal: step.signal,
-      systemPrompt: readNote(rolePrompt(step.role), grants), readPaths: grants, protectedPaths: this.d.protectedPaths, access, bashAllow: [...(step.bashAllow ?? []), ...(this.d.projectBashAllow?.(step.projectId) ?? [])],
+      systemPrompt: readNote(rolePrompt(step.role), grants) + skillBlock, readPaths: grants, protectedPaths: this.d.protectedPaths, access, bashAllow: [...(step.bashAllow ?? []), ...(this.d.projectBashAllow?.(step.projectId) ?? [])],
       bashAny: profile === "implementer" && access === "restricted" && (this.d.projectBashAny?.(step.projectId) ?? false),
       jsonSchema: step.jsonSchema, resumeSessionId: step.resumeSessionId, persistSession: profile === "implementer", logFile,
     }, step.projectId);

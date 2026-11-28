@@ -92,6 +92,18 @@ export function classifyRemote(method: string, pathname: string): Decision {
   return { allowed: true, route: best.rule.pattern, mutating: m !== "GET" };
 }
 
+/**
+ * Allowed routes whose BODY may still carry something that must be set on the machine: skills are instructions to every agent, read from
+ * file paths on this machine, so a hub session may not set them (the same rule as PUT /api/settings/projects/:id). The dashboard
+ * only sends `skills` when they were edited. Returns the refusal reason, or null.
+ */
+export function blockedRemoteBody(method: string, pathname: string, payload: Buffer | undefined): string | null {
+  if (method.toUpperCase() !== "PUT" || pathname !== "/api/settings/global" || !payload) return null;
+  let body: unknown;
+  try { body = JSON.parse(payload.toString("utf8")); } catch { return null; } // not JSON: the route itself rejects it
+  return body && typeof body === "object" && "skills" in body ? "sets skills (instructions for every agent, read from paths on this machine): decide on the machine" : null;
+}
+
 export const MAX_PATH = 2048;
 
 /** A request path from the hub must be a plain `/api/...` path (+ optional query). Returns the pathname, or null if it is not acceptable. */
