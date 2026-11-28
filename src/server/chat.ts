@@ -96,8 +96,8 @@ export function registerChatRoutes(app: FastifyInstance, d: ChatDeps, requireTok
     const id = randomUUID();
     const chat: Chat = { jobId: req.params.id, status: "running", startedAt: Date.now() };
     chats.set(id, chat);
-    // Deliberately NOT given project skills: the chat is a read-only Q&A about a job summary in an empty directory, not a run that works on the
-    // project (skills are instructions for the workflow's agents and go through AgentRunner only).
+    // Skills reach the chat too: d.chat.run is AgentRunner.run (see service/main.ts), which appends the project's effective skills to the
+    // system prompt from projectId. (No jobId here, so no agent.skills decision is recorded for chat runs.)
     void d.chat.run({ projectId: job.projectId, prompt: buildChatPrompt(context, parsed.data.history, parsed.data.message), cwd, timeoutMs: TIMEOUT_MS })
       .then((r) => { if (r.ok) { chat.status = "done"; chat.reply = redactSecrets(r.text); } else { chat.status = "error"; chat.error = r.error || "the assistant could not answer"; } })
       .catch((e: unknown) => { chat.status = "error"; chat.error = (e as Error).message || "the assistant could not answer"; });
