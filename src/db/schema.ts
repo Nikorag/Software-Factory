@@ -154,6 +154,33 @@ export const permissionRequests = sqliteTable(
   (t) => [uniqueIndex("permission_requests_once").on(t.jobId, t.kind, t.grantPath)],
 );
 
+export const LESSON_KINDS = ["command", "convention", "pitfall", "reviewer-pref"] as const;
+export const LESSON_STATUSES = ["proposed", "active", "retired"] as const;
+export type LessonKind = (typeof LESSON_KINDS)[number];
+export type LessonStatus = (typeof LESSON_STATUSES)[number];
+
+/**
+ * Short, durable, per-project lessons (ADR 0017). Distilled from what the factory already records and written as `proposed`;
+ * only a person promotes one to `active`, and only active lessons are ever injected into prompts. `source` is
+ * `decision:<id>`, `stage_execution:<id>` or `human`. `hits` counts injections; `last_used_at` drives expiry.
+ */
+export const lessons = sqliteTable(
+  "lessons",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    projectId: text("project_id").notNull().references(() => projects.id),
+    text: text("text").notNull(),
+    kind: text("kind", { enum: LESSON_KINDS }).notNull(),
+    status: text("status", { enum: LESSON_STATUSES }).notNull().default("proposed"),
+    source: text("source").notNull(),
+    sourceJobId: text("source_job_id").references(() => jobs.id),
+    hits: integer("hits").notNull().default(0),
+    createdAt: ts("created_at").notNull().default(now),
+    lastUsedAt: ts("last_used_at"),
+  },
+  (t) => [index("lessons_project_status_idx").on(t.projectId, t.status)],
+);
+
 // Singleton control row: global pause and emergency stop survive restarts.
 export const factoryState = sqliteTable("factory_state", {
   id: integer("id").primaryKey(),

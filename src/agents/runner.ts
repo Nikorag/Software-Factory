@@ -24,6 +24,7 @@ export interface RunStep {
   bashAllow?: string[];
   jsonSchema?: Record<string, unknown>;
   resumeSessionId?: string;
+  lessonIds?: number[]; // the project lessons the caller put in the prompt (recorded in the invocation's usage, so every run shows what it saw)
 }
 
 /** Tells the agent which folders outside the worktree a person has let it read. */
@@ -85,7 +86,7 @@ export class AgentRunner {
     }
     if (row) db.update(agentInvocations).set({
       exitCode: result.exitCode, durationMs: result.durationMs,
-      usageJson: JSON.stringify({ estimatedListCostUsd: result.costUsd, sessionId: result.sessionId, numTurns: result.numTurns, failure: result.failure, denials: result.denials.length, denialDetails: result.denials.slice(0, 10), violations: violations.length, usage: result.usage }),
+      usageJson: JSON.stringify({ estimatedListCostUsd: result.costUsd, sessionId: result.sessionId, numTurns: result.numTurns, failure: result.failure, denials: result.denials.length, denialDetails: result.denials.slice(0, 10), violations: violations.length, usage: result.usage, lessons: step.lessonIds ?? [] }),
     }).where(eq(agentInvocations.id, row.id)).run();
 
     if (violations.length) return { ...result, ok: false, failure: "error", error: `boundary violation: ${violations.join("; ")}`, violations };

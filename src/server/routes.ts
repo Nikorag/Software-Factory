@@ -29,6 +29,7 @@ import { registerTrackersRoutes } from "./trackers-routes.js";
 import { registerJiraRoutes } from "./jira-routes.js";
 import { registerProfileRoutes } from "./profile-routes.js";
 import { registerChatRoutes, type ChatRun } from "./chat.js";
+import { injectedLessons, registerLessonsRoutes } from "./lessons-routes.js";
 
 export interface ApiDeps {
   db: FactoryDb;
@@ -182,6 +183,8 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
         .map((x) => ({ id: x.id, kind: x.kind, decision: clip(x.decision, 500), rationale: clip(x.rationale, 1500), actor: x.actor, at: ms(x.createdAt) })),
       invocations: db.select().from(agentInvocations).where(eq(agentInvocations.jobId, id)).orderBy(asc(agentInvocations.id)).all()
         .map((a) => ({ id: a.id, stageExecutionId: a.stageExecutionId, agent: a.agent, model: a.model, exitCode: a.exitCode, durationMs: a.durationMs, finished: runFinished(a, a.stageExecutionId === null ? undefined : outcomeOf.get(a.stageExecutionId), job.status), usage: a.usageJson ? JSON.parse(a.usageJson) : null, hasLog: Boolean(a.logPath), at: ms(a.startedAt) })),
+      /** The lessons any of this job's invocations were given (their ids are in each invocation's usage), so the page can name them. */
+      lessonsInjected: injectedLessons(db, id),
       artifacts: db.select().from(artifacts).where(eq(artifacts.jobId, id)).orderBy(asc(artifacts.id)).all().filter((a) => !a.kind.startsWith("step:"))
         .map((a) => ({ kind: a.kind, path: a.path, bytes: a.bytes, at: ms(a.createdAt) })),
       /** The prompt Haiku wrote for the implementer and its acceptance criteria (haiku_prompt mode); null in Spec Kit mode or before it exists. */
@@ -340,5 +343,6 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   if (d.jira && d.config) registerJiraRoutes(app, { ...d.jira, db, config: d.config }, requireToken);
   if (d.profiles) registerProfileRoutes(app, d.profiles, requireToken);
   registerChatRoutes(app, { db, dataDir: d.dataDir, chat: d.chat }, requireToken);
+  registerLessonsRoutes(app, { db }, requireToken);
   if (d.settings && d.config) registerSettingsRoutes(app, { ...d.settings, db, config: d.config }, requireToken);
 }
