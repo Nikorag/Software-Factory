@@ -30,7 +30,9 @@ export function registerMcpRoutes(app: FastifyInstance, d: McpRouteDeps, require
   app.put<{ Params: { name: string }; Body: unknown }>("/api/mcp/servers/:name", { preHandler: requireToken }, async (req, reply) => {
     try {
       const { secrets, ...def } = Body.parse(req.body) as { secrets: Record<string, string> } & Record<string, unknown>;
-      const server = McpServer.parse({ ...def, name: req.params.name });
+      // The settings UI has no headers field, so a save that omits the key keeps the stored ones (an explicit `headers` replaces them).
+      const kept = "headers" in def ? undefined : d.config.factory.mcp.servers.find((s) => s.name === req.params.name)?.headers;
+      const server = McpServer.parse({ ...def, ...(kept ? { headers: kept } : {}), name: req.params.name });
       const stray = Object.keys(secrets).filter((k) => !server.env.includes(k));
       if (stray.length) throw new Error(`secrets for ${stray.join(", ")} but the server does not list them in env`);
       const fresh = setMcpServer(server, dirOf(d.config)); // validates the whole config first; the file holds names only

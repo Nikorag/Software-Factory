@@ -200,6 +200,16 @@ describe("MCP API", () => {
     expect((await s.call("PUT", `/api/mcp/servers/${name}`, UI, { type, url, env, headers })).statusCode).toBe(200);
     expect(s.config.factory.mcp.servers[0]!.headers).toEqual({ Authorization: "Bearer ${TOKEN}", "X-Trace": "on" });
   });
+  it("a PUT that omits headers (as the settings UI does) keeps the stored ones; an explicit empty object clears them", async () => {
+    const s = setup();
+    const http = { type: "http", url: "https://mcp.example.com", env: ["TOKEN"], headers: { Authorization: "Bearer ${TOKEN}" }, secrets: { TOKEN: SECRET } };
+    await s.call("PUT", "/api/mcp/servers/docs", UI, http);
+    expect((await s.call("PUT", "/api/mcp/servers/docs", UI, { type: "http", url: "https://mcp2.example.com", env: ["TOKEN"] })).statusCode).toBe(200);
+    expect(readFileSync(join(s.dir, "factory.yaml"), "utf8")).toContain("Bearer ${TOKEN}");
+    expect(s.config.factory.mcp.servers[0]).toMatchObject({ url: "https://mcp2.example.com", headers: { Authorization: "Bearer ${TOKEN}" } });
+    expect((await s.call("PUT", "/api/mcp/servers/docs", UI, { type: "http", url: "https://mcp2.example.com", env: ["TOKEN"], headers: {} })).statusCode).toBe(200);
+    expect(s.config.factory.mcp.servers[0]!.headers).toEqual({});
+  });
   it("rejects invalid servers and secrets for unlisted variables", async () => {
     const s = setup();
     expect((await s.call("PUT", "/api/mcp/servers/a", UI, { command: "" })).statusCode).toBe(400);
