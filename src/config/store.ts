@@ -39,7 +39,7 @@ export const ProjectSettings = z.object({
   allowLoopback: z.boolean().optional(), // sandbox: let test/lint/build commands use TCP on this machine only
   agentBashAllow: z.array(z.string().max(200)).max(50).optional(), // extra shell prefixes for the restricted implementer (edited in projects.yaml)
   gates: z.array(GatePoint).max(10).optional(), // human gates (confirm or ask for changes); absent keeps what projects.yaml has
-  commands: z.object({ install: z.string().max(500).optional(), build: z.string().max(500).optional(), test: z.string().max(500).optional(), lint: z.string().max(500).optional(), typecheck: z.string().max(500).optional() }).default({}),
+  commands: z.object({ install: z.string().max(500).optional(), build: z.string().max(500).optional(), test: z.string().max(500).optional(), lint: z.string().max(500).optional(), typecheck: z.string().max(500).optional(), visual: z.string().max(500).optional() }).default({}),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettings>;
 

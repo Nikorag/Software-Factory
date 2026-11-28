@@ -96,14 +96,39 @@ describe.skipIf(!sandboxAvailable())("factory-exec wrapper: the only way an agen
     expect(run(wrapper, "rm -rf /").status).toBe(64);
     expect(run(wrapper, "echo pwned > " + join(wt, "pwn.txt")).status).toBe(64);
     expect(run(wrapper, "typecheck").status).toBe(65);
+    expect(run(wrapper, "visual").status).toBe(65); // known kind, not configured
+    expect(run(wrapper, "bogus").stderr).toContain("allowed: test, lint, typecheck, build, install, visual");
     expect(() => readFileSync(join(wt, "pwn.txt"))).toThrow();
     expect(run(wrapper).status).toBe(64);
+  });
+  it("runs a configured visual check sandboxed and reports its result", () => {
+    const wt = realpathSync(tmp()); const dir = realpathSync(tmp());
+    const wrapper = writeExecWrapper(dir, { worktree: wt, profileDir: join(dir, "p"), timeoutMs: 20_000, commands: { visual: "echo RAN-VISUAL" } });
+    const r = run(wrapper, "visual");
+    expect(r.status).toBe(0); expect(r.stdout).toContain("RAN-VISUAL"); expect(r.stdout).toMatch(/visual: PASSED.*sandboxed, no network/);
   });
   it("the wrapper and its spec live outside the worktree and are not world-writable", () => {
     const { wrapper, dir } = setup();
     expect(wrapper.startsWith(dir)).toBe(true);
     expect(execFileSync("stat", ["-f", "%Lp", wrapper], { encoding: "utf8" }).trim()).toBe("700");
     expect(execFileSync("stat", ["-f", "%Lp", join(dir, "exec-spec.json")], { encoding: "utf8" }).trim()).toBe("600");
+  });
+});
+
+describe("visual check in the implementer prompts", () => {
+  const base = { featureDir: "specs/x", wrapper: "/w/factory-exec", pass: 1 };
+  it("keeps the defer-all-visual wording without a visual check, and changes it only with one", () => {
+    const without = implementPrompt({ ...base, checks: ["test"] });
+    const withV = implementPrompt({ ...base, checks: ["test", "visual"] });
+    expect(without).toContain("manual or visual testing");
+    expect(without).not.toContain("`visual` check");
+    expect(withV).not.toContain("manual or visual testing");
+    expect(withV).toContain("`/w/factory-exec visual`");
+    expect(withV).toContain("Defer only what a person must judge");
+    expect(withV).toContain("real devices"); // the rest of the rule stays
+    const rem = (checks: string[]) => implRemediationPrompt({ wrapper: "/w/factory-exec", checks, findings: [] });
+    expect(rem(["test"])).toContain("manual or visual testing");
+    expect(rem(["test", "visual"])).toContain("Defer only what a person must judge");
   });
 });
 

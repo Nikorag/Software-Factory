@@ -11,7 +11,7 @@ import { git as realGit } from "../repo/git.js";
 import { createStageKit, type StageKitDeps } from "../app/stage-kit.js";
 import { commentaryOf, withCommentary } from "../agents/commentary.js";
 import { readSpecBundle, validateSpecArtifacts } from "../speckit/artifacts.js";
-import { commitAll } from "../speckit/tools.js";
+import { commitAll, NEVER_COMMIT } from "../speckit/tools.js";
 import { addedLines, changedFiles, codeDiff, historyAddedLines, NON_CODE } from "./diff.js";
 import { claudeReviewPrompt, codeReviewPrompt, convergePrompt, extractCriteria, failureSummaryPrompt, finalReviewPrompt, implRemediationPrompt, implementPrompt, implementPromptDirect, securityReviewPrompt, specExcerpt } from "./prompts.js";
 import { latestPlan, planExcerpt, type StoredPlan } from "../planning/plan.js";
@@ -42,7 +42,7 @@ export interface ImplDeps extends StageKitDeps {
 }
 
 const MIN = 60_000;
-const CHECK_ORDER: Exclude<CommandKind, "install">[] = ["build", "typecheck", "lint", "test"];
+const CHECK_ORDER: Exclude<CommandKind, "install">[] = ["build", "typecheck", "lint", "test", "visual"];
 const BLOCKING = new Set(["blocker", "major", "critical", "high"]);
 export const isBlocking = (sev: string) => BLOCKING.has(sev);
 const DEFAULT_PASSES = 3;
@@ -459,7 +459,8 @@ export function createImplementationHandlers(d: ImplDeps) {
     try { results = await runChecks(ctx, p.cwd, project.commands, CHECK_ORDER, project.allowLoopback); } catch (e) { const s = sandboxStop(e); if (s) return s; throw e; }
     for (const r of failed(results)) gate(`check-${r.kind}`, `${r.kind} fails: ${r.tail.slice(-800)}`, r.command);
 
-    if ((await git(p.cwd, ["status", "--porcelain"])).length) gate("clean-tree", "the worktree has uncommitted changes");
+    // Untracked output the factory never commits (node_modules, Playwright's test-results/ and reports) is not uncommitted work.
+    if ((await git(p.cwd, ["status", "--porcelain", "-z"])).split("\0").some((l) => l && !NEVER_COMMIT.test(l.slice(3)))) gate("clean-tree", "the worktree has uncommitted changes");
     const touched = await findProtectedChanges(p.cwd, p.info.base, d.settings.protectedPaths, git);
     for (const f of touched) gate("protected-path", `protected path changed: ${f}`, f);
     const diff = await codeDiff(p.cwd, p.info.base, 1_000_000, git);

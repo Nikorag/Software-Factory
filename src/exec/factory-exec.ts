@@ -25,9 +25,9 @@ export interface ExecSpec {
 
 export async function main(argv: string[]): Promise<number> {
   const [specPath, kind] = argv;
-  if (!specPath || !kind) { console.error("usage: factory-exec <test|lint|typecheck|build|install>"); return 64; }
+  if (!specPath || !kind) { console.error("usage: factory-exec <test|lint|typecheck|build|install|visual>"); return 64; }
   const spec = JSON.parse(readFileSync(specPath, "utf8")) as ExecSpec;
-  if (!["test", "lint", "typecheck", "build", "install"].includes(kind)) { console.error(`unknown check "${kind}" (allowed: test, lint, typecheck, build, install)`); return 64; }
+  if (!["test", "lint", "typecheck", "build", "install", "visual"].includes(kind)) { console.error(`unknown check "${kind}" (allowed: test, lint, typecheck, build, install, visual)`); return 64; }
   const command = kind === "install" ? spec.install : spec.commands[kind as keyof ExecSpec["commands"]];
   if (!command) { console.error(`no ${kind} command is configured for this project`); return 65; }
   const run = (k: CommandKind, c: string) => runProjectCommand({ kind: k, command: c, worktree: spec.worktree, timeoutMs: spec.timeoutMs, profileDir: spec.profileDir, sandbox: spec.sandbox });

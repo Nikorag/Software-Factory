@@ -4,7 +4,7 @@ import { runProcess, type RunResult } from "../agents/process.js";
 import { mkdirSync } from "node:fs";
 import { DEFAULT_WRITE_ALLOW, sandboxAvailable, sandboxPrefix, type SandboxOptions } from "./sandbox.js";
 
-export type CommandKind = "install" | "build" | "test" | "lint" | "typecheck";
+export type CommandKind = "install" | "build" | "test" | "lint" | "typecheck" | "visual";
 
 export interface CommandResult {
   kind: CommandKind;

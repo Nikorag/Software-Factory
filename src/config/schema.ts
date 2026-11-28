@@ -140,7 +140,7 @@ export type ProjectOverrides = z.infer<typeof ProjectOverrides>;
 
 /** Field definitions shared by projects.yaml and a repository's `.software-factory.yml` (see src/config/repo-file.ts). */
 export const ProjectId = z.string().regex(/^[a-z0-9][a-z0-9-]*$/);
-export const ProjectCommands = z.object({ install: z.string().optional(), build: z.string().optional(), test: z.string().optional(), lint: z.string().optional(), typecheck: z.string().optional() });
+export const ProjectCommands = z.object({ install: z.string().optional(), build: z.string().optional(), test: z.string().optional(), lint: z.string().optional(), typecheck: z.string().optional(), visual: z.string().optional() });
 export const ProjectGithub = z.object({
   account: z.string().optional(),
   // owner/name. If `repository` is omitted the factory clones this into <dataDir>/projects/<id> and owns that clone.

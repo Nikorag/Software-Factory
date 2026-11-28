@@ -18,7 +18,7 @@ import { DEFAULT_PROMPT_ROUTE, TASKS, type GlobalSettings, type Routes, type Rou
 import { ModelPicker, ReviewerPicker } from "./ModelPicker";
 import { startAction, TaskOutput } from "./TaskRunner";
 
-const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
+const CMDS = ["install", "build", "typecheck", "lint", "test", "visual"] as const;
 /** Repos, paths, branches and commands: no capital letter or "correction" from a phone keyboard. */
 const CODE = { autoCapitalize: "off", autoCorrect: "off", spellCheck: false } as const;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -192,7 +192,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
       </Section>
       <Separator />
       <Section title="Commands" hint="Run by the factory in a throwaway worktree, sandboxed. A test command is required before it will implement anything: use the project's own CI as the guide, then press “Run checks” to prove they work.">
-        <div className="grid gap-3 sm:grid-cols-2">{CMDS.map((k) => <div key={k} className="grid gap-1.5"><Label htmlFor={`pe-c-${k}`} className="capitalize">{k}</Label><Input id={`pe-c-${k}`} {...CODE} className="font-mono text-xs" value={f.commands[k] ?? ""} onChange={(e) => set("commands", { ...f.commands, [k]: e.target.value })} placeholder={k === "test" ? "npm test" : ""} /></div>)}</div>
+        <div className="grid gap-3 sm:grid-cols-2">{CMDS.map((k) => <div key={k} className="grid gap-1.5"><Label htmlFor={`pe-c-${k}`} className="capitalize">{k}</Label><Input id={`pe-c-${k}`} {...CODE} className="font-mono text-xs" value={f.commands[k] ?? ""} onChange={(e) => set("commands", { ...f.commands, [k]: e.target.value })} placeholder={k === "test" ? "npm test" : k === "visual" ? "pnpm exec playwright test (optional)" : ""} /></div>)}</div>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={f.loopback} onChange={(e) => set("loopback", e.target.checked)} />
           <span>Allow local network in tests<span className="block text-xs text-muted-foreground">Lets test, lint and build commands use TCP on this machine only (e.g. tests that start an in-process database or mock server). Nothing outside this machine is reachable. Off by default.</span></span></label>
         <div className="grid gap-1.5"><Label htmlFor="pe-bash">Extra commands the agent may run</Label>

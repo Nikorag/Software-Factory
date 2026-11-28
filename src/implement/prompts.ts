@@ -15,6 +15,10 @@ export function extractCriteria(spec: string): Criterion[] {
 /** What a retried attempt must know: why the previous attempt(s) at this stage failed. */
 const failuresText = (f?: string[]) => (f?.length ? `Earlier attempts at this step failed; do not repeat what caused it:\n${f.map((x) => `- ${x}`).join("\n")}` : "");
 
+const VISUAL_NOTE = "A `visual` check (browser tests) is configured for this project: run it through the check tool and fix what it reports instead of deferring visual testing. Defer only what a person must judge, such as whether a real page looks right, or a real device.";
+/** Unchanged text unless a `visual` check is configured; then browser checks are the agent's job and only human judgement is deferred. */
+export const withVisual = (rule: string, checks: string[]) => (checks.includes("visual") ? `${rule.replace("manual or visual testing", "manual testing a person must judge")} ${VISUAL_NOTE}` : rule);
+
 const DEFER_RULE = `Never get stuck on work only a person can do (manual or visual testing, a walkthrough in a real window or browser, real devices, external servers, credentials, or a command the check tool does not offer, such as generating a database migration with a tool you cannot run). Do not fake it and do not keep retrying it: tag such a task \`[HUMAN]\` in tasks.md (\`- [ ] T023 [HUMAN] ...\`) and list it in \`deferred\` with the reason and what the person should check. The factory posts deferred items on the pull request and carries on.`;
 
 export interface Gaps { appended: number; summary: string }
@@ -39,7 +43,7 @@ export function implementPrompt(o: { featureDir: string; wrapper: string; checks
       o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : `Verify your work ONLY with the factory's check tool, one check per command: ${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}. It runs the project's own command inside a sandbox with no network. Do not run npm, pnpm, yarn, node, python or any other command to execute code: they are refused. Dependencies: when you add a package or a dependency, declare it in the project's manifests (package.json, the lockfile, a workspace list, or whatever the project's install script reads) exactly as the project does. The check tool installs again by itself whenever those change, and \`install\` (if listed) runs the project's install command on demand. Never work around a missing dependency, and never report one as an environment limit before you have run the install.`,
       "Write or update tests for every behaviour you change, and never delete, skip or weaken an existing test to make a check pass.",
       "Commit coherent changes as you go with `git add` and `git commit`. You may tick finished tasks in tasks.md. Do not touch CI workflows, secrets, or the .claude and .specify directories.",
-      `Tasks already tagged \`[HUMAN]\` are for a person: skip them. ${DEFER_RULE}`,
+      `Tasks already tagged \`[HUMAN]\` are for a person: skip them. ${withVisual(DEFER_RULE, o.checks)}`,
       "Finish with a short summary per the JSON schema: tasks done, any task you could not complete with the reason, and anything deferred to a human.",
     ].filter(Boolean).join("\n\n")),
   ].join("\n\n");
@@ -58,7 +62,7 @@ export function implementPromptDirect(o: { plan: { prompt: string; criteria: Cri
     o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : `Verify your work ONLY with the factory's check tool, one check per command: ${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}. It runs the project's own command inside a sandbox with no network. Do not run npm, pnpm, yarn, node, python or any other command to execute code: they are refused. Dependencies: when you add a package or a dependency, declare it in the project's manifests (package.json, the lockfile, a workspace list, or whatever the project's install script reads) exactly as the project does. The check tool installs again by itself whenever those change, and \`install\` (if listed) runs the project's install command on demand. Never work around a missing dependency, and never report one as an environment limit before you have run the install.`,
     "Write or update tests for every behaviour you change, and never delete, skip or weaken an existing test to make a check pass. Do not expand scope beyond the prompt.",
     "Commit coherent changes as you go with `git add` and `git commit`. Do not touch CI workflows, secrets, or the .claude directory.",
-    DEFER_RULE_DIRECT,
+    withVisual(DEFER_RULE_DIRECT, o.checks),
     "Finish with a short summary per the JSON schema: what you changed and tested, and anything deferred to a human.",
   ].filter(Boolean).join("\n\n");
 }
@@ -107,7 +111,7 @@ export const implRemediationPrompt = (o: { featureDir?: string; wrapper: string;
   FIXTURE_NOTE,
   `Findings:\n${JSON.stringify(o.findings, null, 2)}`,
   o.history ?? "",
-  `If a finding can only be resolved by a person, do not reject it: defer it. ${o.featureDir ? DEFER_RULE : DEFER_RULE_DIRECT} ${o.featureDir ? `For a finding about open tasks in ${o.featureDir}/tasks.md, defer the task ids. ` : ""}These can never be deferred and must be fixed: failing project checks (check:*), weakened or deleted tests, protected paths, uncommitted changes and conflict markers.`,
+  `If a finding can only be resolved by a person, do not reject it: defer it. ${withVisual(o.featureDir ? DEFER_RULE : DEFER_RULE_DIRECT, o.checks)} ${o.featureDir ? `For a finding about open tasks in ${o.featureDir}/tasks.md, defer the task ids. ` : ""}These can never be deferred and must be fixed: failing project checks (check:*), weakened or deleted tests, protected paths, uncommitted changes and conflict markers.`,
   "Finish by reporting which finding ids you accepted (fixed), which you rejected (with evidence) and which you deferred to a human (with the reason) per the JSON schema.",
 ].filter(Boolean).join("\n\n");
 
