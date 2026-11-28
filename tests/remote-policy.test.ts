@@ -2,6 +2,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { fixtureConfig } from "./helpers/config.js";
 import { openDb } from "../src/db/client.js";
+import { createRegistry } from "../src/plugins/builtin/index.js";
 import { blockedRemoteBody, classifyRemote, RULES, validateRemotePath } from "../src/hub/remote-policy.js";
 import { buildServer } from "../src/server/app.js";
 import { TaskManager } from "../src/service/tasks.js";
@@ -14,7 +15,7 @@ export function fullServer() {
     db, logger: pino({ level: "silent" }), config: fixtureConfig(), dataDir: "/tmp/none", port: 4780, controlToken: "t", shutdown: () => undefined,
     updates: { status: async () => ({}) as never, refresh: async () => ({}) as never },
     settings: { tasks: new TaskManager(), actions: {} as never, linear: () => ({}) as never, saveLinearKey: async () => ({ name: "x" }), linearKeyPresent: () => false },
-    bitbucket: { store }, jira: { store, port: 4780 } as never,
+    bitbucket: { store }, jira: { store, port: 4780 } as never, plugins: createRegistry(),
     profiles: { current: "default", list: () => [], add: () => ({}) as never, remove: () => undefined, start: async () => ({ started: true }), isUp: async () => false } as never,
   });
 }

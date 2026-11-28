@@ -587,6 +587,57 @@ describe("settings and setup", () => {
     await userEvent.click(within(screen.getByRole("group", { name: "Independent review model presets" })).getByRole("button", { name: "default" }));
     expect(await screen.findByText(/partly marking its own work/)).toBeInTheDocument();
   });
+  const pluginView = {
+    plugins: [
+      { id: "claude-code", name: "Claude Code", version: "1.0.0", engineApi: { min: 1, max: 1 }, capabilities: { kind: "cli", tools: true, writesWorktree: true, structuredOutput: true, streaming: false, listsModels: false, readOnly: true, usesApiKey: false }, modelPresets: ["default", "haiku", "sonnet", "opus"], state: "available", builtin: true },
+      { id: "openai-compatible", name: "OpenAI-compatible server", version: "1.0.0", engineApi: { min: 1, max: 1 }, capabilities: { kind: "api", tools: false, writesWorktree: false, structuredOutput: true, streaming: false, listsModels: true, readOnly: true, usesApiKey: true }, modelPresets: [], state: "available", builtin: true },
+      { id: "openai", name: "OpenAI API", version: "1.0.0", engineApi: { min: 1, max: 1 }, capabilities: { kind: "api", tools: false, writesWorktree: false, structuredOutput: true, streaming: false, listsModels: true, readOnly: true, usesApiKey: true }, modelPresets: [], state: "available", builtin: true },
+      { id: "future", name: "Future", version: "9.0.0", engineApi: { min: 5, max: 6 }, capabilities: { kind: "cli", tools: true, writesWorktree: true, structuredOutput: false, streaming: false, listsModels: false, readOnly: true, usesApiKey: false }, modelPresets: [], state: "incompatible", reason: "plugin \"future\" 9.0.0 needs engine API 5-6; this factory provides 1", builtin: false },
+    ],
+    instances: [
+      { id: "claude-code", plugin: "claude-code", settings: {}, builtin: true, valid: true, usedBy: ["implementation"] },
+      { id: "local", plugin: "openai-compatible", settings: { baseUrl: "http://127.0.0.1:1234/v1" }, builtin: true, valid: true, usedBy: [] },
+      { id: "gpt", plugin: "openai", settings: { apiKeyEnv: "OPENAI_API_KEY" }, builtin: false, valid: false, error: "plugin instance \"gpt\" (openai) has invalid settings: baseUrl: bad", usedBy: [] },
+    ],
+  };
+  it("offers a plugin picker instead of 'Local model', only where the step can use it, and only the fields that plugin supports", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/plugins": pluginView,
+      "/api/settings/global": { ...globalSettings, routes: { ...globalSettings.routes, classification: { plugin: "local", model: "qwen" } } } };
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Workflow" }));
+    expect(await screen.findByLabelText("Triage plugin")).toBeInTheDocument();       // a read-only step: every capable instance is offered
+    await waitFor(() => expect(screen.queryByLabelText("Implementation plugin")).toBeNull()); // needs tools: only Claude Code qualifies, so no choice to make
+    expect(screen.queryByText("Local model")).toBeNull();
+    expect(screen.getByLabelText("Triage model")).toHaveValue("qwen");
+    expect(screen.queryByRole("group", { name: "Triage model presets" })).toBeNull(); // an OpenAI-style server has no presets, just a model id
+    expect(screen.getByRole("group", { name: "Implementation model presets" })).toBeInTheDocument(); // Claude Code does
+    expect(screen.queryByLabelText("Triage base URL")).toBeNull();                    // endpoints belong to the instance, not the step
+  });
+  it("lists plugins with capabilities and state, validates an instance without a model call, and shows what is misconfigured", async () => {
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/plugins": pluginView,
+      "/api/plugins/validate": { ok: true, detail: "reachable; 2 model(s) listed", models: ["a", "b"] } };
+    app("/settings?tab=plugins");
+    const claude = await screen.findByLabelText("Plugin Claude Code");
+    expect(claude).toHaveTextContent("file & shell tools");
+    expect(claude).toHaveTextContent("runs a local CLI");
+    expect(screen.getByLabelText("Plugin OpenAI API")).toHaveTextContent("calls an API");
+    expect(screen.getByLabelText("Plugin Future")).toHaveTextContent("needs engine API 5-6");
+    expect(screen.getByLabelText("Instance gpt")).toHaveTextContent("misconfigured");
+    expect(screen.getByLabelText("Instance gpt")).toHaveTextContent("invalid settings");
+    await userEvent.click(within(screen.getByLabelText("Instance local")).getByRole("button", { name: "Validate" }));
+    expect(await screen.findByText(/OK: reachable; 2 model\(s\) listed/)).toBeInTheDocument();
+    const post = calls.find((c) => c.method === "POST" && c.url === "/api/plugins/validate")!;
+    expect(JSON.parse(post.body!)).toEqual({ instance: "local" });
+    // the add form only asks for what an API plugin supports, and only ever for the NAME of the key variable
+    expect(screen.getByLabelText("Base URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("API key variable")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Instance name"), "my-openai");
+    await userEvent.type(screen.getByLabelText("API key variable"), "MY_KEY");
+    routes["/api/plugins/instances"] = { ok: true };
+    await userEvent.click(screen.getByRole("button", { name: "Add instance" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT" && c.url === "/api/plugins/instances")).toBeTruthy());
+    expect(JSON.parse(calls.find((c) => c.method === "PUT")!.body!)).toEqual({ instances: { gpt: { plugin: "openai", settings: { apiKeyEnv: "OPENAI_API_KEY" } }, "my-openai": { plugin: "openai", settings: { apiKeyEnv: "MY_KEY" } } } });
+  });
   it("a project can override a setting, and one it leaves alone is not sent", async () => {
     routes = { "/api/overview": overview(), "/api/projects": { projects: [proj] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings, "/api/settings/projects/my-app": { ok: true } };
     app("/settings");

@@ -58,6 +58,8 @@ export interface ProviderPlugin<S = unknown> {
   /** The engine API versions this plugin works with (inclusive). */
   readonly engineApi: EngineRange;
   readonly capabilities: PluginCapabilities;
+  /** Model names worth offering as one-click choices (e.g. Claude Code's aliases). Free text is always allowed too. */
+  readonly modelPresets?: readonly string[];
   /** Validates (and fills defaults for) an instance's settings. Unknown settings are rejected. */
   readonly settings: z.ZodType<S>;
   /** Builds the runtime for validated settings. Must not do I/O. */
@@ -75,6 +77,7 @@ export interface PluginInstance { plugin: string; settings: Record<string, unkno
 export type PluginState = "available" | "incompatible" | "misconfigured";
 export interface PluginInfo {
   id: string; name: string; description?: string; version: string; engineApi: EngineRange; capabilities: PluginCapabilities;
+  modelPresets: readonly string[];
   state: PluginState;
   /** Why the plugin is not available (incompatible engine API, invalid settings). */
   reason?: string;

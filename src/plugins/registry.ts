@@ -46,7 +46,7 @@ export class PluginRegistry {
   list(): PluginInfo[] {
     return [...this.plugins.values()].map(({ plugin: p, builtin }) => {
       const reason = this.unavailable(p.id);
-      return { id: p.id, name: p.name, description: p.description, version: p.version, engineApi: p.engineApi, capabilities: p.capabilities, state: reason ? "incompatible" : "available", reason, builtin };
+      return { id: p.id, name: p.name, description: p.description, version: p.version, engineApi: p.engineApi, capabilities: p.capabilities, modelPresets: p.modelPresets ?? [], state: reason ? "incompatible" : "available", reason, builtin };
     });
   }
 

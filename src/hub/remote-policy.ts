@@ -63,6 +63,11 @@ export const RULES: readonly Rule[] = [
   // ---- the hub connection itself: a key, and whether the hub may operate this factory. Only ever from the machine. ----
   block("GET", "/api/hub", LOCAL), block("POST", "/api/hub/connect", SECRET), block("POST", "/api/hub/disconnect", LOCAL), block("PUT", "/api/hub/remote-access", "a hub session must not grant itself control"),
 
+  // ---- provider plugins: reading shows names, capabilities and env-var NAMES only. Defining an instance chooses where a key is sent, and validating contacts that endpoint from this machine. ----
+  ...allow("GET", "/api/plugins"),
+  block("PUT", "/api/plugins/instances", "chooses the endpoint an API key is sent to: decide on the machine"),
+  block("POST", "/api/plugins/validate", "contacts a configured endpoint from this machine, with its key: do it on the machine"),
+
   // ---- safety settings (sandbox, protected paths, agent access): never from a hub session ----
   block("GET", "/api/settings/advanced", LOCAL), block("PUT", "/api/settings/advanced", "changes the sandbox, protected paths and agent access: decide on the machine"),
 

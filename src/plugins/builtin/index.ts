@@ -14,7 +14,7 @@ export function claudeCodePlugin(o: { bin?: string } = {}): ProviderPlugin<Recor
   return {
     id: "claude-code", name: "Claude Code", description: "The locally installed Claude Code CLI (your subscription login, no API key). Model: default, an alias (haiku, sonnet, opus) or a full id.",
     version: "1.0.0", engineApi: { min: ENGINE_API_VERSION, max: ENGINE_API_VERSION },
-    capabilities: CLAUDE_CODE_CAPABILITIES,
+    capabilities: CLAUDE_CODE_CAPABILITIES, modelPresets: ["default", "haiku", "sonnet", "opus"],
     settings: z.object({}).strict() as z.ZodType<Record<string, never>>,
     create: (_s, _e: PluginEnv) => new ClaudeCodeAgent({ bin: o.bin }),
     async probe() {

@@ -12,6 +12,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { api, send } from "@/lib/api";
 import { usePoll } from "@/hooks/usePoll";
+import { usePlugins } from "@/hooks/usePlugins";
 import { BUILTIN_ENTRIES, WORDS, withTracker } from "@/lib/trackers";
 import { skillsFromText, skillsToText, type GhAccounts } from "@/lib/types";
 import type { BitbucketCredential, Project, TeamAudit, TrackerEntry } from "@/lib/types";
@@ -51,6 +52,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
   useEffect(() => { onDirty?.(dirty); }, [dirty, onDirty]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => { setSaved(false); setF((x) => ({ ...x, [k]: v })); };
   const { data: gh } = usePoll(() => api<GhAccounts>("/api/setup/github"), 120000);
+  const { plugins } = usePlugins();
   const { data: creds } = usePoll(() => api<{ credentials: BitbucketCredential[] }>("/api/bitbucket/credentials"), 60000);
   const [access, setAccess] = useState<string | null>(null);
   // Which tracker connection this project's tickets live in: its own, else the profile's default. Teams come from that connection.
@@ -240,8 +242,8 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
             return (
               <div key={t.id} className="grid gap-1.5"><div className="flex flex-wrap items-baseline gap-x-3"><Label>{t.label} model</Label>
                 {overridden ? <button type="button" className="text-xs underline" onClick={() => { const m = { ...f.models }; delete m[t.id]; set("models", m); }}>use global ({glob?.model ?? (reviewer ? "not set" : "…")})</button> : <span className="text-xs text-muted-foreground">global: {glob?.model ?? (reviewer && globals ? "not set (skipped)" : "…")}</span>}</div>
-                {reviewer && overridden ? <ReviewerPicker label={`${t.label} override`} value={own as RouteCfg | null} onChange={(v) => set("models", { ...f.models, independent_review: v })} />
-                  : own ? <ModelPicker label={`${t.label} override`} allowLocal={t.local} value={own as RouteCfg} onChange={(v: RouteCfg) => set("models", { ...f.models, [t.id as TaskId]: v })} />
+                {reviewer && overridden ? <ReviewerPicker label={`${t.label} override`} plugins={plugins} value={own as RouteCfg | null} onChange={(v) => set("models", { ...f.models, independent_review: v })} />
+                  : own ? <ModelPicker label={`${t.label} override`} plugins={plugins} needsTools={t.tools} value={own as RouteCfg} onChange={(v: RouteCfg) => set("models", { ...f.models, [t.id as TaskId]: v })} />
                   : <div><Button type="button" size="sm" variant="outline" onClick={() => set("models", { ...f.models, [t.id]: glob ?? (reviewer ? null : { provider: "anthropic", model: "default" }) })}>Override for this project</Button></div>}
               </div>
             );
