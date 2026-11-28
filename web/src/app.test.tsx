@@ -162,6 +162,17 @@ describe("flow chart follows the planning mode", () => {
     expect(f.mode).toBe("speckit");
     expect(deriveFlow(haiku({ stage: "IMPLEMENTATION" }), [exec("REQUIREMENTS_ANALYSIS", "succeeded", 1)], []).mode).toBe("haiku_prompt");
   });
+  it("a job in a fix stage shows the square it routes back to, never an empty bar", () => {
+    const sp = stripStates(job({ stage: "REMEDIATION" }));
+    expect(sp[8]).toBe("run"); expect(sp.slice(0, 8).every((s) => s === "done")).toBe(true);
+    expect(stripStates(job({ stage: "SPECIFICATION_REMEDIATION" }))[5]).toBe("run");
+    const held = stripStates(job({ stage: "NEEDS_ATTENTION", status: "waiting", heldFromStage: "REMEDIATION" }));
+    expect(held[8]).toBe("fail"); expect(held.slice(0, 8).every((s) => s === "done")).toBe(true);
+    expect(stripStates(job({ stage: "NEEDS_ATTENTION", status: "waiting", heldFromStage: "SPECIFICATION_REMEDIATION" }))[5]).toBe("fail");
+    const h = stripStates(haiku({ stage: "REMEDIATION" }));
+    expect(h).toHaveLength(14); expect(h[5]).toBe("run"); expect(h.every((s) => s === "idle")).toBe(false);
+    expect(stripStates(job({ stage: "CONFLICT_RESOLUTION" }))[14]).toBe("run");
+  });
   it("conflict resolution lights its own route, so a conflict is visible rather than hidden in a retry", () => {
     const f = deriveFlow(haiku({ stage: "MERGING" }), [exec("PULL_REQUEST_CREATION", "succeeded", 1), exec("MERGE_VALIDATION", "succeeded", 2), exec("CONFLICT_RESOLUTION", "succeeded", 3)], []);
     expect(f.state["conf"]).toBe("done"); expect(f.loopsUsed.has("mr>conf")).toBe(true); expect(f.loopsUsed.has("conf>test")).toBe(true);
