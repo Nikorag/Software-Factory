@@ -17,6 +17,7 @@ import { ticketBlock } from "../speckit/prompts.js";
 import { humanQAs, type HumanAnswer } from "../core/jobs.js";
 import { recordRequests, waitingReason } from "../core/approvals.js";
 import { toJsonSchema } from "../speckit/schemas.js";
+import { commentaryOf, noteCommentary } from "../agents/commentary.js";
 
 /** One answer, with what was asked and which stage asked it (a fresh agent never saw the question). */
 export const formatAnswer = (a: HumanAnswer, i: number): string => [
@@ -101,9 +102,10 @@ export function createStageKit(d: StageKitDeps) {
     const asks = recordRequests(d.db, ctx.job.id, ctx.job.stage ?? "", result.denials ?? [], o.cwd);
     if (asks.length) return { ok: false, stop: { kind: "needs_attention", reason: waitingReason(asks) } };
     if (!result.ok) return { ok: false, stop: failureToResult(result, o.role) };
-    if (!o.schema) return { ok: true, data: undefined, result };
+    if (!o.schema) { noteCommentary(ctx.executionId, commentaryOf(result)); return { ok: true, data: undefined, result }; }
     const parsed = o.schema.safeParse(result.structured);
     if (!parsed.success) return { ok: false, stop: { kind: "retry", reason: `${o.role} returned output that does not match the schema: ${parsed.error.issues[0]?.message ?? "invalid"}` } };
+    noteCommentary(ctx.executionId, commentaryOf(result, parsed.data));
     return { ok: true, data: parsed.data, result };
   }
 

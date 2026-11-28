@@ -90,6 +90,34 @@ describe("job timeline", () => {
   });
 });
 
+describe("step commentary", () => {
+  it("is the summary of a succeeded step, ahead of the counts", () => {
+    id = 0;
+    const t = buildTimeline(detail([ex("IMPLEMENTATION", "succeeded", 0, 5, { output: JSON.stringify({ commentary: "Added the due date field and tests.", passes: 1, files: 3 }) })]));
+    expect(t[0]!.summary).toBe("Added the due date field and tests.");
+  });
+  it("survives clipped (invalid JSON) output because it is stored first", () => {
+    id = 0;
+    const clipped = `${JSON.stringify({ commentary: "Reviewed: \"two\" nits", findings: [] }).slice(0, -12)}…`;
+    expect(buildTimeline(detail([ex("CLAUDE_REVIEW", "succeeded", 0, 5, { output: clipped })]))[0]!.summary).toBe('Reviewed: "two" nits');
+  });
+  it("leaves failed steps and sent-back steps as they were", () => {
+    id = 0;
+    const out = JSON.stringify({ commentary: "ignored" });
+    const t = buildTimeline(detail([
+      ex("IMPLEMENTATION", "failed", 0, 5, { error: "tests failed\nmore", output: out }),
+      ex("CLAUDE_REVIEW", "succeeded", 6, 9, { output: JSON.stringify({ commentary: "ignored", remediate: "fix the null check" }) }),
+    ]));
+    expect(t[0]!.summary).toBe("tests failed");
+    expect(t[1]!.summary).toBe("Sent back for fixes: fix the null check");
+  });
+  it("shows nothing for a step with no or blank commentary", () => {
+    id = 0;
+    const t = buildTimeline(detail([ex("PULL_REQUEST_CREATION", "succeeded", 0, 2, { output: JSON.stringify({ commentary: "  " }) }), ex("AUTOMATED_TESTING", "succeeded", 3, 4)]));
+    expect(t.map((e) => e.summary)).toEqual([undefined, undefined]);
+  });
+});
+
 describe("decisions after a standalone entry", () => {
   it("attach to the step that was running, not to an earlier 'You retried' entry that has no end", () => {
     id = 0;

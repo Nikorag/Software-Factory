@@ -9,6 +9,7 @@ import { writeExecWrapper } from "../exec/factory-exec.js";
 import { ensureDependencies } from "../exec/deps.js";
 import { git as realGit } from "../repo/git.js";
 import { createStageKit, type StageKitDeps } from "../app/stage-kit.js";
+import { commentaryOf, withCommentary } from "../agents/commentary.js";
 import { readSpecBundle, validateSpecArtifacts } from "../speckit/artifacts.js";
 import { commitAll } from "../speckit/tools.js";
 import { addedLines, changedFiles, codeDiff, historyAddedLines, NON_CODE } from "./diff.js";
@@ -281,7 +282,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       const cv = c.data!;
       for (const x of cv.deferred) recordDeferral(d.db, ctx.job.id, { id: x.id, severity: "minor", issue: x.id }, x.reason);
       record(ctx.job.id, "implementation.pass", `pass ${pass}: ${cv.converged ? "converged" : `${cv.appendedTasks} task(s) appended`}${cv.deferred.length ? `, ${cv.deferred.length} deferred to a human` : ""}${changedThisPass ? "" : ", no code change this pass"}`, cv.summary);
-      const done = async (extra: Record<string, unknown> = {}): Promise<StageResult> => ({ kind: "ok", output: { passes: pass, summary: r.data!.summary, skipped: r.data!.tasksSkipped, deferred: cv.deferred, files: (await changedFiles(p.cwd, p.info.base, { code: true }, git)).length, ...extra } });
+      const done = async (extra: Record<string, unknown> = {}): Promise<StageResult> => ({ kind: "ok", output: { commentary: commentaryOf(r.result, r.data), passes: pass, summary: r.data!.summary, skipped: r.data!.tasksSkipped, deferred: cv.deferred, files: (await changedFiles(p.cwd, p.info.base, { code: true }, git)).length, ...extra } });
       if (cv.converged) return done();
       if (cv.appendedTasks === 0) {
         // Nothing new for the implementer to do. Gaps the converge step says only a human can close are deferred to the PR.
@@ -524,7 +525,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     { ...kit, implementer, wrapperFor, secretStop, ...(d.agentAccess ? { agentAccess: d.agentAccess } : {}) },
   );
 
-  return {
+  return withCommentary({
     CONFLICT_RESOLUTION: conflictResolution,
     IMPLEMENTATION_PREPARATION: implementationPreparation,
     IMPLEMENTATION: implementation,
@@ -533,7 +534,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     CLAUDE_REVIEW: claudeReview,
     REMEDIATION: remediation,
     FINAL_VALIDATION: finalValidation,
-  };
+  });
 }
 
 export interface ReportInput {
