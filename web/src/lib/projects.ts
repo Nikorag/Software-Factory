@@ -38,8 +38,3 @@ export function projectMeta(jobs: Job[]): { text: string; color: string } {
 }
 
 export const stageName = (j: Job): string => stageLabel(j.status === "failed" && j.heldFromStage ? j.heldFromStage : j.stage);
-
-/** Remembers which tab each project was last on, so picking the project in the rail returns to it. */
-const KEY = (id: string) => `sf.tab.${id}`;
-export const lastTab = (id: string): string | null => { try { return localStorage.getItem(KEY(id)); } catch { return null; } };
-export const rememberTab = (id: string, path: string) => { try { localStorage.setItem(KEY(id), path); } catch { /* a convenience only */ } };

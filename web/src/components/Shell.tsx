@@ -13,7 +13,7 @@ import { JobTabs } from "@/components/JobTabs";
 import { ProjectRail } from "@/components/ProjectRail";
 import { StatusBar } from "@/components/StatusBar";
 import { electronOverlay } from "@/lib/platform";
-import { openJobs, rememberTab } from "@/lib/projects";
+import { openJobs } from "@/lib/projects";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 
@@ -37,7 +37,6 @@ export function Shell() {
   const everyJob = useMemo(() => (o ? [...o.active, ...o.queued, ...o.recent] : []), [o]);
   const jobs = useMemo(() => openJobs(o), [o]);
   const projectId = projMatch ? decodeURIComponent(projMatch.params.projectId!) : jobId ? everyJob.find((j) => j.id === jobId)?.project ?? null : null;
-  useEffect(() => { if (projectId) rememberTab(projectId, pathname); }, [projectId, pathname]);
   const [navOpen, setNavOpen] = useState(false); // the rail is a drawer below the md breakpoint
   useEffect(() => setNavOpen(false), [pathname]);
   useEffect(() => {

@@ -88,7 +88,7 @@ export const modeOfJob = (job: Job, executions: Execution[] = []): PlanningMode 
   executions.some((e) => e.stage.startsWith("SPECIFICATION_")) || /^SPECIFICATION_/.test(job.stage) || /^SPECIFICATION_/.test(job.heldFromStage ?? "") ? "speckit" : job.planningMode ?? "speckit";
 
 export function deriveFlow(job: Job, executions: Execution[], invocations: Invocation[], now = Date.now()): Flow {
-  const held = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION"].includes(job.stage);
+  const held = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION", "AWAITING_CONFIRMATION"].includes(job.stage);
   const at = held ? job.heldFromStage : job.stage;
   const state: Record<string, NodeState> = {}, attempts: Record<string, number> = {}, duration: Record<string, number> = {};
   const loopsUsed = new Set<string>(), skipped = new Set<string>();
@@ -108,7 +108,7 @@ export function deriveFlow(job: Job, executions: Execution[], invocations: Invoc
   }
   const activeId = at ? BY_STAGE[at] ?? null : null;
   if (activeId) {
-    if (held) state[activeId] = job.stage === "PAUSED" ? "wait" : "fail";
+    if (held) state[activeId] = job.stage === "PAUSED" || job.stage === "AWAITING_CONFIRMATION" ? "wait" : "fail";
     else if (job.status === "running") state[activeId] = "run";
     else state[activeId] = "wait";
   }
@@ -123,9 +123,9 @@ export const STRIP = ["disc", "elig", "req", "gen", "srev", "sval", "prep", "imp
 export const stripFor = (mode: PlanningMode): string[] => (mode === "speckit" ? STRIP : STRIP.filter((id) => !SPEC_IDS.has(id)));
 export function stripStates(job: Job): NodeState[] {
   const strip = stripFor(modeOfJob(job));
-  const held = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION"].includes(job.stage);
+  const held = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION", "AWAITING_CONFIRMATION"].includes(job.stage);
   const at = held ? job.heldFromStage : job.stage;
   const cur = at ? strip.indexOf(BY_STAGE[at] === "conf" ? "mr" : BY_STAGE[at] ?? (at === "SPECIFICATION_REMEDIATION" ? "sval" : at === "REMEDIATION" ? "test" : "")) : -1;
   if (job.stage === "COMPLETED" || job.status === "done") return strip.map(() => "done");
-  return strip.map((_, i) => (cur < 0 ? "idle" : i < cur ? "done" : i > cur ? "idle" : held ? (job.stage === "PAUSED" ? "wait" : "fail") : job.status === "running" ? "run" : "wait"));
+  return strip.map((_, i) => (cur < 0 ? "idle" : i < cur ? "done" : i > cur ? "idle" : held ? (job.stage === "PAUSED" || job.stage === "AWAITING_CONFIRMATION" ? "wait" : "fail") : job.status === "running" ? "run" : "wait"));
 }

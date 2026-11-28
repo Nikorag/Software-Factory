@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { and, count, eq } from "drizzle-orm";
 import type { Logger } from "pino";
-import type { StageName, LoadedConfig } from "../config/schema.js";
+import { gateReason, isGated } from "./gates.js";
+import type { GatePoint, StageName, LoadedConfig } from "../config/schema.js";
 import type { FactoryDb } from "../db/client.js";
 import { decisions, jobs, stageExecutions } from "../db/schema.js";
 import { exhaustedLimit, type ClaudeLimits } from "../agents/usage.js";
@@ -53,7 +54,7 @@ export interface EngineOptions {
 }
 
 type AbortReason = "timeout" | "cancel" | "estop" | "lease-lost" | "shutdown";
-const HELD_STAGES = new Set<StageName>(["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION", "COMPLETED"]);
+const HELD_STAGES = new Set<StageName>(["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION", "AWAITING_CONFIRMATION", "COMPLETED"]);
 
 export class Engine {
   readonly owner: string;
@@ -297,6 +298,15 @@ export class Engine {
       case "ok": {
         const next = nextStage(stage, this.planningMode());
         if (!next) throw new Error(`no successor for ${stage}`);
+        if (isGated(this.o.config.projects?.projects.find((p) => p.id === job.projectId)?.gates, stage, this.planningMode())) {
+          // A human gate: the stage succeeded, so its output is kept, and the job waits at it. No agent runs until someone decides.
+          db.transaction(() => {
+            finish("succeeded", { output: result.output });
+            if (note) db.insert(decisions).values({ jobId: job.id, kind: "dry-run", decision: `${stage} skipped`, rationale: note, actor: "factory" }).run();
+            this.hold(job, "AWAITING_CONFIRMATION", gateReason(stage as GatePoint));
+          });
+          return false;
+        }
         db.transaction(() => {
           finish("succeeded", { output: result.output });
           if (note) db.insert(decisions).values({ jobId: job.id, kind: "dry-run", decision: `${stage} skipped`, rationale: note, actor: "factory" }).run();

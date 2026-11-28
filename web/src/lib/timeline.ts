@@ -18,13 +18,13 @@ export interface TimelineEntry {
 }
 
 const FIX_STAGES = new Set(["REMEDIATION", "SPECIFICATION_REMEDIATION"]);
-const HELD = new Set(["BLOCKED", "FAILED", "NEEDS_ATTENTION", "PAUSED", "CANCELLED"]);
+const HELD = new Set(["BLOCKED", "FAILED", "NEEDS_ATTENTION", "AWAITING_CONFIRMATION", "PAUSED", "CANCELLED"]);
 const clip = (s: string, n = 200) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 /** What a human wants to know about a decision, in a few words. Unknown kinds show as they are. */
 const EVENT_LABEL: Record<string, string> = {
-  "discovery.accept": "Picked up", "manual.start": "Started from the Board", "job.retry": "You retried", "job.cancel": "Cancel requested", "human.answer": "You answered",
+  "discovery.accept": "Picked up", "manual.start": "Started from the Board", "job.retry": "You retried", "job.cancel": "Cancel requested", "human.answer": "You answered", "gate.confirmed": "You confirmed", "gate.returned": "You asked for changes",
   remediation: "Sent back", "review.result": "Review", "review.degraded": "Reviewer fallback", "agent.violation": "Boundary violation", recovery: "Recovered after a restart",
   "dry-run": "Dry run", eligibility: "Eligibility", "worktree.create": "Workspace", "code-review.independent": "Independent review", "code-review.verdict": "Claude's verdict",
   "security-review": "Security review", baseline: "Baseline checks", "implementation.pass": "Implementation pass", "pr.merged": "Merged", "human.deferred": "Left for you", "ci.none": "CI", "ci.external-failing": "External CI failing",
@@ -134,7 +134,7 @@ export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
   // a held job's current state is the most recent thing that happened
   if (HELD.has(d.job.stage)) {
     entries.push({ key: "held", at: d.job.updatedAt ?? Date.now(), end: null, tone: d.job.stage === "FAILED" ? "fail" : "wait", run: 1, events: [], runs: [],
-      title: d.job.stage === "NEEDS_ATTENTION" ? "Needs your attention" : d.job.stage === "BLOCKED" ? "Waiting for you" : d.job.stage === "PAUSED" ? "Paused" : d.job.stage === "CANCELLED" ? "Cancelled" : "Failed",
+      title: d.job.stage === "NEEDS_ATTENTION" ? "Needs your attention" : d.job.stage === "BLOCKED" ? "Waiting for you" : d.job.stage === "PAUSED" ? "Paused" : d.job.stage === "AWAITING_CONFIRMATION" ? "Waiting for your confirmation" : d.job.stage === "CANCELLED" ? "Cancelled" : "Failed",
       summary: d.job.lastError ? stageText(clip(d.job.lastError.split("\n")[0]!, 260)) : undefined, stage: d.job.heldFromStage ?? undefined, nodeId: d.job.heldFromStage ? nodeOfStage(d.job.heldFromStage)?.id : undefined });
   }
   return entries.sort((a, b) => a.at - b.at);
