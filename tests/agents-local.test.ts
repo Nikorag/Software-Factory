@@ -200,7 +200,7 @@ describe("ModelRouter + config", () => {
     expect(bad("specification")).toBe(false);
     expect(bad("classification")).toBe(true);
   });
-  it("ships a valid models.yaml", () => { expect(fixtureConfig().models.routes.implementation.provider).toBe("anthropic"); });
+  it("ships a valid models.yaml", () => { expect(fixtureConfig().models.routes.implementation).toEqual({ plugin: "claude-code", model: "default" }); });
 });
 
 describe("AgentRunner boundaries and recording", () => {

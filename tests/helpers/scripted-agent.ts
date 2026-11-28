@@ -35,7 +35,7 @@ export const defaults = (): Behaviour => ({
 export class ScriptedAgent implements Agent {
   calls: AgentRequest[] = [];
   private stepRuns = new Map<string, number>();
-  constructor(readonly provider: "anthropic" | "local", public b: Behaviour = defaults()) {}
+  constructor(readonly provider: string, public b: Behaviour = defaults()) {}
 
   private ok(over: Partial<AgentResult> = {}): AgentResult {
     return { ok: true, text: "ok", denials: [], exitCode: 0, durationMs: 1, sessionId: "s", ...over };

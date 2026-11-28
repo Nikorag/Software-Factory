@@ -60,7 +60,7 @@ export const defaults = (): ImplBehaviour => ({
 export class ImplAgent implements Agent {
   calls: AgentRequest[] = [];
   private n = { implement: 0, remediate: 0, converge: 0, code: 0, claude: 0, final: 0 };
-  constructor(readonly provider: "anthropic" | "local", public b: ImplBehaviour = defaults()) {}
+  constructor(readonly provider: string, public b: ImplBehaviour = defaults()) {}
 
   private ok(over: Partial<AgentResult> = {}): AgentResult { return { ok: true, text: "ok", denials: [], exitCode: 0, durationMs: 1, sessionId: "sess-impl", ...over }; }
   private featureDir(req: AgentRequest): string { return /SPECIFY_FEATURE_DIRECTORY=(\S+)/.exec(req.prompt)?.[1] ?? /under (specs\/\S+)\//.exec(req.prompt)?.[1] ?? /(specs\/[a-z0-9-]+)\//.exec(req.prompt)?.[1] ?? ""; }
