@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { parseRepoFile } from "../src/config/repo-file.js";
+import { carryRepoFiles, parseRepoFile, refreshRepoFile } from "../src/config/repo-file.js";
+import { makeRepo } from "./helpers/git-fixture.js";
 import { SKILL_MAX_BYTES } from "../src/config/skills.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -318,6 +319,26 @@ describe("skills (projects.yaml and the profile settings)", () => {
     expect(upsertProject({ ...app1, skills }, dir).projects.projects[0]!.skills).toEqual(skills);
     expect(upsertProject({ ...app1, name: "Renamed" }, dir).projects.projects[0]!.skills).toEqual(skills);
     expect(upsertProject({ ...app1, skills: [] }, dir).projects.projects[0]!.skills).toEqual([]);
+  });
+
+  it("never writes repo-file skills into projects.yaml, and keeps them across a save", async () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config")), sk = skillDir();
+    const { repo } = makeRepo({ "README.md": "hi\n", "s/repo-only/SKILL.md": "REPO BODY", ".software-factory.yml": "id: my-app\nskills: [{ name: repo-only, path: s/repo-only }]\n" });
+    const own = [{ name: "one", path: join(sk, "one.md") }];
+    const live = upsertProject({ ...app1, skills: own }, dir);
+    live.projects.projects[0]!.repository = repo;
+    expect(await refreshRepoFile(live.projects.projects[0]!)).toEqual({ status: "applied" });
+    expect(live.projects.projects[0]!.repoSkills?.map((s) => s.name)).toEqual(["repo-only"]);
+
+    const fresh = upsertProject({ ...app1, name: "Renamed", skills: own }, dir); // an unrelated edit through the editor payload
+    const text = readFileSync(join(dir, "projects.yaml"), "utf8");
+    expect(text).not.toMatch(/repoSkills|repo-only|REPO BODY/);
+    expect(fresh.projects.projects[0]!.skills).toEqual(own);
+    expect(fresh.projects.projects[0]!.repoSkills).toBeUndefined();
+    fresh.projects.projects[0]!.repository = repo;
+    carryRepoFiles(live.projects.projects, fresh.projects.projects);
+    expect(fresh.projects.projects[0]!.repoSkills?.map((s) => s.name)).toEqual(["repo-only"]);
+    expect(fresh.projects.projects[0]!.skills).toEqual(own);
   });
 
   it("rejects a bad name, a missing path, an oversize file and a duplicate with a ConfigError", () => {

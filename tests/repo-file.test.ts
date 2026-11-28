@@ -282,6 +282,15 @@ describe("skills in .software-factory.yml", () => {
     expect(q.commands.test).toBe("yaml test");
   });
 
+  it("rejects a path to a committed file that is not a SKILL.md", async () => {
+    const { repo } = makeRepo(files({ ".software-factory.yml": "id: p\nskills: [{ name: readme, path: README.md }]\n" }));
+    const p = project({ repository: repo });
+    const r = await refreshRepoFile(p);
+    expect(r.status).toBe("error");
+    expect(r.error).toMatch(/skill "readme".*no committed SKILL.md/);
+    expect(p.repoSkills).toBeUndefined();
+  });
+
   it("an invalid file keeps the previous skills and settings; the overlay survives a settings save", async () => {
     const { repo } = makeRepo(files());
     const p = project({ repository: repo, skills: [{ name: "own", path: "/x/own" }] });

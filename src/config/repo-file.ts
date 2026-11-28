@@ -106,7 +106,7 @@ export async function readRepoSkillBodies(project: Pick<ProjectConfig, "reposito
     let file = rel;
     let t = rel && rel !== "." ? await typeOf(rel) : "tree"; // "." is the repo root
     if (t === "tree") { file = rel && rel !== "." ? `${rel}/SKILL.md` : "SKILL.md"; t = await typeOf(file); }
-    if (t !== "blob") throw missing();
+    if (t !== "blob" || file.split("/").pop() !== "SKILL.md") throw missing(); // only a SKILL.md, never an arbitrary committed file
     const text = await git(repo, ["cat-file", "blob", `${ref}:${file}`]);
     out.push({ name: s.name, path: s.path, body: cleanSkillText(s.name, text) });
   }
