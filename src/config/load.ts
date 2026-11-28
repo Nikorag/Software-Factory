@@ -99,6 +99,8 @@ export function loadConfig(configDir = defaultConfigDir()): LoadedConfig {
   for (const p of projects.projects) if (p.tracker && !connections[p.tracker]) throw new ConfigError(`projects.yaml: "${p.id}" uses tracker "${p.tracker}", which is not a tracker connection (have: ${Object.keys(connections).join(", ")})`);
   const linear = connectionNames(connections[factory.tracker]!);
 
+  for (const p of projects.projects) for (const n of p.overrides?.mcpServers ?? []) if (!factory.mcp.servers.some((s) => s.name === n)) throw new ConfigError(`projects.yaml: "${p.id}" selects MCP server "${n}", which is not defined in factory.yaml (mcp.servers)`);
+
   const ids = new Set<string>();
   const bindings = new Map<string, string>();
   const repos = new Map<string, string>();

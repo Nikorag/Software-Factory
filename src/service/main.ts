@@ -26,6 +26,7 @@ import { hubKey, readHubSettings } from "../hub/settings.js";
 import { TaskManager } from "./tasks.js";
 import { installedVersion, UpdateChecker } from "./versions.js";
 import { bbStore } from "../bitbucket/auth.js";
+import { mcpStore } from "../agents/mcp.js";
 import { jiraStoreFor, trackerConfigured, trackerIdsInUse } from "../tracker/index.js";
 import { pruneAgentLogs, rotateLogs } from "./retention.js";
 import { addProfile, DEFAULT_PROFILE, factoryRoot, listProfiles, removeProfile } from "../config/profiles.js";
@@ -92,7 +93,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     const res = await ctx.runner.run({ projectId: r.projectId, task: "final_review", role: "assistant", prompt: r.prompt, cwd: r.cwd, timeoutMs: r.timeoutMs });
     return { ok: res.ok, text: res.text, error: res.error };
   } };
-  const app = buildServer({ chat, shutdown: opts.requestShutdown, db: ctx.handle.db, logger, config, engine: ctx.engine, worktrees: ctx.worktrees, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: jiraStoreFor(config, "jira"), storeFor: (id) => jiraStoreFor(config, id), port }, updates: new UpdateChecker(), profiles: {
+  const app = buildServer({ chat, shutdown: opts.requestShutdown, db: ctx.handle.db, logger, config, engine: ctx.engine, worktrees: ctx.worktrees, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, mcp: { store: mcpStore(config.factory.mcp.keychainService) }, jira: { store: jiraStoreFor(config, "jira"), storeFor: (id) => jiraStoreFor(config, id), port }, updates: new UpdateChecker(), profiles: {
     current: process.env.FACTORY_PROFILE ?? DEFAULT_PROFILE, list: () => listProfiles(), add: (n) => addProfile(n), remove: (n) => removeProfile(n),
     start: (p) => launchService(p, factoryRoot()), isUp: (p) => isUp(p),
   } });

@@ -24,6 +24,7 @@ import { latestPlan } from "../planning/plan.js";
 import type { RepoReport } from "../repo/inspect.js";
 import { registerBoardRoutes } from "./board-routes.js";
 import { registerBitbucketRoutes } from "./bitbucket-routes.js";
+import { registerMcpRoutes } from "./mcp-routes.js";
 import { registerGithubIssuesRoutes } from "./github-issues-routes.js";
 import { registerTrackersRoutes } from "./trackers-routes.js";
 import { registerJiraRoutes } from "./jira-routes.js";
@@ -44,6 +45,7 @@ export interface ApiDeps {
   /** Settings UI + setup wizard. Absent in tests that do not exercise them. */
   profiles?: import("./profile-routes.js").ProfileDeps;
   bitbucket?: Omit<import("./bitbucket-routes.js").BitbucketRouteDeps, "config">;
+  mcp?: Omit<import("./mcp-routes.js").McpRouteDeps, "config">;
   jira?: Omit<import("./jira-routes.js").JiraRouteDeps, "db" | "config">;
   githubIssues?: { gh?: import("../github/client.js").GhExec };
   updates?: { status(): Promise<import("../service/versions.js").UpdateStatus>; refresh(): Promise<import("../service/versions.js").UpdateStatus> };
@@ -338,6 +340,7 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   });
   if (d.settings && d.config) registerBoardRoutes(app, { db, config: d.config, linear: d.settings.linear }, requireToken);
   if (d.bitbucket && d.config) registerBitbucketRoutes(app, { ...d.bitbucket, config: d.config }, requireToken);
+  if (d.mcp && d.config) registerMcpRoutes(app, { ...d.mcp, config: d.config }, requireToken);
   if (d.config) registerTrackersRoutes(app, { db, config: d.config }, requireToken);
   if (d.config) registerGithubIssuesRoutes(app, { config: d.config, gh: d.githubIssues?.gh }, requireToken);
   if (d.jira && d.config) registerJiraRoutes(app, { ...d.jira, db, config: d.config }, requireToken);

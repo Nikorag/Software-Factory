@@ -3,6 +3,8 @@ import { join } from "node:path";
 import type { Logger } from "pino";
 import { ClaudeCodeAgent } from "../agents/claude.js";
 import { LocalModelClient } from "../agents/local.js";
+import { mcpStore, resolveMcp } from "../agents/mcp.js";
+import type { SecretStore } from "../jira/auth.js";
 import { ModelRouter } from "../agents/router.js";
 import { AgentRunner } from "../agents/runner.js";
 import { readLimits, usageFile } from "../agents/usage.js";
@@ -47,8 +49,9 @@ export interface Context {
 export const protectedPathsOf = (config: LoadedConfig): string[] => effectiveProtectedPaths(config.factory.protectedPaths);
 
 /** Wires every real component together. Tests substitute `agents`, `linear` and `db`; nothing here is a mock. */
-export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logger?: Logger; linear?: LinearClient; claudeBin?: string; agents?: ConstructorParameters<typeof ModelRouter>[1]; runCommand?: ImplDeps["runCommand"]; github?: GitHubClient; hosts?: Hosts; delivery?: DeliveryDeps["timing"]; deliveryNow?: DeliveryDeps["now"]; push?: DeliveryDeps["push"] } = {}): Context {
+export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logger?: Logger; linear?: LinearClient; claudeBin?: string; agents?: ConstructorParameters<typeof ModelRouter>[1]; runCommand?: ImplDeps["runCommand"]; github?: GitHubClient; hosts?: Hosts; delivery?: DeliveryDeps["timing"]; deliveryNow?: DeliveryDeps["now"]; push?: DeliveryDeps["push"]; mcpStore?: SecretStore } = {}): Context {
   const dataDir = config.factory.dataDir;
+  let mcpStoreCache: SecretStore | undefined;
   const logger = opts.logger ?? createLogger({ level: config.factory.logLevel, file: join(dataDir, "logs", "factory.log") });
   const handle = opts.db ?? openDb(join(dataDir, "database", "factory.sqlite"));
   syncProjects(handle.db, config.projects.projects);
@@ -70,6 +73,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     projectBashAny: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAny ?? false,
     skills: (id) => { const p = config.projects.projects.find((x) => x.id === id); return effectiveSkills(config.factory.skills, p?.skills, p?.repoSkills); },
     readGrants: (jobId) => readGrants(handle.db, jobId),
+    mcp: (id) => resolveMcp(config, id, (opts.mcpStore ?? (mcpStoreCache ??= mcpStore(config.factory.mcp.keychainService)))), // the keychain is only touched when a server is selected
   });
   const worktrees = new WorktreeManager({
     db: handle.db, logger, workspacesRoot: join(dataDir, "workspaces"),

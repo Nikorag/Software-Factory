@@ -1,4 +1,4 @@
-import { pathRoots, toolPolicy } from "./permissions.js";
+import { mcpRules, pathRoots, toolPolicy } from "./permissions.js";
 import { agentEnv } from "./env.js";
 import { parseRateLimitInfo, type ClaudeLimits } from "./usage.js";
 import { runProcess, type RunOptions, type RunResult } from "./process.js";
@@ -7,23 +7,31 @@ import type { Agent, AgentFailure, AgentRequest, AgentResult } from "./types.js"
 /**
  * Claude Code CLI adapter. Flags verified against `claude --help` (2.1.332):
  *  -p/--print, --output-format stream-json (with --verbose), --json-schema, --tools, --allowedTools, --disallowedTools, --permission-mode,
- *  --setting-sources, --strict-mcp-config, --model, --append-system-prompt, --resume, --no-session-persistence.
+ *  --setting-sources, --mcp-config, --strict-mcp-config, --model, --append-system-prompt, --resume, --no-session-persistence.
  * Deliberately NOT used: --bare (it never reads OAuth/keychain, so it cannot use a subscription login) and
  * --dangerously-skip-permissions.
+ * MCP: `--mcp-config <json>` names the servers; with `--strict-mcp-config` ONLY those are used (no user/project/.mcp.json servers). The JSON
+ * holds `${VAR}` references, never secret values (those travel in the subprocess environment, see McpGrant). With no grant, no `--mcp-config`
+ * is passed and the arguments are exactly what they were before MCP existed. Tools are allowed as `mcp__<server>__*`.
+ * The local (OpenAI-compatible) provider has no tool use, so it is never given MCP: see AgentRunner.
  */
 export function buildClaudeArgs(req: AgentRequest): string[] {
+  const mcpArgs = req.mcp?.names.length ? ["--mcp-config", JSON.stringify({ mcpServers: req.mcp.servers })] : [];
   // Only the implementer can be unrestricted: reviewers stay read-only so a review can never change the code it reviews.
   if (req.access === "unrestricted" && req.profile === "implementer") return finishArgs(req, [
     "-p", "--output-format", "stream-json", "--verbose",
     "--permission-mode", "auto", // the same mode an interactive auto-mode session uses; settings files load as they would there
+    ...mcpArgs,
     "--strict-mcp-config",
+    ...(mcpArgs.length ? ["--allowedTools", ...mcpRules(req.mcp?.names)] : []), // auto mode has no factory tool lists: only the MCP grant is added
   ]);
-  const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow, bashAny: req.bashAny, roots: pathRoots(req.cwd), readPaths: req.readPaths });
+  const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow, bashAny: req.bashAny, roots: pathRoots(req.cwd), readPaths: req.readPaths, mcpServers: req.mcp?.names });
   return finishArgs(req, [
     "-p",
     "--output-format", "stream-json", "--verbose", // one JSON event per line, as it happens: the whole conversation is logged live, and the last line is the result
     "--permission-mode", "dontAsk", // anything not explicitly allowed is refused, never prompted for
     "--setting-sources", "", // ignore user/project settings files: the factory defines permissions, not the repo
+    ...mcpArgs,
     "--strict-mcp-config", // no MCP servers unless the factory passes some
     "--tools", policy.tools.join(","),
     "--allowedTools", ...policy.allow,
@@ -100,7 +108,7 @@ export class ClaudeCodeAgent implements Agent {
   async run(req: AgentRequest): Promise<AgentResult> {
     const args = buildClaudeArgs(req);
     const r = await (this.opts.run ?? runProcess)({
-      cmd: this.opts.bin ?? "claude", args, cwd: req.cwd, env: agentEnv(this.opts.env ?? process.env, gitEnv(this.opts.gitIdentity ?? FACTORY_GIT_IDENTITY)),
+      cmd: this.opts.bin ?? "claude", args, cwd: req.cwd, env: agentEnv(this.opts.env ?? process.env, { ...gitEnv(this.opts.gitIdentity ?? FACTORY_GIT_IDENTITY), ...req.mcp?.env }),
       stdin: req.prompt, timeoutMs: req.timeoutMs, signal: req.signal, logFile: req.logFile,
     });
     const meta = { durationMs: r.durationMs, exitCode: r.exitCode, denials: [] as AgentResult["denials"], logFile: req.logFile };

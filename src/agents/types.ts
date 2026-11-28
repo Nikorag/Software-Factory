@@ -21,6 +21,7 @@ export interface AgentRequest {
   access?: "restricted" | "unrestricted"; // implementer only: "unrestricted" = Claude Code auto mode, no factory tool lists
   bashAny?: boolean; // restricted implementer only: any Bash command except the always-denied list (project opt-in)
   bashAllow?: string[]; // extra shell command prefixes, e.g. a project's "pnpm test"
+  mcp?: import("./mcp.js").McpGrant; // MCP servers this run may use (Claude Code only: the local provider is given none). Holds secret values in `env`: never log it.
   resumeSessionId?: string; // continue an earlier session (remediation)
   persistSession?: boolean;
   logFile?: string; // raw stdout/stderr capture

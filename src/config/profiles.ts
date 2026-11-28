@@ -62,7 +62,7 @@ export function addProfile(name: string, root = factoryRoot(), defaults = BUNDLE
   const cfg = join(home, "config");
   mkdirSync(cfg, { recursive: true });
   for (const f of ["models.yaml", "workflows.yaml", "projects.yaml"]) if (!existsSync(join(cfg, f)) && existsSync(join(defaults, f))) writeFileSync(join(cfg, f), readFileSync(join(defaults, f)));
-  writeFileSync(join(cfg, "factory.yaml"), `# Profile "${name}": its own data, projects, Linear key and port.\nserver: { port: ${port} }\n`);
+  writeFileSync(join(cfg, "factory.yaml"), `# Profile "${name}": its own data, projects, Linear key and port.\nserver: { port: ${port} }\n# MCP servers' secrets are in this profile's own keychain service.\nmcp: { keychainService: software-factory-mcp-${name} }\n`);
   writeFileSync(join(cfg, "linear.yaml"), `# This profile's Linear key has its own keychain entry and its own environment variable, so a LINEAR_API_KEY exported in your shell\n# (for another profile) is never picked up here.\napiKeyEnv: LINEAR_API_KEY_${name.toUpperCase().replace(/-/g, "_")}\nkeychainService: software-factory-linear-${name}\n`);
   writeFileSync(join(cfg, "jira.yaml"), `# Used when this profile's tracker is Jira (factory.yaml: tracker: jira). Its OAuth client secret and tokens are in this profile's own keychain entry.\nkeychainService: software-factory-jira-${name}\n`);
   writeFileSync(join(cfg, "bitbucket.yaml"), `# Bitbucket Cloud credentials for this profile (projects choose one by name). The tokens themselves are in this profile's own keychain service.\nkeychainService: software-factory-bitbucket-${name}\n`);

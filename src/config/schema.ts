@@ -23,6 +23,47 @@ export type AutonomyLevel = z.infer<typeof AutonomyLevel>;
 export const PlanningMode = z.enum(["haiku_prompt", "speckit"]);
 export type PlanningMode = z.infer<typeof PlanningMode>;
 
+/**
+ * MCP servers agents may use. Definitions live ONLY in factory.yaml (profile) and are selected by name per project (projects.yaml
+ * overrides): a repository's `.software-factory.yml` can never define one, because a server is an arbitrary command. A server's SECRET
+ * values are never here: `env` lists only the variable NAMES, and the values are in the profile's keychain service (`mcp.keychainService`).
+ * stdio: `command` + `args` (+ `env` names). http/sse: `url` (+ `headers`, which may reference `${VAR}` for a name listed in `env`).
+ */
+export const McpServerName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,39}$/, "a server name is letters, numbers and hyphens (it becomes part of the tool names mcp__<name>__<tool>)");
+export const McpEnvName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "an environment variable name").max(100);
+export const McpServer = z.strictObject({
+  name: McpServerName,
+  type: z.enum(["stdio", "http", "sse"]).default("stdio"),
+  command: z.string().trim().min(1, "a stdio server needs a command").optional(),
+  args: z.array(z.string()).default([]),
+  url: z.string().url("a valid url").refine((u) => /^https?:\/\//.test(u), "http or https only").optional(),
+  env: z.array(McpEnvName).default([]), // names only: the values are in the keychain
+  headers: z.record(z.string(), z.string()).default({}),
+}).superRefine((s, ctx) => {
+  // A header may hold literal text and `${NAME}` references (NAME listed in `env`); a credential goes in the keychain, never in the config.
+  for (const [k, v] of Object.entries(s.headers)) {
+    const refs = [...v.matchAll(/\$\{([^}]*)\}/g)].map((m) => m[1]!);
+    const bad = refs.find((n) => !s.env.includes(n));
+    if (bad !== undefined) ctx.addIssue({ code: "custom", message: `header "${k}" references \${${bad}}, which is not listed in env`, path: ["headers", k] });
+    if (refs.length === 0 && v.trim() && (/key|token|secret|auth|cookie|password|credential/i.test(k) || /^(Bearer|Basic|Token)\s+\S/i.test(v))) {
+      ctx.addIssue({ code: "custom", message: `header "${k}" looks like an inline secret: reference a keychain variable as \${NAME} (listed in env) instead`, path: ["headers", k] });
+    }
+  }
+}).refine((s) => s.type !== "stdio" || Boolean(s.command), { message: "a stdio server needs a command", path: ["command"] })
+  .refine((s) => s.type === "stdio" || Boolean(s.url), { message: "an http/sse server needs a url", path: ["url"] });
+export type McpServer = z.infer<typeof McpServer>;
+export const McpConfig = z.object({
+  keychainService: z.string().default("software-factory-mcp"),
+  servers: z.array(McpServer).default([]),
+  // The servers every project's agents get unless the project selects its own list (`overrides.mcpServers`). Empty = no MCP.
+  defaultServers: z.array(McpServerName).default([]),
+}).superRefine((m, ctx) => {
+  const names = m.servers.map((s) => s.name.toLowerCase());
+  names.forEach((n, i) => { if (names.indexOf(n) !== i) ctx.addIssue({ code: "custom", message: `duplicate MCP server "${m.servers[i]!.name}"`, path: ["servers", i, "name"] }); });
+  m.defaultServers.forEach((n, i) => { if (!m.servers.some((s) => s.name === n)) ctx.addIssue({ code: "custom", message: `unknown MCP server "${n}"`, path: ["defaultServers", i] }); });
+});
+export type McpConfig = z.infer<typeof McpConfig>;
+
 export const FactoryConfig = z.object({
   dataDir: z.string().default("~/.software-factory"),
   server: z
@@ -53,6 +94,7 @@ export const FactoryConfig = z.object({
     // How many times Claude may resolve merge conflicts with the target branch for one pull request before a human is asked.
     max_conflict_resolutions: z.number().int().min(0).max(10).default(3),
   }).prefault({}),
+  mcp: McpConfig.prefault({}),
   dryRun: z.boolean().default(false),
   // Skills (SKILL.md files) every agent run of this profile receives, unless a project has a skill of the same name. Operator-trusted input.
   skills: z.array(SkillRef).max(MAX_SKILLS).default([]),
@@ -139,6 +181,7 @@ export const ProjectOverrides = z.object({
   maxRemediationAttempts: z.number().int().min(0).max(10).optional(),
   maxImplementationPasses: z.number().int().min(1).max(10).optional(),
   agentAccess: z.enum(["restricted", "unrestricted"]).optional(), // this project's override of factory.agentAccess
+  mcpServers: z.array(McpServerName).optional(), // which of the profile's MCP servers this project's agents get: beats factory.mcp.defaultServers; [] = none; left out = follow the profile
   // independent_review: null = this project skips the independent review; left out = follow the global setting.
   models: z.object({ ...(Object.fromEntries(RouteName.map((r) => [r, ModelRoute.optional()])) as Record<Exclude<(typeof RouteName)[number], "independent_review">, z.ZodOptional<typeof ModelRoute>>), independent_review: ReviewerRoute.nullish() })
     .refine((m) => (m.specification?.provider ?? "anthropic") === "anthropic" && (m.implementation?.provider ?? "anthropic") === "anthropic" && (m.prompt_generation?.provider ?? "anthropic") === "anthropic", {
@@ -366,6 +409,10 @@ export const planningModeOf = (config: { factory: { workflow: { planning_mode: P
 /** How tickets of a project get started: its own override, else the profile's setting. */
 export const pickupModeOf = (project: { overrides?: { pickupMode?: "automatic" | "manual" } | undefined }, factory: { pickupMode: "automatic" | "manual" }): "automatic" | "manual" =>
   project.overrides?.pickupMode ?? factory.pickupMode;
+
+/** The MCP servers a project's agents get: its own selection, else the profile's default. Names only. */
+export const mcpServersOf = (config: { factory: { mcp: { defaultServers: string[] } } }, project?: { overrides?: { mcpServers?: string[] | undefined } | undefined } | null): string[] =>
+  project?.overrides?.mcpServers ?? config.factory.mcp.defaultServers;
 
 /** The id of the tracker connection a project uses: its own, else the profile's default. */
 export const trackerIdOf = (config: { factory: { tracker: string } }, project?: { tracker?: string | undefined } | null): string => project?.tracker ?? config.factory.tracker;

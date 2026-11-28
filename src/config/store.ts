@@ -6,7 +6,7 @@ import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir, loadConfig } from "./load.js";
 import { carryRepoFiles } from "./repo-file.js";
 import { SkillRefInput, validateSkills } from "./skills.js";
-import { MAX_SKILLS, BUILTIN_TRACKER_IDS, GatePoint, GithubIssuesConfig, JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, KIND_NAME, ProjectInput, ReviewerRoute, TrackerId, TrackerKind, ProjectOverrides, type LoadedConfig } from "./schema.js";
+import { MAX_SKILLS, BUILTIN_TRACKER_IDS, GatePoint, GithubIssuesConfig, JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, KIND_NAME, McpServer, McpServerName, ProjectInput, ReviewerRoute, TrackerId, TrackerKind, ProjectOverrides, type LoadedConfig } from "./schema.js";
 
 const FILES = ["factory.yaml", "linear.yaml", "models.yaml", "workflows.yaml", "projects.yaml"];
 /** Files that describe tracker connections: every validation copy needs them, or a project naming one would look unknown. */
@@ -50,7 +50,7 @@ export type ProjectSettings = z.infer<typeof ProjectSettings>;
 const deepClean = (v: unknown): unknown => {
   if (Array.isArray(v)) return v.map(deepClean);
   if (v && typeof v === "object") {
-    const o = Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deepClean(x)]).filter(([, x]) => x !== undefined && x !== "" && !(typeof x === "object" && x !== null && Object.keys(x).length === 0)));
+    const o = Object.fromEntries(Object.entries(v).map(([k, x]) => [k, deepClean(x)]).filter(([, x]) => x !== undefined && x !== "" && !(typeof x === "object" && x !== null && !Array.isArray(x) && Object.keys(x).length === 0))); // an empty list is kept: `mcpServers: []` means "none", not "follow the profile"
     return Object.keys(o).length ? o : undefined;
   }
   return v;
@@ -310,6 +310,45 @@ export function removeBitbucketCredential(name: string, dir = seedHomeConfig()):
 export function applyBitbucket(live: LoadedConfig, fresh: LoadedConfig): void {
   live.bitbucket.credentials = fresh.bitbucket.credentials;
   live.bitbucket.keychainService = fresh.bitbucket.keychainService;
+}
+
+// ---- MCP servers (definitions in factory.yaml; secret values are in the keychain and never pass through here) ----
+export function setMcpServer(server: unknown, dir = seedHomeConfig()): LoadedConfig {
+  const s = McpServer.parse(server);
+  const clean = { name: s.name, type: s.type, ...(s.command ? { command: s.command } : {}), ...(s.args.length ? { args: s.args } : {}), ...(s.url ? { url: s.url } : {}), ...(s.env.length ? { env: s.env } : {}), ...(Object.keys(s.headers).length ? { headers: s.headers } : {}) };
+  editYaml(dir, "factory.yaml", (d) => {
+    const list = (d.getIn(["mcp", "servers"]) as { toJSON(): unknown } | undefined)?.toJSON() as { name: string }[] | undefined;
+    const next = [...(list ?? [])];
+    const i = next.findIndex((x) => x.name === s.name);
+    if (i >= 0) next[i] = clean as never; else next.push(clean as never);
+    d.setIn(["mcp", "servers"], d.createNode(next));
+  });
+  return loadConfig(dir);
+}
+
+/** Removes a server and drops it from the profile default. Refuses while a project still selects it. */
+export function removeMcpServer(name: string, dir = seedHomeConfig()): LoadedConfig {
+  const cur = loadConfig(dir);
+  if (!cur.factory.mcp.servers.some((s) => s.name === name)) throw new ConfigError(`there is no MCP server "${name}"`);
+  const users = cur.projects.projects.filter((p) => p.overrides?.mcpServers?.includes(name)).map((p) => p.id);
+  if (users.length) throw new ConfigError(`${users.join(", ")} still select${users.length === 1 ? "s" : ""} "${name}": deselect it there first`);
+  editYaml(dir, "factory.yaml", (d) => {
+    d.setIn(["mcp", "servers"], d.createNode(cur.factory.mcp.servers.filter((s) => s.name !== name).map((s) => ({ ...s }))));
+    d.setIn(["mcp", "defaultServers"], d.createNode(cur.factory.mcp.defaultServers.filter((n) => n !== name)));
+  });
+  return loadConfig(dir);
+}
+
+/** The servers every project gets unless it selects its own. */
+export function setMcpDefaults(names: string[], dir = seedHomeConfig()): LoadedConfig {
+  const list = z.array(McpServerName).max(100).parse(names);
+  editYaml(dir, "factory.yaml", (d) => { d.setIn(["mcp", "defaultServers"], d.createNode([...new Set(list)])); }); // loadConfig refuses an unknown name
+  return loadConfig(dir);
+}
+
+/** Apply to the running config (the runner resolves servers from it on every run). */
+export function applyMcp(live: LoadedConfig, fresh: LoadedConfig): void {
+  live.factory.mcp = fresh.factory.mcp;
 }
 
 // ---- advanced factory settings: safety and housekeeping keys of factory.yaml. Local only (never reachable from a hub session). ----
