@@ -65,6 +65,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
   const runner = new AgentRunner({ db: handle.db, router, logDir: join(dataDir, "logs", "agents"), protectedPaths: protectedPathsOf(config), usageFile: usageFile(dataDir),
     access: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess,
     projectBashAllow: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAllow ?? [],
+    projectBashAny: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAny ?? false,
     skills: (id) => effectiveSkills(config.factory.skills, config.projects.projects.find((p) => p.id === id)?.skills),
     readGrants: (jobId) => readGrants(handle.db, jobId),
   });
@@ -87,7 +88,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     ...specHandlers,
     ...createImplementationHandlers({
       db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger,
-      dataDir, runCommand: opts.runCommand, planningMode, github: (p) => opts.github ?? hosts.pr(p), fetchEnv: (p) => hosts.gitAuth(p), maxConflictResolutions: () => config.factory.workflow.max_conflict_resolutions, agentAccess: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess, maxPasses: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.maxImplementationPasses ?? config.factory.maxImplementationPasses, settings: { protectedPaths: protectedPathsOf(config), commandTimeoutSeconds: config.factory.commandTimeoutSeconds, sandbox: config.factory.sandbox },
+      dataDir, runCommand: opts.runCommand, planningMode, github: (p) => opts.github ?? hosts.pr(p), fetchEnv: (p) => hosts.gitAuth(p), maxConflictResolutions: () => config.factory.workflow.max_conflict_resolutions, agentAccess: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess, agentBashAny: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAny ?? false, maxPasses: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.maxImplementationPasses ?? config.factory.maxImplementationPasses, settings: { protectedPaths: protectedPathsOf(config), commandTimeoutSeconds: config.factory.commandTimeoutSeconds, sandbox: config.factory.sandbox },
     }),
     // PR-only delivery: push + open the PR, watch CI, report readiness, wait for a human to merge. The factory never merges.
     ...createDeliveryHandlers({

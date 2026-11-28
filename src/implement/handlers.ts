@@ -37,6 +37,7 @@ export interface ImplDeps extends StageKitDeps {
   maxPasses?: (projectId: string) => number;
   /** The project's agent access (live): decides whether prompts describe the check-tool-only limits. */
   agentAccess?: (projectId: string) => "restricted" | "unrestricted";
+  agentBashAny?: (projectId: string) => boolean; // project opt-in to general Bash for the restricted implementer (changes the prompt only; the policy is applied by the runner)
   settings: { protectedPaths: string[]; commandTimeoutSeconds: number; sandbox: { required: boolean; readAllow?: string[]; writeAllow?: string[] } };
   runCommand?: typeof runProjectCommand; // injectable for tests
 }
@@ -232,7 +233,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands, project.allowLoopback);
     const r = await implementer(ctx, {
       task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: DirectResult, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id),
-      prompt: implementPromptDirect({ plan, wrapper, checks, ticket: p.ticket, previousFailures: previousFailures(d.db, ctx.job.id, "IMPLEMENTATION"), unrestricted: d.agentAccess?.(project.id) === "unrestricted" }),
+      prompt: implementPromptDirect({ plan, wrapper, checks, ticket: p.ticket, previousFailures: previousFailures(d.db, ctx.job.id, "IMPLEMENTATION"), unrestricted: d.agentAccess?.(project.id) === "unrestricted", bashAny: d.agentBashAny?.(project.id) }),
     }, p.cwd, p.info.base);
     if (!r.ok) return r.stop;
     await commitAll(p.cwd, `impl(${p.issue.identifier}): implement`, git);
@@ -264,7 +265,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       const before = await head(p.cwd);
       const r = await implementer(ctx, {
         task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: ImplementResult, bashAllow: [wrapper], resumeSessionId: session,
-        prompt: implementPrompt({ featureDir: p.featureDir, wrapper, checks, pass, gaps, ticket: p.ticket, previousFailures: pass === 1 ? failures : undefined, unrestricted: d.agentAccess?.(project.id) === "unrestricted" }),
+        prompt: implementPrompt({ featureDir: p.featureDir, wrapper, checks, pass, gaps, ticket: p.ticket, previousFailures: pass === 1 ? failures : undefined, unrestricted: d.agentAccess?.(project.id) === "unrestricted", bashAny: d.agentBashAny?.(project.id) }),
       }, p.cwd, p.info.base);
       if (!r.ok) return r.stop;
       session = r.result.sessionId ?? session;
@@ -412,7 +413,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     const before = await head(p.cwd);
     const r = await implementer(ctx, {
       task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 40 * MIN, schema: ImplRemediation, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id),
-      prompt: implRemediationPrompt({ unrestricted: d.agentAccess?.(project.id) === "unrestricted", ...(direct() ? {} : { featureDir: p.featureDir }), wrapper, checks, findings, ticket: p.ticket, history: await reviewHistory(ctx.job.id, p.cwd), previousFailures: previousFailures(d.db, ctx.job.id, "REMEDIATION") }),
+      prompt: implRemediationPrompt({ unrestricted: d.agentAccess?.(project.id) === "unrestricted", bashAny: d.agentBashAny?.(project.id),...(direct() ? {} : { featureDir: p.featureDir }), wrapper, checks, findings, ticket: p.ticket, history: await reviewHistory(ctx.job.id, p.cwd), previousFailures: previousFailures(d.db, ctx.job.id, "REMEDIATION") }),
     }, p.cwd, p.info.base);
     if (!r.ok) return r.stop;
     const byId = (id: string) => findings.find((f) => f.id === id) ?? { id, severity: "minor", issue: id };
@@ -523,7 +524,7 @@ export function createImplementationHandlers(d: ImplDeps) {
   const kit = createStageKit(d);
   const conflictResolution = createConflictHandler(
     { db: d.db, git, project: d.project, github: d.github, fetchEnv: d.fetchEnv, maxResolutions: d.maxConflictResolutions ?? (() => DEFAULT_MAX_CONFLICT_RESOLUTIONS) },
-    { ...kit, implementer, wrapperFor, secretStop, ...(d.agentAccess ? { agentAccess: d.agentAccess } : {}) },
+    { ...kit, implementer, wrapperFor, secretStop, ...(d.agentAccess ? { agentAccess: d.agentAccess } : {}), ...(d.agentBashAny ? { agentBashAny: d.agentBashAny } : {}) },
   );
 
   return withCommentary({

@@ -297,6 +297,18 @@ describe("saving a project from the form keeps fields the form does not edit", (
   });
 });
 
+describe("agentBashAny opt-in", () => {
+  it("defaults to false and survives a save from the form", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    expect(upsertProject(app1, dir).projects.projects[0]!.agentBashAny).toBe(false);
+    const file = join(dir, "projects.yaml");
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^ {4}commands:/m, "    agentBashAny: true\n    commands:"));
+    expect(upsertProject({ ...app1, name: "Renamed" }, dir).projects.projects[0]!).toMatchObject({ name: "Renamed", agentBashAny: true });
+    expect(upsertProject({ ...app1, agentBashAny: false }, dir).projects.projects[0]!.agentBashAny).toBe(false);
+    expect(upsertProject({ ...app1, agentBashAny: true }, dir).projects.projects[0]!.agentBashAny).toBe(true);
+  });
+});
+
 describe("skills (projects.yaml and the profile settings)", () => {
   const skillDir = () => { const d = tmpDir(); mkdirSync(join(d, "folder-skill")); writeFileSync(join(d, "folder-skill", "SKILL.md"), "---\nname: x\n---\nUse tabs.\n"); writeFileSync(join(d, "one.md"), "Be brief."); return d; };
 

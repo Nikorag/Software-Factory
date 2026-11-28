@@ -183,6 +183,17 @@ describe("human deferral and fix-cycle memory (pure helpers)", () => {
 
 describe("prompts follow the project's agent access", () => {
   const r = { featureDir: "specs/x", wrapper: "/w/exec", checks: ["test"], findings: [{ id: "check:test" }] };
+  it("bashAny drops the 'other code-running commands are refused' limit; off keeps it", () => {
+    const o = { featureDir: "specs/x", wrapper: "/w/exec", checks: ["test"], pass: 1 };
+    expect(implRemediationPrompt(r)).toMatch(/other code-running commands are refused/);
+    expect(implRemediationPrompt({ ...r, bashAny: false })).toMatch(/other code-running commands are refused/);
+    const a = implRemediationPrompt({ ...r, bashAny: true });
+    expect(a).not.toMatch(/other code-running commands are refused/);
+    expect(a).not.toMatch(/unrestricted access/);
+    expect(a).toMatch(/still refused/);
+    expect(implementPrompt(o)).toMatch(/they are refused/);
+    expect(implementPrompt({ ...o, bashAny: true })).not.toMatch(/they are refused/);
+  });
   it("restricted: only the check tool; unrestricted: free to run tools, and told old 'cannot run' conclusions no longer hold", () => {
     expect(implRemediationPrompt(r)).toMatch(/check tool only/);
     expect(implRemediationPrompt(r)).not.toMatch(/unrestricted access/);

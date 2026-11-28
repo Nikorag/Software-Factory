@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentEnv } from "../src/agents/env.js";
 import { findProtectedChanges } from "../src/agents/guard.js";
-import { pathRoots, toolPolicy } from "../src/agents/permissions.js";
+import { ALWAYS_DENY_BASH, pathRoots, toolPolicy } from "../src/agents/permissions.js";
 import { runProcess } from "../src/agents/process.js";
 import { buildClaudeArgs, parseClaudeOutput, ClaudeCodeAgent } from "../src/agents/claude.js";
 import { ROLE_PROFILE, rolePrompt } from "../src/agents/roles.js";
@@ -33,6 +33,26 @@ describe("permission profiles", () => {
     const p = toolPolicy("implementer", { protectedPaths: prot, bashAllow: ["pnpm test"], roots: ["/w"] });
     expect(p.allow).toEqual(expect.arrayContaining(["Edit(//w/**)", "Bash(git commit:*)", "Bash(git add:*)", "Bash(pnpm test:*)"]));
     for (const d of ["git push", "git fetch", "git checkout", "git config", "git remote", "gh", "curl", "ssh", "sudo", "rm -rf"]) expect(p.deny).toContain(`Bash(${d}:*)`);
+  });
+  it("bashAny gives the implementer a bare Bash allow and keeps every deny", () => {
+    const p = toolPolicy("implementer", { protectedPaths: prot, roots: ["/w"], bashAny: true });
+    expect(p.allow).toContain("Bash");
+    for (const d of ALWAYS_DENY_BASH) expect(p.deny).toContain(`Bash(${d}:*)`);
+    expect(p.deny).toEqual(expect.arrayContaining(["Edit(.env)", "Edit(.git/**)", "Edit(.github/workflows/**)"]));
+    expect(p.allow).not.toContain("Write");
+    expect(p.allow).not.toContain("Edit");
+    expect(p.allow).not.toContain("Read");
+  });
+  it("without bashAny the implementer has no bare Bash and the args are unchanged", () => {
+    const cwd = tmp();
+    expect(toolPolicy("implementer", { protectedPaths: prot, roots: ["/w"] }).allow).not.toContain("Bash");
+    expect(toolPolicy("implementer", { protectedPaths: prot, roots: ["/w"], bashAny: false })).toEqual(toolPolicy("implementer", { protectedPaths: prot, roots: ["/w"] }));
+    const base = buildClaudeArgs(req({ cwd }));
+    expect(buildClaudeArgs(req({ cwd, bashAny: false }))).toEqual(base);
+    expect(buildClaudeArgs(req({ cwd, bashAny: true }))).not.toEqual(base);
+  });
+  it("reviewers and the spec-writer never get a bare Bash allow, even with bashAny", () => {
+    for (const prof of ["read-only", "spec-writer"] as const) expect(toolPolicy(prof, { protectedPaths: prot, bashAny: true }).allow).not.toContain("Bash");
   });
   it("denies edits to every protected path, including .env and the workflows directory", () => {
     const p = toolPolicy("implementer", { protectedPaths: prot });

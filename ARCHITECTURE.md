@@ -13,6 +13,8 @@ One Node.js process (`factory serve`) owns orchestration. Claude Code, `git`, `g
                                   │
    agents: ClaudeCodeAgent (per-role permission profiles) · LocalModelClient (optional)
    project code: sandbox-exec (no network, worktree-only writes, no credential reads) via factory-exec
+                 (by default the restricted implementer runs nothing else; a project may opt in to general Bash with
+                 agentBashAny, which keeps the always-deny list but is not sandboxed: ADR 0017)
    git: isolated worktrees, one agent per worktree, guarded push (factory/* only, never forced)
                                   │
  Dashboard/API (127.0.0.1, token-gated controls) ◀── reads the same SQLite ── metrics/health probes
