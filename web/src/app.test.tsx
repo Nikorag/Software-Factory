@@ -609,6 +609,7 @@ describe("settings and setup", () => {
     });
     it("sends [] when follow is unticked and nothing is chosen", async () => {
       await open();
+      await screen.findByText(/Gets: docs/); // the server list has loaded, so unticking starts from the default
       await userEvent.click(screen.getByLabelText("follow the profile default MCP servers"));
       await userEvent.click(await screen.findByLabelText("MCP server docs")); // unticking starts from the default (docs): untick it
       expect((await saved()).mcpServers).toEqual([]);
