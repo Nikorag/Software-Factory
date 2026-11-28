@@ -5,7 +5,8 @@ import { isMap, isSeq, parseDocument, type Document, type YAMLMap } from "yaml";
 import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir, loadConfig } from "./load.js";
 import { carryRepoFiles } from "./repo-file.js";
-import { BUILTIN_TRACKER_IDS, GatePoint, GithubIssuesConfig, JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, KIND_NAME, ProjectInput, ReviewerRoute, TrackerId, TrackerKind, ProjectOverrides, type LoadedConfig } from "./schema.js";
+import { SkillRefInput, validateSkills } from "./skills.js";
+import { MAX_SKILLS, BUILTIN_TRACKER_IDS, GatePoint, GithubIssuesConfig, JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, KIND_NAME, ProjectInput, ReviewerRoute, TrackerId, TrackerKind, ProjectOverrides, type LoadedConfig } from "./schema.js";
 
 const FILES = ["factory.yaml", "linear.yaml", "models.yaml", "workflows.yaml", "projects.yaml"];
 /** Files that describe tracker connections: every validation copy needs them, or a project naming one would look unknown. */
@@ -39,6 +40,7 @@ export const ProjectSettings = z.object({
   allowLoopback: z.boolean().optional(), // sandbox: let test/lint/build commands use TCP on this machine only
   agentBashAllow: z.array(z.string().max(200)).max(50).optional(), // extra shell prefixes for the restricted implementer (edited in projects.yaml)
   gates: z.array(GatePoint).max(10).optional(), // human gates (confirm or ask for changes); absent keeps what projects.yaml has
+  skills: z.array(SkillRefInput).max(MAX_SKILLS).optional(), // SKILL.md files for this project's agents; absent keeps what projects.yaml has, [] clears
   commands: z.object({ install: z.string().max(500).optional(), build: z.string().max(500).optional(), test: z.string().max(500).optional(), lint: z.string().max(500).optional(), typecheck: z.string().max(500).optional(), visual: z.string().max(500).optional() }).default({}),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettings>;
@@ -85,9 +87,10 @@ export function upsertProject(input: unknown, dir = seedHomeConfig()): LoadedCon
   if (isSeq(list)) list.flow = false; // an empty `projects: []` is flow style: a project list should read as a normal block list
   const at = list.items.findIndex((x) => x.toJSON().id === p.id);
   // Fields the form does not edit survive a save: an absent value keeps what the file already has.
-  const before = at >= 0 ? (list.items[at]!.toJSON() as { allowLoopback?: boolean; agentBashAllow?: string[]; gates?: string[] }) : {};
+  const before = at >= 0 ? (list.items[at]!.toJSON() as { allowLoopback?: boolean; agentBashAllow?: string[]; gates?: string[]; skills?: { name: string; path: string }[] }) : {};
+  const skills = p.skills ? validateSkills(p.skills) : before.skills; // new skills are checked now; untouched ones are left as they are
   const keep = { allowLoopback: p.allowLoopback ?? before.allowLoopback, agentBashAllow: p.agentBashAllow ?? before.agentBashAllow, gates: p.gates ?? before.gates };
-  const node = doc.createNode(clean({ ...p, specKit: p.specKit === false ? false : undefined, allowLoopback: keep.allowLoopback || undefined, agentBashAllow: keep.agentBashAllow, gates: keep.gates?.length ? [...new Set(keep.gates)] : undefined, linear: p.linear && clean(p.linear), host: p.host === "bitbucket" ? "bitbucket" : undefined, github: clean(p.github), bitbucket: clean(p.bitbucket), commands: clean(p.commands), overrides: deepClean(p.overrides) }));
+  const node = doc.createNode(clean({ ...p, specKit: p.specKit === false ? false : undefined, allowLoopback: keep.allowLoopback || undefined, agentBashAllow: keep.agentBashAllow, gates: keep.gates?.length ? [...new Set(keep.gates)] : undefined, skills: skills?.length ? skills : undefined, linear: p.linear && clean(p.linear), host: p.host === "bitbucket" ? "bitbucket" : undefined, github: clean(p.github), bitbucket: clean(p.bitbucket), commands: clean(p.commands), overrides: deepClean(p.overrides) }));
   (node as YAMLMap).flow = false;
   const i = list.items.findIndex((x) => x.toJSON().id === p.id);
   if (i >= 0) list.set(i, node); else list.add(node);
@@ -118,11 +121,12 @@ export const GlobalSettings = z.object({
   maxRemediationAttempts: z.number().int().min(0).max(10),
   maxImplementationPasses: z.number().int().min(1).max(10).optional(),
   planningMode: z.enum(["haiku_prompt", "speckit"]).optional(),
+  skills: z.array(SkillRefInput).max(MAX_SKILLS).optional(), // profile-wide SKILL.md files; absent keeps what factory.yaml has, [] clears
   routes: z.object({ classification: Route, specification: Route, implementation: Route, independent_review: ReviewerRoute.nullish(), final_review: Route, prompt_generation: Route.optional() }),
 });
 export type GlobalSettings = z.infer<typeof GlobalSettings>;
 
-export const globalSettingsOf = (c: LoadedConfig): GlobalSettings => ({ githubAccount: c.factory.githubAccount ?? "", pickupMode: c.factory.pickupMode, maxConcurrentJobs: c.factory.maxConcurrentJobs, maxRemediationAttempts: c.factory.maxRemediationAttempts, maxImplementationPasses: c.factory.maxImplementationPasses, planningMode: c.factory.workflow.planning_mode, routes: c.models.routes });
+export const globalSettingsOf = (c: LoadedConfig): GlobalSettings => ({ githubAccount: c.factory.githubAccount ?? "", pickupMode: c.factory.pickupMode, maxConcurrentJobs: c.factory.maxConcurrentJobs, maxRemediationAttempts: c.factory.maxRemediationAttempts, maxImplementationPasses: c.factory.maxImplementationPasses, planningMode: c.factory.workflow.planning_mode, skills: c.factory.skills, routes: c.models.routes });
 
 /** Writes factory.yaml and models.yaml (comments preserved) only if the resulting config loads; both files or neither. */
 export function updateGlobalSettings(input: unknown, dir = seedHomeConfig()): LoadedConfig {
@@ -135,6 +139,7 @@ export function updateGlobalSettings(input: unknown, dir = seedHomeConfig()): Lo
   factory.set("maxRemediationAttempts", g.maxRemediationAttempts);
   if (g.maxImplementationPasses) factory.set("maxImplementationPasses", g.maxImplementationPasses);
   if (g.planningMode) factory.setIn(["workflow", "planning_mode"], g.planningMode);
+  if (g.skills) { const s = validateSkills(g.skills); if (s.length) factory.set("skills", factory.createNode(s)); else factory.delete("skills"); }
   if (g.githubAccount) factory.set("githubAccount", g.githubAccount); else if (g.githubAccount === "") factory.delete("githubAccount");
   for (const [task, route] of Object.entries(g.routes)) {
     if (!route) { models.deleteIn(["routes", task]); continue; } // a cleared independent reviewer: the step is skipped
@@ -158,6 +163,7 @@ export function applyGlobal(live: LoadedConfig, fresh: LoadedConfig): void {
   live.factory.maxImplementationPasses = fresh.factory.maxImplementationPasses;
   live.factory.githubAccount = fresh.factory.githubAccount;
   live.factory.pickupMode = fresh.factory.pickupMode;
+  live.factory.skills = fresh.factory.skills;
   live.factory.workflow.planning_mode = fresh.factory.workflow.planning_mode; // the next stage of every job follows it
   applyProjects(live, fresh); // projects that follow the profile's default GitHub account pick up the change
   Object.assign(live.models.routes, fresh.models.routes);

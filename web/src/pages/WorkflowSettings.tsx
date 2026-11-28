@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { ModelPicker, ReviewerPicker } from "@/components/ModelPicker";
 import { api, send } from "@/lib/api";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { GhAccounts } from "@/lib/types";
+import { skillsFromText, skillsToText, type GhAccounts } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
 import { DEFAULT_PROMPT_ROUTE, TASKS, type GlobalSettings, type RouteCfg } from "@/lib/tasks";
 
@@ -28,10 +28,13 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const { data: gh } = usePoll(() => api<GhAccounts>("/api/setup/github"), 60000);
-  useEffect(() => { if (value) setG(value); }, [value]);
+  const [skillsText, setSkillsText] = useState(skillsToText(value?.skills));
+  useEffect(() => { if (value) { setG(value); setSkillsText(skillsToText(value.skills)); } }, [value]);
   if (!g || !value) return null;
   const dirty = JSON.stringify(g) !== JSON.stringify(value);
-  const save = async () => { setErr(null); const r = await send("PUT", "/api/settings/global", g); if (r.ok) { setSaved(true); onSaved(); } else setErr(r.error); };
+  const skillsDirty = JSON.stringify(g.skills ?? []) !== JSON.stringify(value.skills ?? []);
+  // skills are only sent when edited: a hub session may not set them
+  const save = async () => { setErr(null); const r = await send("PUT", "/api/settings/global", skillsDirty ? g : { ...g, skills: undefined }); if (r.ok) { setSaved(true); onSaved(); } else setErr(r.error); };
   return (
     <div className="grid gap-4">
       <Card><CardHeader><CardTitle className="text-sm">Ticket pickup</CardTitle><CardDescription>How tickets get started.</CardDescription></CardHeader>
@@ -61,6 +64,13 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
             <SelectContent><SelectItem value="__none">gh's active login (don't pin)</SelectItem>{(gh?.accounts ?? []).map((a) => <SelectItem key={a.login} value={a.login}>{a.login}{a.active ? " (active)" : ""}</SelectItem>)}</SelectContent></Select>
           {gh && gh.accounts.length === 0 ? <p className="text-xs text-loop">gh has no logins yet: run <code>gh auth login</code>.</p> : <p className="text-xs text-muted-foreground">Logged in on this machine: {(gh?.accounts ?? []).map((a) => a.login).join(", ") || "…"}. Add another with <code>gh auth login</code>.</p>}
         </CardContent></Card>
+      <Card><CardHeader><CardTitle className="text-sm">Skills</CardTitle><CardDescription>SKILL.md files given to every agent run in this profile. A project's skill with the same name replaces it.</CardDescription></CardHeader>
+        <CardContent className="grid gap-1.5">
+          <Label htmlFor="wf-skills">Skills</Label>
+          <textarea id="wf-skills" autoCapitalize="off" autoCorrect="off" spellCheck={false} rows={3} className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs" placeholder="my-skill=~/skills/my-skill/SKILL.md"
+            value={skillsText} onChange={(e) => { setSaved(false); setSkillsText(e.target.value); setG({ ...g, skills: skillsFromText(e.target.value) }); }} />
+          <p className="text-xs text-muted-foreground">One <code>name=path</code> per line; the path is a SKILL.md file or a folder containing one. The file is read at each run, so edits apply next time.</p>
+        </CardContent></Card>
       <Card><CardHeader><CardTitle className="text-sm">Limits</CardTitle><CardDescription>Defaults for every project.</CardDescription></CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div className="grid gap-1.5"><Label htmlFor="wf-conc">Concurrent jobs</Label>
@@ -88,7 +98,7 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
         </CardContent></Card>
       <div className="flex flex-wrap items-center gap-3 max-md:sticky max-md:bottom-0 max-md:z-10 max-md:-mx-4 max-md:gap-2 max-md:border-t max-md:border-line max-md:bg-background/95 max-md:px-4 max-md:pb-[calc(env(safe-area-inset-bottom)+0.75rem)] max-md:pt-3 max-md:backdrop-blur">
         {err ? <p role="alert" className="flex-1 text-sm text-destructive">{err}</p> : <p className="flex-1 text-sm text-muted-foreground max-md:basis-full max-md:empty:hidden">{saved && !dirty ? "Saved. Applied immediately; running jobs pick it up at their next step." : dirty ? "Unsaved changes" : ""}</p>}
-        <Button variant="outline" className="max-md:flex-1" disabled={!dirty} onClick={() => setG(value)}>Revert</Button><Button className="max-md:flex-[2]" disabled={!dirty} onClick={() => void save()}>Save settings</Button>
+        <Button variant="outline" className="max-md:flex-1" disabled={!dirty} onClick={() => { setG(value); setSkillsText(skillsToText(value.skills)); }}>Revert</Button><Button className="max-md:flex-[2]" disabled={!dirty} onClick={() => void save()}>Save settings</Button>
       </div>
     </div>
   );

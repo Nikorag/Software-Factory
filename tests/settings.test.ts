@@ -1,9 +1,11 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { parseRepoFile } from "../src/config/repo-file.js";
+import { SKILL_MAX_BYTES } from "../src/config/skills.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
-import { BUNDLED_CONFIG_DIR, loadConfig } from "../src/config/load.js";
+import { BUNDLED_CONFIG_DIR, ConfigError, loadConfig } from "../src/config/load.js";
 import { applyGlobal, applyProjects, globalSettingsOf, removeProject, seedHomeConfig, updateGlobalSettings, upsertProject } from "../src/config/store.js";
 import { eq } from "drizzle-orm";
 import { enqueue } from "../src/core/jobs.js";
@@ -292,6 +294,59 @@ describe("saving a project from the form keeps fields the form does not edit", (
     writeFileSync(file, readFileSync(file, "utf8").replace(/^ {4}commands:/m, "    allowLoopback: true\n    agentBashAllow:\n      - godot --headless\n    commands:"));
     const c = upsertProject({ ...app1, name: "Renamed" }, dir);
     expect(c.projects.projects[0]!).toMatchObject({ name: "Renamed", allowLoopback: true, agentBashAllow: ["godot --headless"] });
+  });
+});
+
+describe("skills (projects.yaml and the profile settings)", () => {
+  const skillDir = () => { const d = tmpDir(); mkdirSync(join(d, "folder-skill")); writeFileSync(join(d, "folder-skill", "SKILL.md"), "---\nname: x\n---\nUse tabs.\n"); writeFileSync(join(d, "one.md"), "Be brief."); return d; };
+
+  it("round-trips project skills through projects.yaml, keeps them when the form omits them, and clears them with []", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config")), sk = skillDir();
+    const skills = [{ name: "one", path: join(sk, "one.md") }, { name: "folder-skill", path: join(sk, "folder-skill") }];
+    expect(upsertProject({ ...app1, skills }, dir).projects.projects[0]!.skills).toEqual(skills);
+    expect(upsertProject({ ...app1, name: "Renamed" }, dir).projects.projects[0]!.skills).toEqual(skills);
+    expect(upsertProject({ ...app1, skills: [] }, dir).projects.projects[0]!.skills).toEqual([]);
+  });
+
+  it("rejects a bad name, a missing path, an oversize file and a duplicate with a ConfigError", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config")), sk = skillDir();
+    writeFileSync(join(sk, "big.md"), "x".repeat(SKILL_MAX_BYTES + 1));
+    const bad = (skills: { name: string; path: string }[], msg: RegExp) => { expect(() => upsertProject({ ...app1, skills }, dir)).toThrow(ConfigError); expect(() => upsertProject({ ...app1, skills }, dir)).toThrow(msg); };
+    bad([{ name: "Bad Name", path: join(sk, "one.md") }], /skill name/);
+    bad([{ name: "gone", path: join(sk, "nope.md") }], /does not exist/);
+    bad([{ name: "big", path: join(sk, "big.md") }], /larger than/);
+    bad([{ name: "a", path: join(sk, "one.md") }, { name: "a", path: join(sk, "one.md") }], /twice/);
+    bad([{ name: "rel", path: "one.md" }], /absolute/);
+  });
+
+  it("round-trips profile skills through updateGlobalSettings", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config")), sk = skillDir();
+    const base = globalSettingsOf(loadConfig(dir));
+    const skills = [{ name: "one", path: join(sk, "one.md") }];
+    expect(globalSettingsOf(updateGlobalSettings({ ...base, skills }, dir)).skills).toEqual(skills);
+    expect(globalSettingsOf(updateGlobalSettings({ ...base, skills: undefined }, dir)).skills).toEqual(skills); // absent keeps
+    expect(() => updateGlobalSettings({ ...base, skills: [{ name: "x", path: join(sk, "nope") }] }, dir)).toThrow(ConfigError);
+    expect(globalSettingsOf(updateGlobalSettings({ ...base, skills: [] }, dir)).skills).toEqual([]);
+  });
+
+  it("is exposed and accepted by /api/projects and /api/settings/global", async () => {
+    const s = server(), sk = skillDir();
+    const skills = [{ name: "one", path: join(sk, "one.md") }];
+    const { id: _id, ...body } = app1; void _id;
+    expect((await send(s.app, "PUT", "/api/settings/projects/my-app", UI, { ...body, skills })).statusCode).toBe(200);
+    const list = (await send(s.app, "GET", "/api/projects", HOST)).json().projects as { id: string; skills: unknown }[];
+    expect(list.find((p) => p.id === "my-app")?.skills).toEqual(skills);
+    const g = (await send(s.app, "GET", "/api/settings/global", HOST)).json();
+    const r = await send(s.app, "PUT", "/api/settings/global", UI, { ...g, skills });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await send(s.app, "GET", "/api/settings/global", HOST)).json().skills).toEqual(skills);
+    expect(s.config.factory.skills).toEqual(skills); // applied live
+    const bad = await send(s.app, "PUT", "/api/settings/global", UI, { ...g, skills: [{ name: "x", path: "/no/such/file" }] });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it("cannot be set from the repository's .software-factory.yml", () => {
+    expect(() => parseRepoFile("id: p\nskills:\n  - name: a\n    path: /tmp/a.md\n", "p")).toThrow(ConfigError);
   });
 });
 
