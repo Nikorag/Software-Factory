@@ -223,7 +223,21 @@ describe("distillation", () => {
     expect(l).toHaveLength(1);
     expect(l[0]).toMatchObject({ status: "proposed", kind: "pitfall", source: `stage_execution:${exec2}`, sourceJobId: b.id, projectId: "p" });
     expect(l[0]!.text).toContain("src/a.ts");
-    expect(l[0]!.text).toContain("2 jobs");
+    expect(l[0]!.text).toContain("more than one job");
+  });
+  it("does not propose the same recurring finding again in a later job, nor after it was rejected", async () => {
+    const s = setup();
+    const a = s.job(), b = s.job(), c = s.job();
+    cycle(s, a.id, [finding("R1", "missing null check on the request body")], ["R1"]);
+    cycle(s, b.id, [finding("R1", "missing null check on the request body")], ["R1"]);
+    cycle(s, c.id, [finding("R1", "missing null check on the request body")], ["R1"]);
+    expect(await distillJob(s.db, b.id)).toBe(1);
+    expect(await distillJob(s.db, c.id)).toBe(0);
+    const rows = s.db.select().from(lessons).all();
+    expect(rows).toHaveLength(1);
+    rejectLesson(s.db, rows[0]!.id, "dashboard");
+    expect(await distillJob(s.db, c.id)).toBe(0);
+    expect(s.db.select().from(lessons).all()).toHaveLength(1);
   });
   it("does not count rejected or deferred outcomes, one-job repeats, or other projects' jobs", async () => {
     const s = setup();

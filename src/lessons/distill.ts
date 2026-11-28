@@ -36,7 +36,7 @@ function recurringFindings(db: FactoryDb, projectId: string, jobId: string): Can
   return clusters.filter((c) => c.jobs.size >= 2 && c.jobs.has(jobId) && c.mine !== undefined).map((c) => {
     const where = c.rep.file && c.rep.file !== "-" ? `${c.rep.file}: ` : "";
     const fix = c.rep.fix ? ` Fix: ${firstLine(c.rep.fix)}` : "";
-    return { text: clip(`Address this up front: reviewers raised it and it was fixed in ${c.jobs.size} jobs. ${where}${firstLine(c.rep.issue) || c.rep.id}.${fix}`, 500), kind: "pitfall" as const, source: `stage_execution:${c.mine}`, sourceJobId: jobId };
+    return { text: clip(`Address this up front: reviewers raised it and it was fixed in more than one job. ${where}${firstLine(c.rep.issue) || c.rep.id}.${fix}`, 500), kind: "pitfall" as const, source: `stage_execution:${c.mine}`, sourceJobId: jobId };
   });
 }
 
