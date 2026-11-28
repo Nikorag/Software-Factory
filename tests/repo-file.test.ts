@@ -37,6 +37,11 @@ describe("parseRepoFile", () => {
     const list = `- id: p\n  commands: { test: pnpm test }\n`;
     expect(parseRepoFile(list, "p").commands?.test).toBe("pnpm test");
   });
+  it("accepts an optional commands.visual, in the repo file and in the project schema", () => {
+    expect(parseRepoFile(`id: p\ncommands: { test: pnpm test, visual: pnpm exec playwright test }\n`, "p").commands?.visual).toBe("pnpm exec playwright test");
+    expect(project({ commands: { test: "t", visual: "v" } }).commands.visual).toBe("v");
+    expect(project({ commands: { test: "t" } }).commands.visual).toBeUndefined();
+  });
   it("rejects unknown keys and typos, naming the path", () => {
     expect(() => parseRepoFile("id: p\ncommands: { tset: x }\n", "p")).toThrow(/commands/);
     expect(() => parseRepoFile("id: p\nbogus: 1\n", "p")).toThrow(/bogus|Unrecognized/);

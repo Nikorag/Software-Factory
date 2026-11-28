@@ -38,7 +38,7 @@ export const ProjectSettings = z.object({
   specKit: z.boolean().optional(), // run the SpecKit specification workflow for this project (default true)
   allowLoopback: z.boolean().optional(), // sandbox: let test/lint/build commands use TCP on this machine only
   agentBashAllow: z.array(z.string().max(200)).max(50).optional(), // extra shell prefixes for the restricted implementer (edited in projects.yaml)
-  commands: z.object({ install: z.string().max(500).optional(), build: z.string().max(500).optional(), test: z.string().max(500).optional(), lint: z.string().max(500).optional(), typecheck: z.string().max(500).optional() }).default({}),
+  commands: z.object({ install: z.string().max(500).optional(), build: z.string().max(500).optional(), test: z.string().max(500).optional(), lint: z.string().max(500).optional(), typecheck: z.string().max(500).optional(), visual: z.string().max(500).optional() }).default({}),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettings>;
 

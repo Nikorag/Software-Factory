@@ -20,6 +20,12 @@ describe("commitAll (found live: it failed every implementation attempt once nod
     expect(await commitAll(repo, "impl", git)).toBe(true);
     expect(sh(repo, "show", "--name-only", "--format=", "HEAD")).toBe("src/keep.ts");
   });
+  it("never commits Playwright's default output (screenshots, traces, reports), even nested", async () => {
+    const { repo } = makeRepo();
+    put(repo, "test-results/a/trace.zip"); put(repo, "playwright-report/index.html"); put(repo, "blob-report/r.zip"); put(repo, "playwright/.cache/x"); put(repo, "web/test-results/s.png"); put(repo, "playwright/tests/a.spec.ts"); put(repo, "src/keep.ts");
+    expect(await commitAll(repo, "impl", git)).toBe(true);
+    expect(sh(repo, "show", "--name-only", "--format=", "HEAD").split("\n").sort()).toEqual(["playwright/tests/a.spec.ts", "src/keep.ts"]);
+  });
   it("returns false when only ignorable output changed", async () => {
     const { repo } = makeRepo();
     put(repo, "node_modules/dep/index.js");

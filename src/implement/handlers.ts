@@ -41,7 +41,7 @@ export interface ImplDeps extends StageKitDeps {
 }
 
 const MIN = 60_000;
-const CHECK_ORDER: Exclude<CommandKind, "install">[] = ["build", "typecheck", "lint", "test"];
+const CHECK_ORDER: Exclude<CommandKind, "install">[] = ["build", "typecheck", "lint", "test", "visual"];
 const BLOCKING = new Set(["blocker", "major", "critical", "high"]);
 export const isBlocking = (sev: string) => BLOCKING.has(sev);
 const DEFAULT_PASSES = 3;

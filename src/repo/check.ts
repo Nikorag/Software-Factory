@@ -39,7 +39,7 @@ export async function checkProject(
   try {
     const gc = await git(wt, ["rev-parse", "--git-common-dir"]);
     const gitCommonDir = isAbsolute(gc) ? gc : resolve(wt, gc);
-    const order: CommandKind[] = [...(d.skipInstall ? [] : (["install"] as const)), "build", "typecheck", "lint", "test"];
+    const order: CommandKind[] = [...(d.skipInstall ? [] : (["install"] as const)), "build", "typecheck", "lint", "test", "visual"];
     for (const kind of order) {
       const command = project.commands[kind];
       if (!command) continue;
