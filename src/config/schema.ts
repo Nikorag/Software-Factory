@@ -189,11 +189,13 @@ export const ProjectConfig = z.object({
   allowLoopback: z.boolean().default(false),
   // Human gates: after these stages succeed the job waits for a person to confirm or ask for changes. projects.yaml only: a repository file cannot set them.
   gates: z.array(GatePoint).default([]),
-  // Skills (SKILL.md files) appended to every agent run's system prompt for this project; they replace profile skills of the same name. projects.yaml only.
+  // Skills (SKILL.md files) appended to every agent run's system prompt for this project; they replace profile skills of the same name. Owned by projects.yaml; the repo file's skills are kept apart in `repoSkills`.
   skills: z.array(SkillRef).max(MAX_SKILLS).default([]),
   commands: ProjectCommands.default({}),
   // Runtime only (never written to projects.yaml): why this project's `.software-factory.yml` was not applied. See src/config/repo-file.ts.
   repoFileError: z.string().optional(),
+  // Runtime only: the skills `.software-factory.yml` sets, with their bodies read from the committed default branch. Never written to projects.yaml.
+  repoSkills: z.array(SkillRef.extend({ body: z.string() })).optional(),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;
 /** What projects.yaml may contain: `repository` can be omitted when `github.repo` is given (factory-managed clone). */

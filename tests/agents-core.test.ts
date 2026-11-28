@@ -284,7 +284,7 @@ describe("ClaudeCodeAgent with a fake claude binary", () => {
 
 describe("skills in the system prompt", () => {
   const route = { provider: "anthropic" as const, model: "default" };
-  const setup = (skills?: (id?: string) => SkillRef[]) => {
+  const setup = (skills?: (id?: string) => (SkillRef & { body?: string; fromRepo?: boolean })[]) => {
     const { db } = openDb(":memory:");
     db.insert(projects).values({ id: "p", configJson: "{}" }).run();
     db.insert(jobs).values({ id: "j", projectId: "p", externalId: "e", externalKey: "E-1" }).run();
@@ -330,6 +330,27 @@ describe("skills in the system prompt", () => {
     const eff = effectiveSkills([{ name: "x", path: "/p/x" }, { name: "y", path: "/p/y" }], [{ name: "x", path: "/proj/x" }, { name: "z", path: "/proj/z" }]);
     expect(eff).toEqual([{ name: "x", path: "/proj/x" }, { name: "y", path: "/p/y" }, { name: "z", path: "/proj/z" }]);
     expect(effectiveSkills(undefined, undefined)).toEqual([]);
+  });
+
+  it("effectiveSkills merges profile < projects.yaml < repo file by name; the repo file wins a clash with projects.yaml", () => {
+    const eff = effectiveSkills([{ name: "x", path: "/p/x" }, { name: "y", path: "/p/y" }], [{ name: "x", path: "/proj/x" }, { name: "z", path: "/proj/z" }], [{ name: "z", path: "r/z", body: "REPO Z" }, { name: "w", path: "r/w", body: "W" }]);
+    expect(eff.map((s) => [s.name, s.path, s.fromRepo ?? false])).toEqual([["x", "/proj/x", false], ["y", "/p/y", false], ["z", "r/z", true], ["w", "r/w", true]]);
+    expect(effectiveSkills([{ name: "a", path: "/p/a" }], undefined, [{ name: "a", path: "r/a", body: "B" }])[0]).toMatchObject({ body: "B", fromRepo: true }); // also beats the profile
+  });
+
+  it("the runner gets a repo-file skill's body from the list and the decision names the repo file", async () => {
+    const a = skillFile("a", "ALPHA");
+    const s = setup(() => effectiveSkills([], [{ name: "a", path: a }], [{ name: "r", path: ".claude/skills/r", body: "REPO BODY" }]));
+    await s.runner.run(step(tmp()));
+    const sp = s.seen[0]!.systemPrompt!;
+    expect(sp).toContain("## Skill: a\n\nALPHA");
+    expect(sp).toContain("## Skill: r\n\nREPO BODY\n\n## End skill: r");
+    const row = s.db.select().from(decisions).all().find((d) => d.kind === "agent.skills")!;
+    expect(row.decision).toBe("implementer runs with skills: a, r");
+    expect(row.rationale).toContain(".software-factory.yml");
+    const plain = setup(() => [{ name: "a", path: a }]);
+    await plain.runner.run(step(tmp()));
+    expect(plain.db.select().from(decisions).all().find((d) => d.kind === "agent.skills")!.rationale).not.toContain(".software-factory.yml");
   });
 
   it("the schema accepts valid skills and rejects a bad name", () => {

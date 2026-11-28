@@ -66,7 +66,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     access: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess,
     projectBashAllow: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAllow ?? [],
     projectBashAny: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAny ?? false,
-    skills: (id) => effectiveSkills(config.factory.skills, config.projects.projects.find((p) => p.id === id)?.skills),
+    skills: (id) => { const p = config.projects.projects.find((x) => x.id === id); return effectiveSkills(config.factory.skills, p?.skills, p?.repoSkills); },
     readGrants: (jobId) => readGrants(handle.db, jobId),
   });
   const worktrees = new WorktreeManager({

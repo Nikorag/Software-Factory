@@ -201,7 +201,8 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
           <span className="text-xs text-muted-foreground">One command prefix per line. Only applies while agent access is restricted.</span></div>
         <div className="grid gap-1.5"><Label htmlFor="pe-skills">Skills</Label>
           <textarea id="pe-skills" {...CODE} rows={3} className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs" placeholder={"my-skill=~/skills/my-skill/SKILL.md"} value={f.skills} onChange={(e) => set("skills", e.target.value)} />
-          <span className="text-xs text-muted-foreground">One <code>name=path</code> per line; the path is a SKILL.md file or a folder containing one. Given to every agent run for this project; replaces a profile skill of the same name.</span></div>
+          <span className="text-xs text-muted-foreground">One <code>name=path</code> per line; the path is a SKILL.md file or a folder containing one. Given to every agent run for this project; replaces a profile skill of the same name.</span>
+          {project?.repoSkills?.length ? <span data-testid="repo-skills" className="text-xs text-muted-foreground">From the repository's <code>.software-factory.yml</code> (read-only, committed default branch; wins over a skill above with the same name): {project.repoSkills.map((k) => `${k.name}=${k.path}`).join(", ")}</span> : null}</div>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={f.specKit} onChange={(e) => set("specKit", e.target.checked)} />
           <span>Use the SpecKit specification workflow<span className="block text-xs text-muted-foreground">On by default. Off skips spec generation for this project.</span></span></label>
         {noTest ? <p className="text-sm text-loop">No test command: the factory will not implement changes here yet.</p> : null}

@@ -3,7 +3,8 @@ import { parse } from "yaml";
 import { z } from "zod";
 import { git as realGit, type GitFn } from "../repo/git.js";
 import { assertNoSecrets, ConfigError } from "./load.js";
-import { ProjectCommands, ProjectConfig, ProjectGithub, ProjectId } from "./schema.js";
+import { MAX_SKILLS, ProjectCommands, ProjectConfig, ProjectGithub, ProjectId, SkillRef } from "./schema.js";
+import { cleanSkillText } from "./skills.js";
 
 /**
  * `.software-factory.yml`: a project's own factory settings, kept with its code.
@@ -15,9 +16,20 @@ import { ProjectCommands, ProjectConfig, ProjectGithub, ProjectId } from "./sche
  * Trust: the file is read ONLY from the committed default branch (origin/<defaultBranch>, else the local branch), never from a job's
  * worktree or the working copy, so a job cannot change its own commands. It has the same trust as the repo's package scripts:
  * `commands.install` runs with network access and `allowLoopback` loosens the sandbox. See SECURITY.md.
+ *
+ * `skills` are merged with projects.yaml's by name (the repo file wins a clash, see effectiveSkills). Each path is repo-relative (no absolute,
+ * `~` or `..`) to a committed SKILL.md or a folder holding one; the body is read from git on the same committed ref when the file is refreshed.
  */
 export const REPO_FILE = ".software-factory.yml";
 const MAX_BYTES = 64 * 1024;
+
+/** A repo-file skill: same name rules as projects.yaml, but the path must stay inside the repository. */
+const RepoSkillRef = SkillRef.extend({
+  path: z.string().min(1).max(500).refine((p) => {
+    const t = p.trim();
+    return t.length > 0 && !t.startsWith("/") && !t.startsWith("\\") && !t.startsWith("~") && !/^[A-Za-z]:/.test(t) && !t.split(/[\\/]/).includes("..");
+  }, "must be a repo-relative path (no absolute path, `~` or `..`)"),
+}).strict();
 
 /** Strict: an unknown key or a typo (`commands.tset`) is an error, not silently ignored. Field definitions come from ProjectConfig. */
 export const RepoFile = z.strictObject({
@@ -28,6 +40,7 @@ export const RepoFile = z.strictObject({
   github: ProjectGithub.strict().optional(),
   commands: ProjectCommands.strict().optional(),
   allowLoopback: z.boolean().optional(),
+  skills: z.array(RepoSkillRef).max(MAX_SKILLS).refine((l) => new Set(l.map((s) => s.name)).size === l.length, "a skill name is listed twice").optional(),
 });
 export type RepoFile = z.infer<typeof RepoFile>;
 
@@ -65,15 +78,44 @@ export function mergeRepoFile(base: Settable, file: RepoFile): Settable {
  * The committed text of the file on the default branch, or null when it is genuinely absent (no checkout, no such branch, no file).
  * Never reads the working copy. A git failure (timeout, lock...) THROWS, so the caller keeps the previous settings instead of treating it as "absent".
  */
-export async function readRepoFileText(project: Pick<ProjectConfig, "repository" | "defaultBranch">, git: GitFn = realGit): Promise<string | null> {
+async function resolveRef(project: Pick<ProjectConfig, "repository" | "defaultBranch">, git: GitFn): Promise<string | null> {
   const repo = project.repository, b = project.defaultBranch;
   if (!existsSync(repo)) return null;
-  let ref: string | null = null;
   for (const c of [`refs/remotes/origin/${b}`, `refs/heads/${b}`]) {
     // `rev-parse --verify --quiet` exits 1 for a ref that does not exist; anything else is a real failure
     const found = await git(repo, ["rev-parse", "--verify", "--quiet", c]).then(() => true, (e: { code?: number | string }) => { if (e.code === 1) return false; throw e; });
-    if (found) { ref = c; break; }
+    if (found) return c;
   }
+  return null;
+}
+
+/**
+ * The bodies of the repo-file skills, read from git on the committed default branch (never the working copy). A path is a committed
+ * SKILL.md or a folder containing one. Throws ConfigError naming the skill when it is missing, too large or not a file.
+ */
+export async function readRepoSkillBodies(project: Pick<ProjectConfig, "repository" | "defaultBranch">, skills: readonly SkillRef[], git: GitFn = realGit): Promise<{ name: string; path: string; body: string }[]> {
+  if (!skills.length) return [];
+  const ref = await resolveRef(project, git);
+  if (!ref) throw new ConfigError(`${REPO_FILE}: skills: no committed ${project.defaultBranch} branch to read them from`);
+  const repo = project.repository;
+  const out: { name: string; path: string; body: string }[] = [];
+  for (const s of skills) {
+    const rel = s.path.trim().replace(/\\/g, "/").replace(/\/+$/, "").replace(/^(\.\/)+/, "");
+    const missing = () => new ConfigError(`${REPO_FILE}: skills: skill "${s.name}": no committed SKILL.md at ${s.path} on ${project.defaultBranch}`);
+    const typeOf = (p: string) => git(repo, ["cat-file", "-t", `${ref}:${p}`]).then((t) => t.trim(), (e: { code?: number | string }) => { if (e.code === 128) return null; throw e; }); // 128: no such path at that ref
+    let file = rel;
+    let t = rel && rel !== "." ? await typeOf(rel) : "tree"; // "." is the repo root
+    if (t === "tree") { file = rel && rel !== "." ? `${rel}/SKILL.md` : "SKILL.md"; t = await typeOf(file); }
+    if (t !== "blob" || file.split("/").pop() !== "SKILL.md") throw missing(); // only a SKILL.md, never an arbitrary committed file
+    const text = await git(repo, ["cat-file", "blob", `${ref}:${file}`]);
+    out.push({ name: s.name, path: s.path, body: cleanSkillText(s.name, text) });
+  }
+  return out;
+}
+
+export async function readRepoFileText(project: Pick<ProjectConfig, "repository" | "defaultBranch">, git: GitFn = realGit): Promise<string | null> {
+  const repo = project.repository;
+  const ref = await resolveRef(project, git);
   if (!ref) return null;
   const listed = await git(repo, ["ls-tree", "--name-only", ref, "--", REPO_FILE]);
   if (!listed) return null;
@@ -83,12 +125,13 @@ export async function readRepoFileText(project: Pick<ProjectConfig, "repository"
 }
 
 // What was last read per project. Survives a settings save (applyProjects swaps in fresh project objects) so the file keeps winning.
-interface State { base?: Settable; overlay?: RepoFile; error?: string }
+interface State { base?: Settable; overlay?: RepoFile; skills?: NonNullable<ProjectConfig["repoSkills"]>; error?: string }
 const states = new WeakMap<ProjectConfig, State>();
 
 function applyState(project: ProjectConfig, s: State): void {
   s.base ??= pick(project);
   Object.assign(project, s.overlay ? mergeRepoFile(s.base, s.overlay) : s.base);
+  if (s.skills?.length) project.repoSkills = s.skills; else delete project.repoSkills; // kept apart from project.skills (projects.yaml)
   if (s.error) project.repoFileError = s.error; else delete project.repoFileError;
 }
 
@@ -106,7 +149,11 @@ export async function refreshRepoFile(project: ProjectConfig, git: GitFn = realG
     const text = await readRepoFileText({ repository: project.repository, defaultBranch: s.base?.defaultBranch ?? project.defaultBranch }, git);
     // No file: settings stay as they are (a file that was applied before and later disappears is kept until restart or an explicit change).
     if (text === null) { delete s.error; applyState(project, s); return { status: "none" }; }
-    s.overlay = parseRepoFile(text, project.id);
+    const overlay = parseRepoFile(text, project.id);
+    // Bodies are read before anything is assigned: a bad skill makes the whole file invalid (previous settings stay).
+    const skills = await readRepoSkillBodies({ repository: project.repository, defaultBranch: s.base?.defaultBranch ?? project.defaultBranch }, overlay.skills ?? [], git);
+    s.overlay = overlay;
+    s.skills = skills;
     delete s.error;
     applyState(project, s);
     return { status: "applied" };

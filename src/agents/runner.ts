@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import type { FactoryDb } from "../db/client.js";
 import { agentInvocations, decisions } from "../db/schema.js";
 import { skillsPromptBlock } from "../config/skills.js";
-import type { SkillRef } from "../config/schema.js";
+import type { EffectiveSkill } from "../config/skills.js";
 import { git as realGit, type GitFn } from "../repo/git.js";
 import { findProtectedChanges } from "./guard.js";
 import { writeLimits } from "./usage.js";
@@ -44,7 +44,7 @@ export class AgentRunner {
     access?: (projectId?: string) => "restricted" | "unrestricted"; // per project; default restricted
     projectBashAllow?: (projectId?: string) => string[]; // per project extra shell prefixes for the restricted implementer
     projectBashAny?: (projectId?: string) => boolean; // per project opt-in: any Bash command (bar the deny list) for the restricted implementer
-    skills?: (projectId?: string) => SkillRef[]; // the effective skills (profile's, overridden by the project's); see effectiveSkills
+    skills?: (projectId?: string) => EffectiveSkill[]; // the effective skills (profile's, overridden by the project's and the repo file's); see effectiveSkills
     readGrants?: (jobId: string) => string[]; // folders outside the worktree a person approved this job's agents to read
   }) {}
 
@@ -61,7 +61,7 @@ export class AgentRunner {
     const skills = this.d.skills?.(step.projectId) ?? [];
     const skillBlock = skillsPromptBlock(skills);
     if (skills.length && step.jobId) {
-      db.insert(decisions).values({ jobId: step.jobId, kind: "agent.skills", decision: `${step.role} runs with skills: ${skills.map((s) => s.name).join(", ")}`, rationale: "configured in projects.yaml / the profile settings (operator-trusted)", actor: "factory" }).run();
+      db.insert(decisions).values({ jobId: step.jobId, kind: "agent.skills", decision: `${step.role} runs with skills: ${skills.map((s) => s.name).join(", ")}`, rationale: skills.some((s) => s.fromRepo) ? "configured in projects.yaml / the profile settings (operator-trusted) and the repository's .software-factory.yml (read from the committed default branch)" : "configured in projects.yaml / the profile settings (operator-trusted)", actor: "factory" }).run();
     }
     const logFile = join(this.d.logDir, step.jobId ?? "_unattached", `${Date.now()}-${step.role}.log`);
     const grants = step.jobId ? (this.d.readGrants?.(step.jobId) ?? []) : [];
