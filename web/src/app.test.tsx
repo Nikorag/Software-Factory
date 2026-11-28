@@ -887,6 +887,44 @@ describe("settings and setup", () => {
     await waitFor(() => expect(calls.some((c) => c.url === "/api/jira/status?tracker=work-jira")).toBe(true));
     expect(calls.some((c) => c.url === "/api/jira/status")).toBe(false);                           // the built-in Jira was not asked
   });
+  const builtinList = { default: "linear", trackers: [entry("linear", "linear", "Linear", { connected: true }), entry("jira", "jira", "Jira"), entry("github", "github", "GitHub Issues")] };
+  const ghMap = { statusPrefix: "status: ", statuses: { readyForSpecification: "status: Ready for specification", done: "status: Done" }, labels: { enabled: "factory" }, account: null };
+  const ghRoutes = () => ({ ...jiraRoutes(), "/api/setup": setupInfo, "/api/trackers": builtinList, "/api/github-issues/whoami": { name: "octo" }, "/api/github-issues/mapping": ghMap, "/api/setup/github": { accounts: [], defaultAccount: null }, "/api/setup/linear?tracker=github": { teams: [] } });
+  it("with only the built-in connections, a non-default GitHub Issues can be chosen for setup, and its mapping loads and saves against the built-in connection", async () => {
+    routes = ghRoutes();
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    const pick = await screen.findByRole("combobox", { name: "Tracker connection to set up" });
+    expect(within(pick).getByRole("option", { name: "GitHub Issues" })).toBeInTheDocument();
+    expect(within(pick).getByRole("option", { name: "Linear (default)" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Status label prefix")).toBeNull();                              // the default (Linear) panel shows first
+    await userEvent.selectOptions(pick, "github");
+    expect(await screen.findByLabelText("Status label prefix")).toHaveValue("status: ");
+    expect(screen.getByRole("group", { name: "Status names" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Label names" })).toBeInTheDocument();
+    expect(calls.some((c) => c.url === "/api/github-issues/mapping")).toBe(true);                   // built-in id: no tracker param
+    expect(calls.some((c) => c.url.startsWith("/api/github-issues/mapping?"))).toBe(false);
+    await userEvent.type(screen.getByLabelText("Status label prefix"), "x");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT" && c.url === "/api/github-issues/mapping")).toBeTruthy());
+    expect(JSON.parse(calls.find((c) => c.method === "PUT" && c.url === "/api/github-issues/mapping")!.body!)).toMatchObject({ statusPrefix: "status: x" });
+  });
+  it("choosing another built-in connection to set up leaves the default alone and asks for no confirmation; a built-in Jira is reachable the same way", async () => {
+    routes = ghRoutes();
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    const pick = await screen.findByRole("combobox", { name: "Tracker connection to set up" });
+    await userEvent.selectOptions(pick, "github");
+    expect(await screen.findByLabelText("Status label prefix")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Linear" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "GitHub Issues" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByText(/^Switch this profile to/)).toBeNull();
+    expect(calls.some((c) => c.url === "/api/settings/tracker")).toBe(false);
+    await userEvent.selectOptions(pick, "jira");
+    expect(await screen.findByText(/Your Atlassian OAuth app/)).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Linear" })).toHaveAttribute("aria-checked", "true");
+    expect(calls.some((c) => c.url === "/api/settings/tracker")).toBe(false);
+  });
   it("adds a tracker connection: a named second Jira (or Linear, or GitHub) with its own id", async () => {
     routes = { ...jiraRoutes(), "/api/setup": setupInfo, "/api/trackers": trackerList };
     app("/settings");
