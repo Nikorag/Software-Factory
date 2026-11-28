@@ -49,7 +49,7 @@ export interface Feedback {
 }
 export interface Project {
   host?: "github" | "bitbucket"; bitbucketRepo?: string | null; bitbucketCredential?: string;
-  id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; specKit?: boolean; allowLoopback?: boolean; agentBashAllow?: string[]; gates?: string[]; overrides: { maxImplementationPasses?: number; pickupMode?: "automatic" | "manual"; maxConcurrentJobs?: number; maxRemediationAttempts?: number; agentAccess?: "restricted" | "unrestricted"; models?: Partial<import("./tasks").Routes> } | null;
+  id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; specKit?: boolean; allowLoopback?: boolean; agentBashAllow?: string[]; gates?: string[]; overrides: { maxImplementationPasses?: number; pickupMode?: "automatic" | "manual"; maxConcurrentJobs?: number; maxRemediationAttempts?: number; agentAccess?: "restricted" | "unrestricted"; mcpServers?: string[]; models?: Partial<import("./tasks").Routes> } | null;
   tracker?: string | null; linear: { teamKey: string; projectName?: string; projectId?: string } | null; commands: Record<string, string | undefined>;
   validation: { ok: boolean; protection: string; findings: string[] } | null; activeJobs: number;
   onboarding?: { status: "ready" | "in-progress" | "not-started"; steps: { id: string; label: string; ok: boolean; detail: string }[] };
@@ -74,4 +74,5 @@ export interface JiraStatus { tracker: "linear" | "jira" | "github"; clientId: s
 export interface JiraMetadata { projects: { key: string; name: string }[]; project: string | null; statuses: string[]; labels: string[] }
 export interface JiraMapping { statuses: Record<string, string>; labels: Record<string, string>; required: { statuses: string[]; labels: string[]; automaticStatus: string; automaticLabel: string } }
 export interface JiraCheck { ok: boolean; projects: { projectId: string; jiraProject: string; found: boolean; missing: string[] }[] }
+export interface McpServerView { name: string; type: "stdio" | "http" | "sse"; command?: string; args: string[]; url?: string; env: string[]; secrets: { name: string; set: boolean }[]; usedBy: string[]; isDefault: boolean }
 export interface BitbucketCredential { name: string; kind: "access-token" | "api-token"; email: string | null; hasToken: boolean; usedBy: string[] }

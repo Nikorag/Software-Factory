@@ -49,7 +49,15 @@ export function readRules(paths: string[]): string[] {
   return [...new Set(paths.flatMap(forms))].map((p) => `Read(//${p.replace(/^\/+/, "")})`);
 }
 
-export function toolPolicy(profile: PermissionProfile, opts: { protectedPaths?: string[]; bashAllow?: string[]; roots?: string[]; readPaths?: string[] } = {}): ToolPolicy {
+/** All tools of the MCP servers a run was given: `mcp__<server>__*`. Only ever for configured servers; never a bare Read/Write/Edit. */
+export const mcpRules = (servers: string[] = []): string[] => servers.map((s) => `mcp__${s}__*`);
+
+export function toolPolicy(profile: PermissionProfile, opts: { protectedPaths?: string[]; bashAllow?: string[]; roots?: string[]; readPaths?: string[]; mcpServers?: string[] } = {}): ToolPolicy {
+  const p = basePolicy(profile, opts);
+  return { ...p, allow: [...p.allow, ...mcpRules(opts.mcpServers)] };
+}
+
+function basePolicy(profile: PermissionProfile, opts: { protectedPaths?: string[]; bashAllow?: string[]; roots?: string[]; readPaths?: string[] }): ToolPolicy {
   const protectedPaths = opts.protectedPaths ?? [];
   const roots = opts.roots ?? [];
   const readOnly = [...GIT_READ.map(bash), ...readRules(opts.readPaths ?? [])]; // file reads are allowed by default, confined to the worktree (plus approved folders)

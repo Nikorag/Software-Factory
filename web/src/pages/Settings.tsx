@@ -14,6 +14,7 @@ import { UpdateCheck } from "@/components/UpdateCheck";
 import { HubSetup } from "@/components/HubSetup";
 import { AdvancedSettings } from "@/components/AdvancedSettings";
 import { BitbucketSetup } from "@/components/BitbucketSetup";
+import { McpSetup } from "@/components/McpSetup";
 import { ProjectEditor } from "@/components/ProjectEditor";
 import { api, inHubMode } from "@/lib/api";
 import { WorkflowSettings } from "@/pages/WorkflowSettings";
@@ -105,6 +106,7 @@ export function Settings() {
       <TabsContent value="integrations" className="grid gap-4 max-md:grid-cols-[minmax(0,1fr)] max-md:[&_.grid]:grid-cols-[minmax(0,1fr)]">
         <Card><CardHeader><CardTitle className="text-sm">Status</CardTitle></CardHeader><CardContent><Checks /></CardContent></Card>
         <Card><CardHeader><CardTitle className="text-sm">Bitbucket</CardTitle></CardHeader><CardContent><BitbucketSetup /></CardContent></Card>
+        <Card><CardHeader><CardTitle className="text-sm">MCP servers</CardTitle></CardHeader><CardContent><McpSetup /></CardContent></Card>
         <Card><CardHeader><CardTitle className="text-sm">Issue tracker</CardTitle></CardHeader><CardContent><TrackerSetup info={info} onChanged={() => void reloadInfo()} onKey={() => void reloadInfo()} onTeams={setTeams} /></CardContent></Card>
       </TabsContent>
       <TabsContent value="profiles" className="max-md:[&_.grid]:grid-cols-[minmax(0,1fr)]"><ProfilesSettings /></TabsContent>

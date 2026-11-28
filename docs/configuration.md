@@ -6,3 +6,20 @@ Useful keys: `workflow.planning_mode` (`haiku_prompt`, the default, or `speckit`
 
 `factory.hub` (`enabled`, `url`, `reportIntervalSeconds`, `remoteAccess`) is **off by default** and is managed by `factory hub connect` / `disconnect` / `remote-access`: it reports job progress (metadata only) to a central hub, and `remoteAccess` (a separate, also-off switch) lets the hub's web dashboard operate this factory through a default-deny route policy. The API key is never in a config file. See [Hub client](hub-client.md).
 
+## MCP servers (off unless configured)
+`factory.yaml` defines the MCP servers the profile's agents may use; nothing is available otherwise.
+```yaml
+mcp:
+  keychainService: software-factory-mcp   # a new profile gets software-factory-mcp-<name>
+  defaultServers: [github]                # what every project gets unless it selects its own
+  servers:
+    - name: github                        # letters, numbers, hyphens: tools become mcp__github__<tool>
+      command: npx                        # stdio server: command + args; env lists variable NAMES only
+      args: ["-y", "some-mcp-server"]
+      env: [GITHUB_TOKEN]
+    - name: docs                          # or type: http / sse with a url (headers may use ${VAR} for a name in env)
+      type: http
+      url: https://mcp.example.com/mcp
+```
+A project selects servers in `projects.yaml` with `overrides: { mcpServers: [docs] }`; that beats `defaultServers` (`[]` = none for that project), and leaving it out follows the profile. Secret values are entered in **Settings → Integrations → MCP servers** (or `PUT /api/mcp/servers/<name>` with `secrets`), stored in the profile's keychain service, and never written to a config file; config rejects a server with no name, no command/url, or an inline secret. Servers can only be defined here: a repository's `.software-factory.yml` cannot define or select them, because a server is an arbitrary command. Only Claude Code runs get MCP; the `local` provider gets none.
+

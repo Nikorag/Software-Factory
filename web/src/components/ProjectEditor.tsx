@@ -75,7 +75,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         ? { bitbucket: { repo: f.bbRepo.trim() || undefined, credential: f.bbCred }, ...(f.source === "path" ? { repository: f.path.trim() } : {}) }
         : f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
       allowLoopback: f.loopback, gates: f.gatePrompt ? ["REQUIREMENTS_ANALYSIS"] : [], specKit: f.specKit, agentBashAllow: f.bashAllow.split("\n").map((l) => l.trim()).filter(Boolean),
-      overrides: { maxImplementationPasses: f.passes ? Number(f.passes) : undefined, pickupMode: f.pickup || undefined, agentAccess: (f.access || undefined) as "restricted" | "unrestricted" | undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models },
+      overrides: { maxImplementationPasses: f.passes ? Number(f.passes) : undefined, pickupMode: f.pickup || undefined, agentAccess: (f.access || undefined) as "restricted" | "unrestricted" | undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models, mcpServers: project?.overrides?.mcpServers /* chosen in projects.yaml: a save here must not drop it */ },
       ...(f.team ? { linear: { teamKey: f.team, projectName: f.lproject || undefined, projectId: f.lprojectId.trim() || undefined } } : {}),
     });
     setBusy(false);
