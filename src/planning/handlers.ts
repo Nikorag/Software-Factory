@@ -1,5 +1,6 @@
 import type { StageHandler } from "../core/engine.js";
 import { createStageKit, type StageKitDeps } from "../app/stage-kit.js";
+import { withCommentary } from "../agents/commentary.js";
 import { gateNotes } from "../core/gates.js";
 import { criteriaFrom, ImplementationPlan } from "./plan.js";
 
@@ -27,7 +28,7 @@ export function createPromptHandlers(d: StageKitDeps) {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
     const project = d.project(ctx.job.projectId);
-    const r = await agent(ctx, { task: "prompt_generation", role: "prompt-writer", prompt: promptWriterPrompt(p.ticket, project.commands, gateNotes(d.db, ctx.job.id, "REQUIREMENTS_ANALYSIS")), cwd: p.cwd, schema: ImplementationPlan, timeoutMs: 10 * MIN });
+    const r = await agent(ctx, { task: "prompt_generation", role: "prompt-writer", prompt: promptWriterPrompt(p.ticket, project.commands, gateNotes(d.db, ctx.job.id, "REQUIREMENTS_ANALYSIS")), cwd: p.cwd, schema: ImplementationPlan, timeoutMs: 10 * MIN, lessons: "spec-writer" });
     if (!r.ok) return r.stop;
     const plan = r.data!;
     if (plan.verdict === "needs_clarification") {
@@ -40,5 +41,5 @@ export function createPromptHandlers(d: StageKitDeps) {
     return { kind: "ok", output: { plan: { prompt: plan.prompt.slice(0, MAX_PROMPT), criteria }, branch: p.info.branch } };
   };
 
-  return { REQUIREMENTS_ANALYSIS: requirementsAnalysis };
+  return withCommentary({ REQUIREMENTS_ANALYSIS: requirementsAnalysis });
 }

@@ -9,6 +9,7 @@
 #     defaultBranch: main
 #     autonomy: supervised            # supervised | full | off   (raise to full only after validation passes cleanly)
 #     commands: { install: "npm ci", typecheck: "npx tsc --noEmit", lint: "npm run lint", test: "npm test" }
+#     # Optional browser checks, run after test: visual: "pnpm exec playwright test" (needs allowLoopback: true for a webServer on 127.0.0.1)
 #     github: { account: my-github-user, repo: my-github-user/my-app }   # the factory clones this itself
 #     linear: { teamKey: ENG, projectName: "My App" }
 #

@@ -188,3 +188,25 @@ describe("sandbox policy", () => {
     expect(tailOf("short", 100)).toBe("short");
   });
 });
+
+describe("visual check network policy (injected runner, no real sandbox or browser)", () => {
+  const profileOf = async (loopback?: boolean) => {
+    const dir = scratch();
+    let args: string[] = [];
+    const r = await runProjectCommand(
+      { kind: "visual", command: "pnpm exec playwright test", worktree: dir, timeoutMs: 1000, profileDir: join(dir, "p"), sandbox: { home: dir, ...(loopback === undefined ? {} : { loopback }) } },
+      { available: () => true, run: async (o) => { args = o.args; return { stdout: "", stderr: "", exitCode: 0, timedOut: false, cancelled: false, durationMs: 1 } as never; } },
+    );
+    expect(r).toMatchObject({ kind: "visual", ok: true });
+    expect(args.slice(-3)).toEqual(["/bin/sh", "-c", "pnpm exec playwright test"]);
+    return readFileSync(join(dir, "p", "sandbox-visual.sb"), "utf8");
+  };
+  it("denies all network by default and allows loopback only when the project opts in, never external", async () => {
+    const off = await profileOf();
+    expect(off).toContain("(deny network*)");
+    expect(off).not.toContain("localhost:*");
+    const on = await profileOf(true);
+    expect(on).toContain("(deny network*)");
+    expect(on).toContain('(allow network-outbound (remote ip "localhost:*"))');
+  });
+});

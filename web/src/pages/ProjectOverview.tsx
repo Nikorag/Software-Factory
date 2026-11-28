@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { LessonsPanel } from "@/components/LessonsPanel";
 import { useOverview } from "@/pages/Overview";
 import { ConnectionBanner, useOffline } from "@/components/ConnectionBanner";
 import { usePoll } from "@/hooks/usePoll";
@@ -26,6 +28,7 @@ export function ProjectOverview() {
   const { data: board, error, updatedAt, reload: reloadBoard } = usePoll((signal) => api<Board>(`/api/board?project=${encodeURIComponent(projectId)}`, signal), 20_000, [projectId]);
   const offline = useOffline() || error !== null;
   const [busy, setBusy] = useState<string | null>(null), [msg, setMsg] = useState<string | null>(null);
+  const [tab, setTab] = useState("overview");
   if (!o) return <Skeleton className="h-64 w-full" />;
   const p = projData?.projects.find((x) => x.id === projectId);
   const name = p?.name ?? projectId;
@@ -60,6 +63,10 @@ export function ProjectOverview() {
           <Button size="sm" asChild><Link to="/board">Start a ticket</Link></Button>
         </div>
       </div>
+      <Tabs value={tab} onValueChange={setTab} className="gap-4">
+      <TabsList variant="line" aria-label="Project sections"><TabsTrigger value="overview">Overview</TabsTrigger><TabsTrigger value="lessons">Lessons</TabsTrigger></TabsList>
+      <TabsContent value="lessons"><LessonsPanel projectId={projectId} /></TabsContent>
+      <TabsContent value="overview" className="grid min-w-0 gap-4 [&>*]:min-w-0">
       <ConnectionBanner error={error} updatedAt={updatedAt} what="board" />
       {msg ? <div role="status" className="rounded-lg border bg-card px-3 py-2 text-sm">{msg}</div> : null}
 
@@ -109,6 +116,8 @@ export function ProjectOverview() {
           {finished.length === 0 ? <div className="border-t border-line px-4 py-4 text-[13px] text-muted-foreground">Nothing has finished yet.</div> : null}
         </section>
       </div>
+      </TabsContent>
+      </Tabs>
     </div>
   );
 }

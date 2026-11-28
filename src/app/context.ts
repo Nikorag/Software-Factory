@@ -9,6 +9,7 @@ import { ModelRouter } from "../agents/router.js";
 import { AgentRunner } from "../agents/runner.js";
 import { readLimits, usageFile } from "../agents/usage.js";
 import { ConfigError } from "../config/load.js";
+import { effectiveSkills } from "../config/skills.js";
 import { effectiveProtectedPaths, planningModeOf, type LoadedConfig, type ProjectConfig } from "../config/schema.js";
 import { openDb, type DbHandle } from "../db/client.js";
 import { Engine, type HandlerRegistry } from "../core/engine.js";
@@ -17,6 +18,8 @@ import { trackerSet, type TrackerSet } from "../tracker/index.js";
 import { createIntakeHandlers } from "../linear/handlers.js";
 import { createLinearReporter } from "../linear/reporter.js";
 import { createLogger } from "../logging/logger.js";
+import { distillJob } from "../lessons/distill.js";
+import { retireExpiredLessons } from "../lessons/store.js";
 import { createHosts, type Hosts } from "../host/index.js";
 import { syncProjects } from "../repo/registry.js";
 import { WorktreeManager } from "../repo/worktrees.js";
@@ -67,6 +70,8 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
   const runner = new AgentRunner({ db: handle.db, router, logDir: join(dataDir, "logs", "agents"), protectedPaths: protectedPathsOf(config), usageFile: usageFile(dataDir),
     access: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess,
     projectBashAllow: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAllow ?? [],
+    projectBashAny: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAny ?? false,
+    skills: (id) => { const p = config.projects.projects.find((x) => x.id === id); return effectiveSkills(config.factory.skills, p?.skills, p?.repoSkills); },
     readGrants: (jobId) => readGrants(handle.db, jobId),
     mcp: (id) => resolveMcp(config, id, (opts.mcpStore ?? (mcpStoreCache ??= mcpStore(config.factory.mcp.keychainService)))), // the keychain is only touched when a server is selected
   });
@@ -89,7 +94,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     ...specHandlers,
     ...createImplementationHandlers({
       db: handle.db, runner, router, worktrees, linear, project, fallback: config.models.independentReviewFallback, logger,
-      dataDir, runCommand: opts.runCommand, planningMode, github: (p) => opts.github ?? hosts.pr(p), fetchEnv: (p) => hosts.gitAuth(p), maxConflictResolutions: () => config.factory.workflow.max_conflict_resolutions, agentAccess: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess, maxPasses: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.maxImplementationPasses ?? config.factory.maxImplementationPasses, settings: { protectedPaths: protectedPathsOf(config), commandTimeoutSeconds: config.factory.commandTimeoutSeconds, sandbox: config.factory.sandbox },
+      dataDir, runCommand: opts.runCommand, planningMode, github: (p) => opts.github ?? hosts.pr(p), fetchEnv: (p) => hosts.gitAuth(p), maxConflictResolutions: () => config.factory.workflow.max_conflict_resolutions, agentAccess: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess, agentBashAny: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAny ?? false, maxPasses: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.maxImplementationPasses ?? config.factory.maxImplementationPasses, settings: { protectedPaths: protectedPathsOf(config), commandTimeoutSeconds: config.factory.commandTimeoutSeconds, sandbox: config.factory.sandbox },
     }),
     // PR-only delivery: push + open the PR, watch CI, report readiness, wait for a human to merge. The factory never merges.
     ...createDeliveryHandlers({
@@ -97,6 +102,6 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
       github: (p) => opts.github ?? hosts.pr(p), hosts, maxConflictResolutions: () => config.factory.workflow.max_conflict_resolutions, timing: opts.delivery, now: opts.deliveryNow, push: opts.push,
     }),
   };
-  const engine = new Engine({ db: handle.db, logger, config, handlers, claudeLimits: () => readLimits(usageFile(dataDir)), observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun, planningMode }) });
+  const engine = new Engine({ db: handle.db, logger, config, handlers, onCompleted: async (job) => { await distillJob(handle.db, job.id); retireExpiredLessons(handle.db, job.projectId); }, claudeLimits: () => readLimits(usageFile(dataDir)), observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun, planningMode }) });
   return { config, handle, logger, router, runner, worktrees, linear, trackers, project, handlers, engine, hosts };
 }

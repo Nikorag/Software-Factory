@@ -2,30 +2,61 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { addedLines, changedFiles, codeDiff } from "../src/implement/diff.js";
+import { addedLines, addedLinesByFile, changedFiles, codeDiff } from "../src/implement/diff.js";
 import { buildReport, isSecuritySensitive } from "../src/implement/handlers.js";
 import { extractCriteria, implementPrompt, implRemediationPrompt } from "../src/implement/prompts.js";
 import { historyText, HUMAN_ONLY_REASON, isDeferrable, openTasks, sameFinding } from "../src/implement/history.js";
 import { humanItems } from "../src/delivery/handlers.js";
-import { scanForSecrets } from "../src/implement/secrets.js";
+import { isTestFile, scanForSecrets, scanHistoryForSecrets } from "../src/implement/secrets.js";
 import { writeExecWrapper } from "../src/exec/factory-exec.js";
 import { sandboxAvailable } from "../src/exec/sandbox.js";
 import { fixture } from "./helpers/scripted-agent.js";
 import { makeRepo, sh, tmp } from "./helpers/git-fixture.js";
 
 describe("scanForSecrets", () => {
+  // Built at runtime so this file's own lines never match the scanner (a literal key here would stop any job that edits it).
+  const AWS_KEY = "AKIA" + "Q".repeat(16);
+  const AWS_DOC_KEY = "AKIAIOSFODNN7" + "EXAMPLE";
   const hit = (s: string) => scanForSecrets([s]).map((h) => h.rule);
   it.each([
-    ["-----BEGIN RSA PRIVATE KEY-----", "private-key"], ["const k = 'AKIAIOSFODNN7EXAMPLE'", "aws-access-key"],
+    ["-----BEGIN RSA PRIVATE KEY-----", "private-key"], [`const k = '${AWS_KEY}'`, "aws-access-key"],
     ["token: ghp_" + "a".repeat(36), "github-token"], ["x = 'lin_api_" + "A".repeat(30) + "'", "linear-api-key"], ["k='sk-ant-api03-" + "z".repeat(40) + "'", "anthropic-key"],
     ["password = \"hunter2hunter2hunter2\"", "credential-assignment"], ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop", "jwt"],
   ])("flags %j", (line, rule) => expect(hit(line)).toEqual([rule]));
   it("ignores placeholders, docs and ordinary code", () => {
     for (const l of ["const apiKey = process.env.API_KEY;", "password = \"<your-password-here>\"", "token: 'changeme-changeme-123456'", "// set LINEAR_API_KEY in your environment", "const total = a + b;"]) expect(hit(l)).toEqual([]);
   });
+  it("ignores the access keys AWS publishes in its documentation, but nothing else that looks like one", () => {
+    for (const k of [AWS_DOC_KEY, "AKIAI44QH8DHB" + "EXAMPLE", "ASIAIOSFODNN7" + "EXAMPLE"]) expect(hit(`const KEY = "${k}";`)).toEqual([]);
+    expect(hit(`const KEY = "${AWS_KEY}";`)).toEqual(["aws-access-key"]);
+    expect(hit("const KEY = 'AKIAIOSFODNN7" + "EXAMPLF';")).toEqual(["aws-access-key"]); // one character off the documented key
+    expect(hit("const KEY = 'ASIAI44QH8DHB" + "EXAMPLE';")).toEqual(["aws-access-key"]); // not a documented pairing
+  });
   it("never echoes the secret itself", () => {
-    const [h] = scanForSecrets(["AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'"]);
-    expect(JSON.stringify(h)).not.toContain("IOSFODNN7");
+    const [h] = scanForSecrets([`AWS_KEY = '${AWS_KEY}'`]);
+    expect(JSON.stringify(h)).not.toContain(AWS_KEY.slice(6));
+  });
+});
+
+describe("scanHistoryForSecrets: test files and the generic credential heuristic", () => {
+  const FIXTURE = 'const SECRET = "s3cr3t-value-' + '123";';
+  const added = (file: string, line: string) => [{ file, line }];
+  it("recognises test files", () => {
+    for (const f of ["tests/mcp.test.ts", "src/a/b.spec.js", "web/src/lib/x.test.tsx", "test/due.test.js", "pkg/__tests__/x.ts", "tests/helpers/fixture.ts"]) expect(isTestFile(f), f).toBe(true);
+    for (const f of ["src/config.ts", "src/latest/config.ts", "docs/testing.md", "src/contest.ts", ""]) expect(isTestFile(f), f).toBe(false);
+  });
+  it("lets a made-up credential in a test file through, but flags the same line anywhere else", () => {
+    expect(scanHistoryForSecrets(added("tests/mcp.test.ts", FIXTURE))).toEqual([]);
+    expect(scanHistoryForSecrets(added("src/config.ts", FIXTURE)).map((h) => h.rule)).toEqual(["credential-assignment"]);
+    expect(scanHistoryForSecrets(added("", FIXTURE)).map((h) => h.rule)).toEqual(["credential-assignment"]); // unknown file: not exempt
+  });
+  it("still flags real token formats in test files", () => {
+    for (const [line, rule] of [["const k = 'AKIA" + "Q".repeat(16) + "'", "aws-access-key"], ["t = 'ghp_" + "a".repeat(36) + "'", "github-token"], ["-----BEGIN RSA PRIVATE KEY-----", "private-key"]] as const)
+      expect(scanHistoryForSecrets(added("tests/x.test.ts", line)).map((h) => h.rule)).toEqual([rule]);
+  });
+  it("attributes added lines to their files", () => {
+    const diff = "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@\n+one\n-gone\n+two\ndiff --git a/t/x.test.ts b/t/x.test.ts\n--- /dev/null\n+++ b/t/x.test.ts\n@@\n+three\n";
+    expect(addedLinesByFile(diff)).toEqual([{ file: "a.ts", line: "one" }, { file: "a.ts", line: "two" }, { file: "t/x.test.ts", line: "three" }]);
   });
 });
 
@@ -96,14 +127,39 @@ describe.skipIf(!sandboxAvailable())("factory-exec wrapper: the only way an agen
     expect(run(wrapper, "rm -rf /").status).toBe(64);
     expect(run(wrapper, "echo pwned > " + join(wt, "pwn.txt")).status).toBe(64);
     expect(run(wrapper, "typecheck").status).toBe(65);
+    expect(run(wrapper, "visual").status).toBe(65); // known kind, not configured
+    expect(run(wrapper, "bogus").stderr).toContain("allowed: test, lint, typecheck, build, install, visual");
     expect(() => readFileSync(join(wt, "pwn.txt"))).toThrow();
     expect(run(wrapper).status).toBe(64);
+  });
+  it("runs a configured visual check sandboxed and reports its result", () => {
+    const wt = realpathSync(tmp()); const dir = realpathSync(tmp());
+    const wrapper = writeExecWrapper(dir, { worktree: wt, profileDir: join(dir, "p"), timeoutMs: 20_000, commands: { visual: "echo RAN-VISUAL" } });
+    const r = run(wrapper, "visual");
+    expect(r.status).toBe(0); expect(r.stdout).toContain("RAN-VISUAL"); expect(r.stdout).toMatch(/visual: PASSED.*sandboxed, no network/);
   });
   it("the wrapper and its spec live outside the worktree and are not world-writable", () => {
     const { wrapper, dir } = setup();
     expect(wrapper.startsWith(dir)).toBe(true);
     expect(execFileSync("stat", ["-f", "%Lp", wrapper], { encoding: "utf8" }).trim()).toBe("700");
     expect(execFileSync("stat", ["-f", "%Lp", join(dir, "exec-spec.json")], { encoding: "utf8" }).trim()).toBe("600");
+  });
+});
+
+describe("visual check in the implementer prompts", () => {
+  const base = { featureDir: "specs/x", wrapper: "/w/factory-exec", pass: 1 };
+  it("keeps the defer-all-visual wording without a visual check, and changes it only with one", () => {
+    const without = implementPrompt({ ...base, checks: ["test"] });
+    const withV = implementPrompt({ ...base, checks: ["test", "visual"] });
+    expect(without).toContain("manual or visual testing");
+    expect(without).not.toContain("`visual` check");
+    expect(withV).not.toContain("manual or visual testing");
+    expect(withV).toContain("`/w/factory-exec visual`");
+    expect(withV).toContain("Defer only what a person must judge");
+    expect(withV).toContain("real devices"); // the rest of the rule stays
+    const rem = (checks: string[]) => implRemediationPrompt({ wrapper: "/w/factory-exec", checks, findings: [] });
+    expect(rem(["test"])).toContain("manual or visual testing");
+    expect(rem(["test", "visual"])).toContain("Defer only what a person must judge");
   });
 });
 
@@ -158,6 +214,17 @@ describe("human deferral and fix-cycle memory (pure helpers)", () => {
 
 describe("prompts follow the project's agent access", () => {
   const r = { featureDir: "specs/x", wrapper: "/w/exec", checks: ["test"], findings: [{ id: "check:test" }] };
+  it("bashAny drops the 'other code-running commands are refused' limit; off keeps it", () => {
+    const o = { featureDir: "specs/x", wrapper: "/w/exec", checks: ["test"], pass: 1 };
+    expect(implRemediationPrompt(r)).toMatch(/other code-running commands are refused/);
+    expect(implRemediationPrompt({ ...r, bashAny: false })).toMatch(/other code-running commands are refused/);
+    const a = implRemediationPrompt({ ...r, bashAny: true });
+    expect(a).not.toMatch(/other code-running commands are refused/);
+    expect(a).not.toMatch(/unrestricted access/);
+    expect(a).toMatch(/still refused/);
+    expect(implementPrompt(o)).toMatch(/they are refused/);
+    expect(implementPrompt({ ...o, bashAny: true })).not.toMatch(/they are refused/);
+  });
   it("restricted: only the check tool; unrestricted: free to run tools, and told old 'cannot run' conclusions no longer hold", () => {
     expect(implRemediationPrompt(r)).toMatch(/check tool only/);
     expect(implRemediationPrompt(r)).not.toMatch(/unrestricted access/);

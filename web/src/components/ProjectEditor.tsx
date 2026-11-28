@@ -7,28 +7,29 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { bashAnyPayload, showsBashAny } from "@/lib/projects";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { api, send } from "@/lib/api";
 import { usePoll } from "@/hooks/usePoll";
 import { BUILTIN_ENTRIES, WORDS, withTracker } from "@/lib/trackers";
-import type { GhAccounts } from "@/lib/types";
+import { skillsFromText, skillsToText, type GhAccounts } from "@/lib/types";
 import type { BitbucketCredential, Project, TeamAudit, TrackerEntry } from "@/lib/types";
 import { DEFAULT_PROMPT_ROUTE, TASKS, type GlobalSettings, type Routes, type RouteCfg, type TaskId } from "@/lib/tasks";
 import { ModelPicker, ReviewerPicker } from "./ModelPicker";
 import { startAction, TaskOutput } from "./TaskRunner";
 
-const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
+const CMDS = ["install", "build", "typecheck", "lint", "test", "visual"] as const;
 /** Repos, paths, branches and commands: no capital letter or "correction" from a phone keyboard. */
 const CODE = { autoCapitalize: "off", autoCorrect: "off", spellCheck: false } as const;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-export interface Form { mcp: string[] | null; passes: string; host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; access: string; loopback: boolean; gatePrompt: boolean; specKit: boolean; bashAllow: string; lprojectId: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; tracker: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
-const blank = (): Form => ({ mcp: null, passes: "", host: "github", bbRepo: "", bbCred: "default", pickup: "", access: "", loopback: false, gatePrompt: false, specKit: true, bashAllow: "", lprojectId: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", tracker: "", team: "", lproject: "", enabled: true, commands: {} });
+export interface Form { mcp: string[] | null; passes: string; host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; access: string; loopback: boolean; gatePrompt: boolean; specKit: boolean; bashAllow: string; bashAny: boolean; skills: string; lprojectId: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; tracker: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
+const blank = (): Form => ({ mcp: null, passes: "", host: "github", bbRepo: "", bbCred: "default", pickup: "", access: "", loopback: false, gatePrompt: false, specKit: true, bashAllow: "", bashAny: false, skills: "", lprojectId: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", tracker: "", team: "", lproject: "", enabled: true, commands: {} });
 const fromProject = (p: Project): Form => ({
   mcp: p.overrides?.mcpServers ? [...p.overrides.mcpServers] : null, // null = follow the profile default
   host: p.host ?? "github", bbRepo: p.bitbucketRepo ?? "", bbCred: p.bitbucketCredential ?? "default",
   passes: p.overrides?.maxImplementationPasses?.toString() ?? "",
-  pickup: p.overrides?.pickupMode ?? "", access: p.overrides?.agentAccess ?? "", loopback: p.allowLoopback ?? false, gatePrompt: (p.gates ?? []).includes("REQUIREMENTS_ANALYSIS"), specKit: p.specKit ?? true, bashAllow: (p.agentBashAllow ?? []).join("\n"), lprojectId: p.linear?.projectId ?? "", conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
+  pickup: p.overrides?.pickupMode ?? "", access: p.overrides?.agentAccess ?? "", loopback: p.allowLoopback ?? false, gatePrompt: (p.gates ?? []).includes("REQUIREMENTS_ANALYSIS"), specKit: p.specKit ?? true, bashAllow: (p.agentBashAllow ?? []).join("\n"), bashAny: p.agentBashAny ?? false, skills: skillsToText(p.skills), lprojectId: p.linear?.projectId ?? "", conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
   id: p.id, name: p.name, source: p.managed ? "github" : "path", repo: p.githubRepo ?? "", path: p.managed ? "" : p.repository, account: p.githubAccount ?? "", branch: p.defaultBranch, autonomy: p.autonomy,
   tracker: p.tracker ?? "", team: p.linear?.teamKey ?? "", lproject: p.linear?.projectName ?? "", enabled: p.enabled, commands: Object.fromEntries(CMDS.map((k) => [k, p.commands[k] ?? ""])),
 });
@@ -77,7 +78,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
       ...(f.host === "bitbucket"
         ? { bitbucket: { repo: f.bbRepo.trim() || undefined, credential: f.bbCred }, ...(f.source === "path" ? { repository: f.path.trim() } : {}) }
         : f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
-      allowLoopback: f.loopback, gates: f.gatePrompt ? ["REQUIREMENTS_ANALYSIS"] : [], specKit: f.specKit, agentBashAllow: f.bashAllow.split("\n").map((l) => l.trim()).filter(Boolean),
+      allowLoopback: f.loopback, gates: f.gatePrompt ? ["REQUIREMENTS_ANALYSIS"] : [], specKit: f.specKit, agentBashAny: bashAnyPayload(f), agentBashAllow: f.bashAllow.split("\n").map((l) => l.trim()).filter(Boolean), skills: skillsFromText(f.skills),
       overrides: { maxImplementationPasses: f.passes ? Number(f.passes) : undefined, pickupMode: f.pickup || undefined, agentAccess: (f.access || undefined) as "restricted" | "unrestricted" | undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models, mcpServers: f.mcp ?? undefined /* null = follow the profile: left out; [] = none */ },
       ...(f.team ? { linear: { teamKey: f.team, projectName: f.lproject || undefined, projectId: f.lprojectId.trim() || undefined } } : {}),
     });
@@ -195,12 +196,16 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
       </Section>
       <Separator />
       <Section title="Commands" hint="Run by the factory in a throwaway worktree, sandboxed. A test command is required before it will implement anything: use the project's own CI as the guide, then press “Run checks” to prove they work.">
-        <div className="grid gap-3 sm:grid-cols-2">{CMDS.map((k) => <div key={k} className="grid gap-1.5"><Label htmlFor={`pe-c-${k}`} className="capitalize">{k}</Label><Input id={`pe-c-${k}`} {...CODE} className="font-mono text-xs" value={f.commands[k] ?? ""} onChange={(e) => set("commands", { ...f.commands, [k]: e.target.value })} placeholder={k === "test" ? "npm test" : ""} /></div>)}</div>
+        <div className="grid gap-3 sm:grid-cols-2">{CMDS.map((k) => <div key={k} className="grid gap-1.5"><Label htmlFor={`pe-c-${k}`} className="capitalize">{k}</Label><Input id={`pe-c-${k}`} {...CODE} className="font-mono text-xs" value={f.commands[k] ?? ""} onChange={(e) => set("commands", { ...f.commands, [k]: e.target.value })} placeholder={k === "test" ? "npm test" : k === "visual" ? "pnpm exec playwright test (optional)" : ""} /></div>)}</div>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={f.loopback} onChange={(e) => set("loopback", e.target.checked)} />
           <span>Allow local network in tests<span className="block text-xs text-muted-foreground">Lets test, lint and build commands use TCP on this machine only (e.g. tests that start an in-process database or mock server). Nothing outside this machine is reachable. Off by default.</span></span></label>
         <div className="grid gap-1.5"><Label htmlFor="pe-bash">Extra commands the agent may run</Label>
           <textarea id="pe-bash" {...CODE} rows={3} className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs" placeholder={"GOLDEN_OUT=/tmp/golden godot --headless"} value={f.bashAllow} onChange={(e) => set("bashAllow", e.target.value)} />
           <span className="text-xs text-muted-foreground">One command prefix per line. Only applies while agent access is restricted.</span></div>
+        <div className="grid gap-1.5"><Label htmlFor="pe-skills">Skills</Label>
+          <textarea id="pe-skills" {...CODE} rows={3} className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs" placeholder={"my-skill=~/skills/my-skill/SKILL.md"} value={f.skills} onChange={(e) => set("skills", e.target.value)} />
+          <span className="text-xs text-muted-foreground">One <code>name=path</code> per line; the path is a SKILL.md file or a folder containing one. Given to every agent run for this project; replaces a profile skill of the same name.</span>
+          {project?.repoSkills?.length ? <span data-testid="repo-skills" className="text-xs text-muted-foreground">From the repository's <code>.software-factory.yml</code> (read-only, committed default branch; wins over a skill above with the same name): {project.repoSkills.map((k) => `${k.name}=${k.path}`).join(", ")}</span> : null}</div>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={f.specKit} onChange={(e) => set("specKit", e.target.checked)} />
           <span>Use the SpecKit specification workflow<span className="block text-xs text-muted-foreground">On by default. Off skips spec generation for this project.</span></span></label>
         {noTest ? <p className="text-sm text-loop">No test command: the factory will not implement changes here yet.</p> : null}
@@ -216,6 +221,8 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         <div className="grid gap-1.5"><Label>Agent access</Label>
           <Select value={f.access || "__global"} onValueChange={(v) => set("access", v === "__global" ? "" : v)}><SelectTrigger aria-label="agent access" className="w-72"><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value="__global">global default (restricted)</SelectItem><SelectItem value="restricted">restricted: git and the project checks only</SelectItem><SelectItem value="unrestricted">unrestricted: Claude Code auto mode, any command</SelectItem></SelectContent></Select>
+          {showsBashAny(f.access) && <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" aria-label="allow any bash command" checked={f.bashAny} onChange={(e) => set("bashAny", e.target.checked)} />
+            <span>Allow any command except the denied list<span className="block text-xs text-muted-foreground">Warning: the implementer may run any command your user can, except the denied list (git push/remote/config, gh, curl, ssh, sudo, rm -rf, docker, ...). Shell commands can read any file your user can. Off by default.</span></span></label>}
           {f.access === "unrestricted" && <span className="text-xs text-muted-foreground">The implementer can run any command your user can. Reviewers stay read-only and the factory still checks the diff for protected paths and secrets.</span>}</div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="grid gap-1.5"><Label htmlFor="pe-conc">Concurrent jobs</Label>

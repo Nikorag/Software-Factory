@@ -17,6 +17,8 @@ import { ticketBlock } from "../speckit/prompts.js";
 import { humanQAs, type HumanAnswer } from "../core/jobs.js";
 import { recordRequests, waitingReason } from "../core/approvals.js";
 import { toJsonSchema } from "../speckit/schemas.js";
+import { commentaryOf, noteCommentary } from "../agents/commentary.js";
+import { lessonsFor, type LessonStage } from "../lessons/store.js";
 
 /** One answer, with what was asked and which stage asked it (a fresh agent never saw the question). */
 export const formatAnswer = (a: HumanAnswer, i: number): string => [
@@ -57,6 +59,8 @@ export type Prepared =
 export interface AgentCall<T extends z.ZodType> {
   task: TaskKind; role: AgentRole; prompt: string; cwd: string; schema?: T; baseRef?: string; timeoutMs: number;
   bashAllow?: string[]; resumeSessionId?: string;
+  /** Adds the project's active lessons for this kind of stage to the prompt (a `## Project lessons` section) and records their ids on the invocation. */
+  lessons?: LessonStage;
 }
 export type AgentOutcome<T extends z.ZodType> =
   | { ok: true; data: z.infer<T> | undefined; result: AgentResult & { route?: { provider: string; model: string } } }
@@ -91,8 +95,11 @@ export function createStageKit(d: StageKitDeps) {
 
   /** Runs one agent step: boundary-checked, recorded, schema-validated. Failures come back as a ready-made StageResult. */
   async function agent<T extends z.ZodType>(ctx: { job: { id: string; projectId?: string; stage?: string }; executionId: number; signal: AbortSignal }, o: AgentCall<T>): Promise<AgentOutcome<T>> {
+    // Lessons are context appended to the prompt; they are rendered fenced and never touch gates, checks or deferral rules.
+    const l = o.lessons && ctx.job.projectId ? lessonsFor(d.db, ctx.job.projectId, o.lessons) : { section: "", ids: [] };
     const result = await d.runner.run({
-      jobId: ctx.job.id, projectId: ctx.job.projectId, executionId: ctx.executionId, task: o.task, role: o.role, prompt: o.prompt, cwd: o.cwd,
+      jobId: ctx.job.id, projectId: ctx.job.projectId, executionId: ctx.executionId, task: o.task, role: o.role, prompt: l.section ? `${o.prompt}\n\n${l.section}` : o.prompt, cwd: o.cwd,
+      lessonIds: l.ids,
       timeoutMs: o.timeoutMs, signal: ctx.signal, baseRef: o.baseRef, bashAllow: o.bashAllow, resumeSessionId: o.resumeSessionId,
       jsonSchema: o.schema ? toJsonSchema(o.schema) : undefined,
     });
@@ -101,9 +108,10 @@ export function createStageKit(d: StageKitDeps) {
     const asks = recordRequests(d.db, ctx.job.id, ctx.job.stage ?? "", result.denials ?? [], o.cwd);
     if (asks.length) return { ok: false, stop: { kind: "needs_attention", reason: waitingReason(asks) } };
     if (!result.ok) return { ok: false, stop: failureToResult(result, o.role) };
-    if (!o.schema) return { ok: true, data: undefined, result };
+    if (!o.schema) { noteCommentary(ctx.executionId, commentaryOf(result)); return { ok: true, data: undefined, result }; }
     const parsed = o.schema.safeParse(result.structured);
     if (!parsed.success) return { ok: false, stop: { kind: "retry", reason: `${o.role} returned output that does not match the schema: ${parsed.error.issues[0]?.message ?? "invalid"}` } };
+    noteCommentary(ctx.executionId, commentaryOf(result, parsed.data));
     return { ok: true, data: parsed.data, result };
   }
 

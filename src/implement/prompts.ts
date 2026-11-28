@@ -15,6 +15,10 @@ export function extractCriteria(spec: string): Criterion[] {
 /** What a retried attempt must know: why the previous attempt(s) at this stage failed. */
 const failuresText = (f?: string[]) => (f?.length ? `Earlier attempts at this step failed; do not repeat what caused it:\n${f.map((x) => `- ${x}`).join("\n")}` : "");
 
+const VISUAL_NOTE = "A `visual` check (browser tests) is configured for this project: run it through the check tool and fix what it reports instead of deferring visual testing. Defer only what a person must judge, such as whether a real page looks right, or a real device.";
+/** Unchanged text unless a `visual` check is configured; then browser checks are the agent's job and only human judgement is deferred. */
+export const withVisual = (rule: string, checks: string[]) => (checks.includes("visual") ? `${rule.replace("manual or visual testing", "manual testing a person must judge")} ${VISUAL_NOTE}` : rule);
+
 const DEFER_RULE = `Never get stuck on work only a person can do (manual or visual testing, a walkthrough in a real window or browser, real devices, external servers, credentials, or a command the check tool does not offer, such as generating a database migration with a tool you cannot run). Do not fake it and do not keep retrying it: tag such a task \`[HUMAN]\` in tasks.md (\`- [ ] T023 [HUMAN] ...\`) and list it in \`deferred\` with the reason and what the person should check. The factory posts deferred items on the pull request and carries on.`;
 
 export interface Gaps { appended: number; summary: string }
@@ -23,10 +27,14 @@ export interface Gaps { appended: number; summary: string }
 const unrestrictedNote = (wrapper: string, checks: string[]) =>
   `You have unrestricted access in this worktree: run whatever commands you need, including the project's own tooling and build tools, and read how the project's scripts invoke them (for example tests/run.sh names the exact path of its tools). The factory's check tool (${checks.map((c) => `\`${wrapper} ${c}\``).join(", ")}) is still the authoritative result, so finish by running it. If earlier in this conversation you concluded that you cannot run something, that no longer holds: try it before deferring.`;
 
+/** Shown when the project opted in to general Bash (agentBashAny) but access is still restricted: most commands run, the always-denied ones (network, git push/remote, sudo, docker, ...) are still refused. */
+const bashAnyNote = (wrapper: string, checks: string[]) =>
+  `You may run general shell commands in this worktree, including the project's own tooling and build tools, and read how the project's scripts invoke them. Network tools, git push/remote/fetch/config, gh, sudo, docker and similar are still refused. The factory's check tool (${checks.map((c) => `\`${wrapper} ${c}\``).join(", ")}) is still the authoritative result, so finish by running it. If earlier in this conversation you concluded that you cannot run something, that no longer holds: try it before deferring.`;
+
 /** When recorded expectations encode the old behaviour that the ticket deliberately changes, regenerating them is the fix. */
 const FIXTURE_NOTE = "If checks fail because recorded expectations (golden files, snapshots, fixtures, oracles) encode the OLD behaviour that this ticket deliberately changes, regenerating them with the project's own tooling is a fix, not weakening a test. Do that, commit the regenerated files, and say so in your summary. Only do it when the ticket or spec calls for the changed behaviour; if the new output looks wrong, treat it as a bug instead.";
 
-export function implementPrompt(o: { featureDir: string; wrapper: string; checks: string[]; pass: number; ticket?: string; gaps?: Gaps; previousFailures?: string[]; unrestricted?: boolean }): string {
+export function implementPrompt(o: { featureDir: string; wrapper: string; checks: string[]; pass: number; ticket?: string; gaps?: Gaps; previousFailures?: string[]; unrestricted?: boolean; bashAny?: boolean }): string {
   const again = o.pass > 1 && o.gaps
     ? `This is pass ${o.pass}. The completeness check found work remaining: ${o.gaps.summary}\n${o.gaps.appended > 0 ? `It appended ${o.gaps.appended} new task(s) to tasks.md: do those.` : "It appended no new tasks, so close the gaps above directly. If a gap is something you cannot do here, do not try again: defer it (see below) and say why."}`
     : "";
@@ -36,10 +44,10 @@ export function implementPrompt(o: { featureDir: string; wrapper: string; checks
       again,
       o.ticket ?? "",
       failuresText(o.previousFailures),
-      o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : `Verify your work ONLY with the factory's check tool, one check per command: ${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}. It runs the project's own command inside a sandbox with no network. Do not run npm, pnpm, yarn, node, python or any other command to execute code: they are refused. Dependencies: when you add a package or a dependency, declare it in the project's manifests (package.json, the lockfile, a workspace list, or whatever the project's install script reads) exactly as the project does. The check tool installs again by itself whenever those change, and \`install\` (if listed) runs the project's install command on demand. Never work around a missing dependency, and never report one as an environment limit before you have run the install.`,
+      o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : o.bashAny ? bashAnyNote(o.wrapper, o.checks) : `Verify your work ONLY with the factory's check tool, one check per command: ${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}. It runs the project's own command inside a sandbox with no network. Do not run npm, pnpm, yarn, node, python or any other command to execute code: they are refused. Dependencies: when you add a package or a dependency, declare it in the project's manifests (package.json, the lockfile, a workspace list, or whatever the project's install script reads) exactly as the project does. The check tool installs again by itself whenever those change, and \`install\` (if listed) runs the project's install command on demand. Never work around a missing dependency, and never report one as an environment limit before you have run the install.`,
       "Write or update tests for every behaviour you change, and never delete, skip or weaken an existing test to make a check pass.",
       "Commit coherent changes as you go with `git add` and `git commit`. You may tick finished tasks in tasks.md. Do not touch CI workflows, secrets, or the .claude and .specify directories.",
-      `Tasks already tagged \`[HUMAN]\` are for a person: skip them. ${DEFER_RULE}`,
+      `Tasks already tagged \`[HUMAN]\` are for a person: skip them. ${withVisual(DEFER_RULE, o.checks)}`,
       "Finish with a short summary per the JSON schema: tasks done, any task you could not complete with the reason, and anything deferred to a human.",
     ].filter(Boolean).join("\n\n")),
   ].join("\n\n");
@@ -48,17 +56,17 @@ export function implementPrompt(o: { featureDir: string; wrapper: string; checks
 const DEFER_RULE_DIRECT = `Never get stuck on work only a person can do (manual or visual testing, a walkthrough in a real window or browser, real devices, external servers, credentials, or a command the check tool does not offer, such as generating a database migration with a tool you cannot run). Do not fake it and do not keep retrying it: list it in \`deferred\` with a short id, the reason and what the person should check. The factory posts deferred items on the pull request and carries on.`;
 
 /** haiku_prompt mode: the implementer works from the Haiku-written prompt, with no spec, tasks file or converge step. */
-export function implementPromptDirect(o: { plan: { prompt: string; criteria: Criterion[] }; wrapper: string; checks: string[]; ticket?: string; previousFailures?: string[]; unrestricted?: boolean }): string {
+export function implementPromptDirect(o: { plan: { prompt: string; criteria: Criterion[] }; wrapper: string; checks: string[]; ticket?: string; previousFailures?: string[]; unrestricted?: boolean; bashAny?: boolean }): string {
   return [
     "Implement the change described below in this worktree, on the current branch. It was written for you from the ticket and the repository; the ticket text follows it for reference.",
     `<implementation-prompt>\n${o.plan.prompt}\n</implementation-prompt>`,
     `Acceptance criteria (the change is reviewed against these):\n${o.plan.criteria.map((c) => `- ${c.id}: ${c.text}`).join("\n")}`,
     o.ticket ?? "",
     failuresText(o.previousFailures),
-    o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : `Verify your work ONLY with the factory's check tool, one check per command: ${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}. It runs the project's own command inside a sandbox with no network. Do not run npm, pnpm, yarn, node, python or any other command to execute code: they are refused. Dependencies: when you add a package or a dependency, declare it in the project's manifests (package.json, the lockfile, a workspace list, or whatever the project's install script reads) exactly as the project does. The check tool installs again by itself whenever those change, and \`install\` (if listed) runs the project's install command on demand. Never work around a missing dependency, and never report one as an environment limit before you have run the install.`,
+    o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : o.bashAny ? bashAnyNote(o.wrapper, o.checks) : `Verify your work ONLY with the factory's check tool, one check per command: ${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}. It runs the project's own command inside a sandbox with no network. Do not run npm, pnpm, yarn, node, python or any other command to execute code: they are refused. Dependencies: when you add a package or a dependency, declare it in the project's manifests (package.json, the lockfile, a workspace list, or whatever the project's install script reads) exactly as the project does. The check tool installs again by itself whenever those change, and \`install\` (if listed) runs the project's install command on demand. Never work around a missing dependency, and never report one as an environment limit before you have run the install.`,
     "Write or update tests for every behaviour you change, and never delete, skip or weaken an existing test to make a check pass. Do not expand scope beyond the prompt.",
     "Commit coherent changes as you go with `git add` and `git commit`. Do not touch CI workflows, secrets, or the .claude directory.",
-    DEFER_RULE_DIRECT,
+    withVisual(DEFER_RULE_DIRECT, o.checks),
     "Finish with a short summary per the JSON schema: what you changed and tested, and anything deferred to a human.",
   ].filter(Boolean).join("\n\n");
 }
@@ -99,15 +107,15 @@ export const claudeReviewPrompt = (o: { ticket: string; spec: string; stat: stri
   "For EACH earlier finding give a verdict in `earlier`: valid or not, with evidence. Then report any further blocker/major problems in `findings`. Judge on evidence; do not rubber-stamp and do not invent problems. Never block on something only a person can verify; that is listed on the pull request.",
 ].filter(Boolean).join("\n\n");
 
-export const implRemediationPrompt = (o: { featureDir?: string; wrapper: string; checks: string[]; findings: unknown[]; ticket?: string; history?: string; previousFailures?: string[]; unrestricted?: boolean }) => [
+export const implRemediationPrompt = (o: { featureDir?: string; wrapper: string; checks: string[]; findings: unknown[]; ticket?: string; history?: string; previousFailures?: string[]; unrestricted?: boolean; bashAny?: boolean }) => [
   "Fix the findings below in this worktree. Judge each on its merits: fix the valid ones, and reject any that are wrong with concrete evidence. Never delete, skip or weaken a test to make a check pass.",
   o.ticket ?? "",
   failuresText(o.previousFailures),
-  o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : `Verify with the factory's check tool only (${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}); other code-running commands are refused. Commit your fixes with \`git add\` and \`git commit\`. Dependencies: when you add a package or a dependency, declare it in the project's manifests (package.json, the lockfile, a workspace list, or whatever the project's install script reads) exactly as the project does. The check tool installs again by itself whenever those change, and \`install\` (if listed) runs the project's install command on demand. Never work around a missing dependency, and never report one as an environment limit before you have run the install.`,
+  o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : o.bashAny ? `${bashAnyNote(o.wrapper, o.checks)} Commit your fixes with \`git add\` and \`git commit\`.` : `Verify with the factory's check tool only (${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}); other code-running commands are refused. Commit your fixes with \`git add\` and \`git commit\`. Dependencies: when you add a package or a dependency, declare it in the project's manifests (package.json, the lockfile, a workspace list, or whatever the project's install script reads) exactly as the project does. The check tool installs again by itself whenever those change, and \`install\` (if listed) runs the project's install command on demand. Never work around a missing dependency, and never report one as an environment limit before you have run the install.`,
   FIXTURE_NOTE,
   `Findings:\n${JSON.stringify(o.findings, null, 2)}`,
   o.history ?? "",
-  `If a finding can only be resolved by a person, do not reject it: defer it. ${o.featureDir ? DEFER_RULE : DEFER_RULE_DIRECT} ${o.featureDir ? `For a finding about open tasks in ${o.featureDir}/tasks.md, defer the task ids. ` : ""}These can never be deferred and must be fixed: failing project checks (check:*), weakened or deleted tests, protected paths, uncommitted changes and conflict markers.`,
+  `If a finding can only be resolved by a person, do not reject it: defer it. ${withVisual(o.featureDir ? DEFER_RULE : DEFER_RULE_DIRECT, o.checks)} ${o.featureDir ? `For a finding about open tasks in ${o.featureDir}/tasks.md, defer the task ids. ` : ""}These can never be deferred and must be fixed: failing project checks (check:*), weakened or deleted tests, protected paths, uncommitted changes and conflict markers.`,
   "Finish by reporting which finding ids you accepted (fixed), which you rejected (with evidence) and which you deferred to a human (with the reason) per the JSON schema.",
 ].filter(Boolean).join("\n\n");
 
@@ -123,13 +131,13 @@ export const finalReviewPrompt = (o: { ticket: string; criteria: Criterion[]; st
 export const specExcerpt = (b: SpecBundle) => b.files["spec.md"] ?? "";
 
 /** The merge of the target branch into the job branch stopped on conflicts: the implementer resolves them and concludes the merge. */
-export const conflictPrompt = (o: { base: string; files: string[]; ticket: string; brief?: string; wrapper: string; checks: string[]; unrestricted?: boolean }) => [
+export const conflictPrompt = (o: { base: string; files: string[]; ticket: string; brief?: string; wrapper: string; checks: string[]; unrestricted?: boolean; bashAny?: boolean }) => [
   `The target branch (${o.base}) was merged into this job's branch and stopped on merge conflicts. Resolve them in this worktree and finish the merge.`,
   o.ticket,
   o.brief ? `What this branch was built to do:\n${clip(o.brief, 8000)}` : "",
   `Conflicting files:\n${o.files.map((f) => `- ${f}`).join("\n")}`,
   "For each conflict, understand BOTH sides before editing: `git log` / `git show` for what the target branch changed and why, and `git diff` / the branch's own commits for what this change intended. Combine them so the result keeps the intended behaviour of both. Never resolve by simply taking one side or by deleting either side's changes (including tests), unless one side's change is truly superseded by the other, and then say so. Remove every conflict marker.",
-  o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : `You may verify with the factory's check tool only (${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}); other code-running commands are refused. The factory re-runs all checks afterwards.`,
+  o.unrestricted ? unrestrictedNote(o.wrapper, o.checks) : o.bashAny ? `${bashAnyNote(o.wrapper, o.checks)} The factory re-runs all checks afterwards.` : `You may verify with the factory's check tool only (${o.checks.map((c) => `\`${o.wrapper} ${c}\``).join(", ")}); other code-running commands are refused. The factory re-runs all checks afterwards.`,
   "When every file is resolved, `git add` them and run `git commit --no-edit` to conclude the merge. Do not rebase, reset, abort, push, or change branches. Do not touch CI workflows, secrets or the .claude directory.",
   "If a conflict hides a genuine ambiguity you cannot settle from the code, the tickets and the history (the two sides contradict each other and either choice changes behaviour), do NOT guess: set `resolved` to false and put the specific files and the question in `ambiguity`; leave the files untouched. Routine conflicts (adjacent edits, imports, lockfiles, renames, formatting, independent additions to the same area) are yours to resolve.",
   "Finish per the JSON schema: whether you resolved and committed, a one-line resolution per file, and any ambiguity.",

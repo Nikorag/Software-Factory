@@ -34,7 +34,7 @@ const editRules = (patterns: string[], roots: string[]) => patterns.flatMap((p) 
 //    live test; Bash read-only built-ins (cat, ls, grep) are likewise refused outside the working directory.
 const GIT_READ = ["git status", "git diff", "git log", "git show", "git blame", "git ls-files", "git rev-parse"];
 const GIT_WRITE = ["git add", "git commit", "git restore", "git rm", "git mv", "git stash"];
-const ALWAYS_DENY_BASH = [
+export const ALWAYS_DENY_BASH = [
   "git push", "git remote", "git config", "git fetch", "git pull", "git clone", "git worktree", "git submodule",
   "git checkout", "git switch", "git branch", "git reset", "git rebase", "git merge", "git filter-branch", "git update-ref",
   "gh", "curl", "wget", "ssh", "scp", "rsync", "nc", "sudo", "su", "chmod", "chown", "launchctl", "security", "osascript",
@@ -52,12 +52,13 @@ export function readRules(paths: string[]): string[] {
 /** All tools of the MCP servers a run was given: `mcp__<server>__*`. Only ever for configured servers; never a bare Read/Write/Edit. */
 export const mcpRules = (servers: string[] = []): string[] => servers.map((s) => `mcp__${s}__*`);
 
-export function toolPolicy(profile: PermissionProfile, opts: { protectedPaths?: string[]; bashAllow?: string[]; roots?: string[]; readPaths?: string[]; mcpServers?: string[] } = {}): ToolPolicy {
+type PolicyOpts = { protectedPaths?: string[]; bashAllow?: string[]; bashAny?: boolean; roots?: string[]; readPaths?: string[]; mcpServers?: string[] };
+export function toolPolicy(profile: PermissionProfile, opts: PolicyOpts = {}): ToolPolicy {
   const p = basePolicy(profile, opts);
   return { ...p, allow: [...p.allow, ...mcpRules(opts.mcpServers)] };
 }
 
-function basePolicy(profile: PermissionProfile, opts: { protectedPaths?: string[]; bashAllow?: string[]; roots?: string[]; readPaths?: string[] }): ToolPolicy {
+function basePolicy(profile: PermissionProfile, opts: PolicyOpts): ToolPolicy {
   const protectedPaths = opts.protectedPaths ?? [];
   const roots = opts.roots ?? [];
   const readOnly = [...GIT_READ.map(bash), ...readRules(opts.readPaths ?? [])]; // file reads are allowed by default, confined to the worktree (plus approved folders)
@@ -77,7 +78,9 @@ function basePolicy(profile: PermissionProfile, opts: { protectedPaths?: string[
         tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash"],
         // NEVER a bare `Write`/`Edit`: that allows writing anywhere the user can (found live: an implementer wrote to
         // $HOME and to a sibling directory). Writes are scoped to the worktree by absolute path only.
-        allow: [...readOnly, ...roots.map((r) => `Edit(${absRule(r, "**")})`), ...GIT_WRITE.map(bash), ...(opts.bashAllow ?? []).map(bash)],
+        // A bare `Bash` allow only with the project's explicit opt-in (ADR 0017): deny rules still beat it, but Bash
+        // bypasses path rules, so the agent can read anything the user can.
+        allow: [...readOnly, ...roots.map((r) => `Edit(${absRule(r, "**")})`), ...GIT_WRITE.map(bash), ...(opts.bashAllow ?? []).map(bash), ...(opts.bashAny ? ["Bash"] : [])],
         deny: [...editRules(protectedPaths, roots), ...ALWAYS_DENY_BASH.map(bash)],
       };
   }

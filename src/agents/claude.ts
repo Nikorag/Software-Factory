@@ -25,7 +25,7 @@ export function buildClaudeArgs(req: AgentRequest): string[] {
     "--strict-mcp-config",
     ...(mcpArgs.length ? ["--allowedTools", ...mcpRules(req.mcp?.names)] : []), // auto mode has no factory tool lists: only the MCP grant is added
   ]);
-  const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow, roots: pathRoots(req.cwd), readPaths: req.readPaths, mcpServers: req.mcp?.names });
+  const policy = toolPolicy(req.profile, { protectedPaths: req.protectedPaths, bashAllow: req.bashAllow, bashAny: req.bashAny, roots: pathRoots(req.cwd), readPaths: req.readPaths, mcpServers: req.mcp?.names });
   return finishArgs(req, [
     "-p",
     "--output-format", "stream-json", "--verbose", // one JSON event per line, as it happens: the whole conversation is logged live, and the last line is the result

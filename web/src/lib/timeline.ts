@@ -33,8 +33,14 @@ const eventLabel = (kind: string) => EVENT_LABEL[kind] ?? (kind.startsWith("hold
 
 function parse(output: string | null): Record<string, unknown> | null {
   if (!output) return null;
-  try { const v = JSON.parse(output); return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null; } catch { return null; } // clipped output is not valid JSON: say nothing rather than guess
+  try { const v = JSON.parse(output); return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null; } catch { // clipped output is not valid JSON: keep only the commentary, which is stored first, rather than guess at the rest
+    const m = /^\{"commentary":("(?:[^"\\]|\\.)*")/.exec(output);
+    if (!m) return null;
+    try { return { commentary: JSON.parse(m[1]!) as string }; } catch { return null; }
+  }
 }
+
+const commentaryOf = (out: Record<string, unknown> | null | undefined): string | undefined => (out && typeof out.commentary === "string" && out.commentary.trim() ? out.commentary.trim() : undefined);
 
 /** A few words about what a successful step produced, from whatever its output recorded. */
 export function summarise(output: Record<string, unknown> | null): string | undefined {
@@ -102,7 +108,7 @@ export function buildTimeline(d: JobDetail, cap = 3): TimelineEntry[] {
       case "timed_out": tone = "fail"; summary = `timed out${e.error ? `: ${clip(e.error, 160)}` : ""}`; break;
       case "cancelled": tone = "info"; summary = e.error ? clip(e.error, 160) : "cancelled"; break;
       default:
-        if (remediate) { tone = "loop"; summary = `Sent back for fixes: ${clip(remediate, 220)}`; } else summary = summarise(out ?? null);
+        if (remediate) { tone = "loop"; summary = `Sent back for fixes: ${clip(remediate, 220)}`; } else summary = commentaryOf(out) ?? summarise(out ?? null);
     }
     if (waits && e.outcome !== "waiting") summary = summary ? `${summary} (after waiting, ${plural(waits, "check")})` : `after waiting, ${plural(waits, "check")}`;
     entries.push({

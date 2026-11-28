@@ -18,7 +18,7 @@ export const RULES: readonly Rule[] = [
   // ---- reads: overview, jobs, logs, board, settings, status ----
   ...allow("GET",
     "/api/overview", "/api/health", "/api/jobs", "/api/jobs/:id", "/api/jobs/:id/invocations/:iid/conversation", "/api/jobs/:id/invocations/:iid/log",
-    "/api/projects", "/api/tasks/:id", "/api/board",
+    "/api/projects", "/api/projects/:id/lessons", "/api/tasks/:id", "/api/board",
     "/api/settings/global", "/api/setup", "/api/setup/github", "/api/setup/linear", "/api/update",
     // Read-only views of integration state. They report names/flags (hasToken, secretSet, connected), never a secret value.
     "/api/profiles", "/api/bitbucket/credentials", "/api/jira/status", "/api/jira/whoami", "/api/jira/mapping", "/api/jira/mapping/check", "/api/jira/metadata",
@@ -46,6 +46,13 @@ export const RULES: readonly Rule[] = [
   // so writing them remotely means choosing what runs on this machine (sandboxed, but with network for installs).
   block("PUT", "/api/settings/projects/:id", "edits a project's repository path and shell commands: decide deliberately, on the machine"),
   block("DELETE", "/api/settings/projects/:id", "removes a project from this machine's configuration: decide deliberately, on the machine"),
+
+  // ---- project lessons: what agents are told on every later job. Approving or editing one is decided on the machine (ADR 0017). ----
+  block("POST", "/api/projects/:id/lessons", "changes what agents are told on later jobs: decide on the machine"),
+  block("PUT", "/api/lessons/:id", "changes what agents are told on later jobs: decide on the machine"),
+  block("POST", "/api/lessons/:id/approve", "changes what agents are told on later jobs: decide on the machine"),
+  block("POST", "/api/lessons/:id/reject", "changes what agents are told on later jobs: decide on the machine"),
+  block("POST", "/api/lessons/:id/retire", "changes what agents are told on later jobs: decide on the machine"),
 
   // ---- credentials: never remotely ----
   block("POST", "/api/setup/linear-key", SECRET),
@@ -90,6 +97,18 @@ export function classifyRemote(method: string, pathname: string): Decision {
   if (!best) return { allowed: false, reason: "not classified for remote use" };
   if (best.rule.effect === "block") return { allowed: false, reason: best.rule.reason ?? "blocked", route: best.rule.pattern };
   return { allowed: true, route: best.rule.pattern, mutating: m !== "GET" };
+}
+
+/**
+ * Allowed routes whose BODY may still carry something that must be set on the machine: skills are instructions to every agent, read from
+ * file paths on this machine, so a hub session may not set them (the same rule as PUT /api/settings/projects/:id). The dashboard
+ * only sends `skills` when they were edited. Returns the refusal reason, or null.
+ */
+export function blockedRemoteBody(method: string, pathname: string, payload: Buffer | undefined): string | null {
+  if (method.toUpperCase() !== "PUT" || pathname !== "/api/settings/global" || !payload) return null;
+  let body: unknown;
+  try { body = JSON.parse(payload.toString("utf8")); } catch { return null; } // not JSON: the route itself rejects it
+  return body && typeof body === "object" && "skills" in body ? "sets skills (instructions for every agent, read from paths on this machine): decide on the machine" : null;
 }
 
 export const MAX_PATH = 2048;

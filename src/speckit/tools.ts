@@ -43,7 +43,7 @@ export async function commitPaths(cwd: string, paths: string[], message: string,
 }
 
 /** Never sweep dependency or build output into a commit, even in a repo that forgot to gitignore it. */
-const NEVER_COMMIT = /(^|\/)(node_modules|\.pnpm-store)(\/|$)|(^|\/)\.DS_Store$/;
+export const NEVER_COMMIT =/(^|\/)(node_modules|\.pnpm-store|test-results|playwright-report|blob-report)(\/|$)|(^|\/)playwright\/\.cache(\/|$)|(^|\/)\.DS_Store$/; // incl. Playwright's default screenshot, trace and report dirs
 
 /** Commits whatever is left in the worktree (e.g. tasks ticked by an agent) as the factory. Returns whether a commit was made. */
 export async function commitAll(cwd: string, message: string, git: GitFn = realGit): Promise<boolean> {

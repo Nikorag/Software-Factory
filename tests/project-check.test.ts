@@ -23,6 +23,15 @@ sb("project:check (real git worktree, real sandbox)", () => {
     expect(sh(fx.repo, "worktree", "list")).not.toContain("_check");
     expect(sh(fx.repo, "branch", "--list")).not.toContain("check"); // detached: no branch created
   });
+  it("runs a configured visual check after test, with the same result shape", async () => {
+    const fx = makeRepo();
+    const rep = await checkProject(proj(fx.repo, { visual: "echo VISUAL-RAN", test: "true" }), dep(fx.base));
+    expect(rep.results.map((r) => r.kind)).toEqual(["test", "visual"]);
+    expect(rep.results[1]).toMatchObject({ kind: "visual", ok: true, exitCode: 0, sandboxed: true });
+    expect(rep.results[1]!.tail).toContain("VISUAL-RAN");
+    const none = await checkProject(proj(fx.repo, { test: "true" }), dep(fx.base));
+    expect(none.results.map((r) => r.kind)).toEqual(["test"]);
+  });
   it("reports a failing check with its output and is not ok", async () => {
     const fx = makeRepo();
     const rep = await checkProject(proj(fx.repo, { test: "echo 'FAIL: 2 broken' >&2; exit 4" }), dep(fx.base));

@@ -1,3 +1,8 @@
+/** A SKILL.md (or a folder holding one) given to agent runs: edited as one `name=path` per line. */
+export interface SkillRef { name: string; path: string }
+export const skillsToText = (s?: SkillRef[]): string => (s ?? []).map((k) => `${k.name}=${k.path}`).join("\n");
+export const skillsFromText = (t: string): SkillRef[] => t.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => { const i = l.indexOf("="); return i < 0 ? { name: l, path: "" } : { name: l.slice(0, i).trim(), path: l.slice(i + 1).trim() }; });
+
 export interface Job {
   /** The ticket title (absent for jobs from before it was recorded). */
   title?: string | null;
@@ -26,8 +31,13 @@ export interface LimitWindow { utilization: number; resetsAt: number | null; sta
 export interface ClaudeUsage { limits: { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null; status: string | null; capturedAt: number } | null; /** The plan window blocking new jobs, when exhausted. */ exhausted?: { window: "fiveHour" | "sevenDay"; resetsAt: number } | null; estimatedListCostUsd: { last24h: number; last7d: number } }
 export interface Execution { id: number; stage: string; attempt: number; outcome: string; error: string | null; output: string | null; startedAt: number | null; finishedAt: number | null }
 export interface Decision { id: number; kind: string; decision: string; rationale: string | null; actor: string; at: number | null }
-export interface Invocation { id: number; stageExecutionId: number | null; agent: string; model: string | null; exitCode: number | null; durationMs: number | null; /** the run is over (exit code, signal, local-model failure or service restart): never "live" */ finished: boolean; usage: { denials?: number } | null; hasLog: boolean; at: number | null }
+export interface Invocation { id: number; stageExecutionId: number | null; agent: string; model: string | null; exitCode: number | null; durationMs: number | null; /** the run is over (exit code, signal, local-model failure or service restart): never "live" */ finished: boolean; usage: { denials?: number; /** ids of the project lessons this run was given */ lessons?: number[] } | null; hasLog: boolean; at: number | null }
+export type LessonKind = "command" | "convention" | "pitfall" | "reviewer-pref";
+export type LessonStatus = "proposed" | "active" | "retired";
+export interface Lesson { id: number; projectId: string; text: string; kind: LessonKind; status: LessonStatus; source: string; sourceJobId: string | null; hits: number; createdAt: number; lastUsedAt: number | null }
 export interface JobDetail {
+  /** The lessons any run of this job was given (named once; runs list their ids). */
+  lessonsInjected?: { id: number; kind: LessonKind; text: string; status: LessonStatus }[];
   job: Job; remediationCap?: number; stageOrder: string[]; executions: Execution[]; decisions: Decision[]; invocations: Invocation[];
   artifacts: { kind: string; path: string; bytes: number | null; at: number | null }[];
   /** The Haiku-written implementer prompt and its acceptance criteria (haiku_prompt mode). */
@@ -49,7 +59,7 @@ export interface Feedback {
 }
 export interface Project {
   host?: "github" | "bitbucket"; bitbucketRepo?: string | null; bitbucketCredential?: string;
-  id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; specKit?: boolean; allowLoopback?: boolean; agentBashAllow?: string[]; gates?: string[]; overrides: { maxImplementationPasses?: number; pickupMode?: "automatic" | "manual"; maxConcurrentJobs?: number; maxRemediationAttempts?: number; agentAccess?: "restricted" | "unrestricted"; mcpServers?: string[]; models?: Partial<import("./tasks").Routes> } | null;
+  id: string; name: string; enabled: boolean; autonomy: string; repository: string; githubRepo: string | null; defaultBranch: string; githubAccount: string | null; managed: boolean; specKit?: boolean; allowLoopback?: boolean; agentBashAllow?: string[]; agentBashAny?: boolean; gates?: string[]; skills?: SkillRef[]; repoSkills?: SkillRef[]; overrides: { maxImplementationPasses?: number; pickupMode?: "automatic" | "manual"; maxConcurrentJobs?: number; maxRemediationAttempts?: number; agentAccess?: "restricted" | "unrestricted"; mcpServers?: string[]; models?: Partial<import("./tasks").Routes> } | null;
   tracker?: string | null; linear: { teamKey: string; projectName?: string; projectId?: string } | null; commands: Record<string, string | undefined>;
   validation: { ok: boolean; protection: string; findings: string[] } | null; activeJobs: number;
   onboarding?: { status: "ready" | "in-progress" | "not-started"; steps: { id: string; label: string; ok: boolean; detail: string }[] };

@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import { eq } from "drizzle-orm";
 import type { FactoryDb } from "../db/client.js";
 import { agentInvocations, decisions } from "../db/schema.js";
+import { skillsPromptBlock } from "../config/skills.js";
+import type { EffectiveSkill } from "../config/skills.js";
 import { git as realGit, type GitFn } from "../repo/git.js";
 import { findProtectedChanges } from "./guard.js";
 import { writeLimits } from "./usage.js";
@@ -25,6 +27,7 @@ export interface RunStep {
   bashAllow?: string[];
   jsonSchema?: Record<string, unknown>;
   resumeSessionId?: string;
+  lessonIds?: number[]; // the project lessons the caller put in the prompt (recorded in the invocation's usage, so every run shows what it saw)
 }
 
 /** Tells the agent which folders outside the worktree a person has let it read. */
@@ -42,6 +45,8 @@ export class AgentRunner {
     usageFile?: string; // where the latest Claude plan-limit reading is kept
     access?: (projectId?: string) => "restricted" | "unrestricted"; // per project; default restricted
     projectBashAllow?: (projectId?: string) => string[]; // per project extra shell prefixes for the restricted implementer
+    projectBashAny?: (projectId?: string) => boolean; // per project opt-in: any Bash command (bar the deny list) for the restricted implementer
+    skills?: (projectId?: string) => EffectiveSkill[]; // the effective skills (profile's, overridden by the project's and the repo file's); see effectiveSkills
     readGrants?: (jobId: string) => string[]; // folders outside the worktree a person approved this job's agents to read
     mcp?: (projectId?: string) => McpGrant | undefined; // the MCP servers (project selection, else profile default) with their secrets; undefined = none
   }) {}
@@ -61,6 +66,12 @@ export class AgentRunner {
     if (mcpNames.length && step.jobId) {
       db.insert(decisions).values({ jobId: step.jobId, kind: "agent.mcp", decision: `${step.role} runs with MCP servers: ${mcpNames.join(", ")}`, rationale: "selected for this project (or the profile default)", actor: "factory" }).run(); // names only
     }
+    // Skills are read now, before anything is recorded: a missing or oversize file fails the run with a clear error instead of being dropped.
+    const skills = this.d.skills?.(step.projectId) ?? [];
+    const skillBlock = skillsPromptBlock(skills);
+    if (skills.length && step.jobId) {
+      db.insert(decisions).values({ jobId: step.jobId, kind: "agent.skills", decision: `${step.role} runs with skills: ${skills.map((s) => s.name).join(", ")}`, rationale: skills.some((s) => s.fromRepo) ? "configured in projects.yaml / the profile settings (operator-trusted) and the repository's .software-factory.yml (read from the committed default branch)" : "configured in projects.yaml / the profile settings (operator-trusted)", actor: "factory" }).run();
+    }
     const logFile = join(this.d.logDir, step.jobId ?? "_unattached", `${Date.now()}-${step.role}.log`);
     const grants = step.jobId ? (this.d.readGrants?.(step.jobId) ?? []) : [];
     const row = step.jobId
@@ -75,7 +86,8 @@ export class AgentRunner {
     const before = profile === "read-only" && route.provider === "anthropic" ? await git(step.cwd, ["status", "--porcelain", "--untracked-files=all"]).catch(() => null) : null;
     const result = await router.run(step.task, {
       role: step.role, profile, prompt: step.prompt, cwd: step.cwd, timeoutMs: step.timeoutMs, signal: step.signal,
-      systemPrompt: readNote(rolePrompt(step.role), grants), readPaths: grants, protectedPaths: this.d.protectedPaths, access, bashAllow: [...(step.bashAllow ?? []), ...(this.d.projectBashAllow?.(step.projectId) ?? [])],
+      systemPrompt: readNote(rolePrompt(step.role), grants) + skillBlock, readPaths: grants, protectedPaths: this.d.protectedPaths, access, bashAllow: [...(step.bashAllow ?? []), ...(this.d.projectBashAllow?.(step.projectId) ?? [])],
+      bashAny: profile === "implementer" && access === "restricted" && (this.d.projectBashAny?.(step.projectId) ?? false),
       ...(mcp ? { mcp } : {}), jsonSchema: step.jsonSchema, resumeSessionId: step.resumeSessionId, persistSession: profile === "implementer", logFile,
     }, step.projectId);
 
@@ -93,7 +105,7 @@ export class AgentRunner {
     }
     if (row) db.update(agentInvocations).set({
       exitCode: result.exitCode, durationMs: result.durationMs,
-      usageJson: JSON.stringify({ estimatedListCostUsd: result.costUsd, sessionId: result.sessionId, numTurns: result.numTurns, failure: result.failure, denials: result.denials.length, denialDetails: result.denials.slice(0, 10), violations: violations.length, usage: result.usage, ...(mcpNames.length ? { mcpServers: mcpNames } : {}) }),
+      usageJson: JSON.stringify({ estimatedListCostUsd: result.costUsd, sessionId: result.sessionId, numTurns: result.numTurns, failure: result.failure, denials: result.denials.length, denialDetails: result.denials.slice(0, 10), violations: violations.length, usage: result.usage, lessons: step.lessonIds ?? [], ...(mcpNames.length ? { mcpServers: mcpNames } : {}) }),
     }).where(eq(agentInvocations.id, row.id)).run();
 
     if (violations.length) return { ...result, ok: false, failure: "error", error: `boundary violation: ${violations.join("; ")}`, violations };

@@ -125,7 +125,9 @@ export function stripStates(job: Job): NodeState[] {
   const strip = stripFor(modeOfJob(job));
   const held = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION", "AWAITING_CONFIRMATION"].includes(job.stage);
   const at = held ? job.heldFromStage : job.stage;
-  const cur = at ? strip.indexOf(BY_STAGE[at] === "conf" ? "mr" : BY_STAGE[at] ?? (at === "SPECIFICATION_REMEDIATION" ? "sval" : at === "REMEDIATION" ? "test" : "")) : -1;
+  const node = at ? BY_STAGE[at] : undefined;
+  const anchor = node === "conf" ? "mr" : node === "fix" ? "test" : node === "sfix" ? "sval" : node ?? ""; // fix nodes are off the strip: show the square they route back to
+  const cur = strip.indexOf(anchor);
   if (job.stage === "COMPLETED" || job.status === "done") return strip.map(() => "done");
   return strip.map((_, i) => (cur < 0 ? "idle" : i < cur ? "done" : i > cur ? "idle" : held ? (job.stage === "PAUSED" || job.stage === "AWAITING_CONFIRMATION" ? "wait" : "fail") : job.status === "running" ? "run" : "wait"));
 }

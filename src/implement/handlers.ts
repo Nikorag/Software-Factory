@@ -9,8 +9,9 @@ import { writeExecWrapper } from "../exec/factory-exec.js";
 import { ensureDependencies } from "../exec/deps.js";
 import { git as realGit } from "../repo/git.js";
 import { createStageKit, type StageKitDeps } from "../app/stage-kit.js";
+import { commentaryOf, withCommentary } from "../agents/commentary.js";
 import { readSpecBundle, validateSpecArtifacts } from "../speckit/artifacts.js";
-import { commitAll } from "../speckit/tools.js";
+import { commitAll, NEVER_COMMIT } from "../speckit/tools.js";
 import { addedLines, changedFiles, codeDiff, historyAddedLines, NON_CODE } from "./diff.js";
 import { claudeReviewPrompt, codeReviewPrompt, convergePrompt, extractCriteria, failureSummaryPrompt, finalReviewPrompt, implRemediationPrompt, implementPrompt, implementPromptDirect, securityReviewPrompt, specExcerpt } from "./prompts.js";
 import { latestPlan, planExcerpt, type StoredPlan } from "../planning/plan.js";
@@ -18,7 +19,7 @@ import type { PlanningMode, ProjectConfig } from "../config/schema.js";
 import { createConflictHandler, DEFAULT_MAX_CONFLICT_RESOLUTIONS } from "./conflicts.js";
 import type { GitHubClient } from "../github/client.js";
 import { ClaudeReview, CodeReview, Converge, DirectResult, FailureSummary, FinalReview, ImplRemediation, ImplementResult, SecurityReview } from "./schemas.js";
-import { scanForSecrets } from "./secrets.js";
+import { scanHistoryForSecrets } from "./secrets.js";
 import { findProtectedChanges } from "../agents/guard.js";
 import { deferrals, fixCycles, historyText, HUMAN_ONLY_REASON, isDeferrable, openTasks, previousFailures, recordDeferral, sameCodeRun, triage, type Finding } from "./history.js";
 import type { AgentCall, AgentOutcome } from "../app/stage-kit.js";
@@ -36,12 +37,13 @@ export interface ImplDeps extends StageKitDeps {
   maxPasses?: (projectId: string) => number;
   /** The project's agent access (live): decides whether prompts describe the check-tool-only limits. */
   agentAccess?: (projectId: string) => "restricted" | "unrestricted";
+  agentBashAny?: (projectId: string) => boolean; // project opt-in to general Bash for the restricted implementer (changes the prompt only; the policy is applied by the runner)
   settings: { protectedPaths: string[]; commandTimeoutSeconds: number; sandbox: { required: boolean; readAllow?: string[]; writeAllow?: string[] } };
   runCommand?: typeof runProjectCommand; // injectable for tests
 }
 
 const MIN = 60_000;
-const CHECK_ORDER: Exclude<CommandKind, "install">[] = ["build", "typecheck", "lint", "test"];
+const CHECK_ORDER: Exclude<CommandKind, "install">[] = ["build", "typecheck", "lint", "test", "visual"];
 const BLOCKING = new Set(["blocker", "major", "critical", "high"]);
 export const isBlocking = (sev: string) => BLOCKING.has(sev);
 const DEFAULT_PASSES = 3;
@@ -114,7 +116,7 @@ export function createImplementationHandlers(d: ImplDeps) {
 
   /** A secret anywhere in the branch's history cannot be fixed by another commit: it needs a human (and a history rewrite). */
   async function secretStop(wt: string, base: string): Promise<StageResult | undefined> {
-    const hits = scanForSecrets(await historyAddedLines(wt, base, git));
+    const hits = scanHistoryForSecrets(await historyAddedLines(wt, base, git));
     if (hits.length === 0) return undefined;
     return { kind: "needs_attention", reason: `A possible secret was committed on this branch (${[...new Set(hits.map((h) => h.rule))].join(", ")}). Removing it in a new commit would still leave it in history, so the branch must be rewritten or discarded by a human before anything is pushed. The worktree was left for inspection.` };
   }
@@ -230,8 +232,8 @@ export function createImplementationHandlers(d: ImplDeps) {
     const project = d.project(ctx.job.projectId);
     const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands, project.allowLoopback);
     const r = await implementer(ctx, {
-      task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: DirectResult, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id),
-      prompt: implementPromptDirect({ plan, wrapper, checks, ticket: p.ticket, previousFailures: previousFailures(d.db, ctx.job.id, "IMPLEMENTATION"), unrestricted: d.agentAccess?.(project.id) === "unrestricted" }),
+      task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: DirectResult, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id), lessons: "implementer",
+      prompt: implementPromptDirect({ plan, wrapper, checks, ticket: p.ticket, previousFailures: previousFailures(d.db, ctx.job.id, "IMPLEMENTATION"), unrestricted: d.agentAccess?.(project.id) === "unrestricted", bashAny: d.agentBashAny?.(project.id) }),
     }, p.cwd, p.info.base);
     if (!r.ok) return r.stop;
     await commitAll(p.cwd, `impl(${p.issue.identifier}): implement`, git);
@@ -262,8 +264,8 @@ export function createImplementationHandlers(d: ImplDeps) {
     for (let pass = 1; pass <= maxPasses; pass++) {
       const before = await head(p.cwd);
       const r = await implementer(ctx, {
-        task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: ImplementResult, bashAllow: [wrapper], resumeSessionId: session,
-        prompt: implementPrompt({ featureDir: p.featureDir, wrapper, checks, pass, gaps, ticket: p.ticket, previousFailures: pass === 1 ? failures : undefined, unrestricted: d.agentAccess?.(project.id) === "unrestricted" }),
+        task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: ImplementResult, bashAllow: [wrapper], resumeSessionId: session, lessons: "implementer",
+        prompt: implementPrompt({ featureDir: p.featureDir, wrapper, checks, pass, gaps, ticket: p.ticket, previousFailures: pass === 1 ? failures : undefined, unrestricted: d.agentAccess?.(project.id) === "unrestricted", bashAny: d.agentBashAny?.(project.id) }),
       }, p.cwd, p.info.base);
       if (!r.ok) return r.stop;
       session = r.result.sessionId ?? session;
@@ -281,7 +283,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       const cv = c.data!;
       for (const x of cv.deferred) recordDeferral(d.db, ctx.job.id, { id: x.id, severity: "minor", issue: x.id }, x.reason);
       record(ctx.job.id, "implementation.pass", `pass ${pass}: ${cv.converged ? "converged" : `${cv.appendedTasks} task(s) appended`}${cv.deferred.length ? `, ${cv.deferred.length} deferred to a human` : ""}${changedThisPass ? "" : ", no code change this pass"}`, cv.summary);
-      const done = async (extra: Record<string, unknown> = {}): Promise<StageResult> => ({ kind: "ok", output: { passes: pass, summary: r.data!.summary, skipped: r.data!.tasksSkipped, deferred: cv.deferred, files: (await changedFiles(p.cwd, p.info.base, { code: true }, git)).length, ...extra } });
+      const done = async (extra: Record<string, unknown> = {}): Promise<StageResult> => ({ kind: "ok", output: { commentary: commentaryOf(r.result, r.data), passes: pass, summary: r.data!.summary, skipped: r.data!.tasksSkipped, deferred: cv.deferred, files: (await changedFiles(p.cwd, p.info.base, { code: true }, git)).length, ...extra } });
       if (cv.converged) return done();
       if (cv.appendedTasks === 0) {
         // Nothing new for the implementer to do. Gaps the converge step says only a human can close are deferred to the PR.
@@ -350,7 +352,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       record(ctx.job.id, "code-review.reused", "no code change since the last independent review; reusing its findings");
     } else {
       const prompt = codeReviewPrompt({ ticket: p.ticket, spec: requirementsFor(ctx.job.id, p.cwd, p.featureDir), stat: diff.stat, diff: diff.text, results: latestResults(ctx.job.id), history: await reviewHistory(ctx.job.id, p.cwd) });
-      const r = await independent(ctx, (task) => agent(ctx, { task, role: "qa-reviewer", prompt, cwd: p.cwd, schema: CodeReview, timeoutMs: 15 * MIN }));
+      const r = await independent(ctx, (task) => agent(ctx, { task, role: "qa-reviewer", prompt, cwd: p.cwd, schema: CodeReview, timeoutMs: 15 * MIN, lessons: "reviewer" }));
       if (!r.ok) return r.stop;
       findings = r.skipped ? [] : [...r.data.findings];
       reviewer = r.skipped ? "skipped" : r.reviewer;
@@ -386,7 +388,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       const prev = d.db.select().from(stageExecutions).where(and(eq(stageExecutions.jobId, ctx.job.id), eq(stageExecutions.stage, "LOCAL_MODEL_REVIEW"), eq(stageExecutions.outcome, "succeeded"))).orderBy(desc(stageExecutions.id)).limit(1).get();
       const earlier = ((prev?.outputJson ? JSON.parse(prev.outputJson) : {}) as { findings?: { id: string; severity: string; file: string; issue: string }[] }).findings ?? [];
       const r = await agent(ctx, {
-        task: "final_review", role: "qa-reviewer", cwd: p.cwd, timeoutMs: 20 * MIN, schema: ClaudeReview,
+        task: "final_review", role: "qa-reviewer", cwd: p.cwd, timeoutMs: 20 * MIN, schema: ClaudeReview, lessons: "reviewer",
         prompt: claudeReviewPrompt({ ticket: p.ticket, spec: requirementsFor(ctx.job.id, p.cwd, p.featureDir), stat: diff.stat, earlier, results: latestResults(ctx.job.id), base: p.info.base, history: await reviewHistory(ctx.job.id, p.cwd) }),
       });
       if (!r.ok) return r.stop;
@@ -410,8 +412,8 @@ export function createImplementationHandlers(d: ImplDeps) {
     const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands, project.allowLoopback);
     const before = await head(p.cwd);
     const r = await implementer(ctx, {
-      task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 40 * MIN, schema: ImplRemediation, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id),
-      prompt: implRemediationPrompt({ unrestricted: d.agentAccess?.(project.id) === "unrestricted", ...(direct() ? {} : { featureDir: p.featureDir }), wrapper, checks, findings, ticket: p.ticket, history: await reviewHistory(ctx.job.id, p.cwd), previousFailures: previousFailures(d.db, ctx.job.id, "REMEDIATION") }),
+      task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 40 * MIN, schema: ImplRemediation, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id), lessons: "implementer",
+      prompt: implRemediationPrompt({ unrestricted: d.agentAccess?.(project.id) === "unrestricted", bashAny: d.agentBashAny?.(project.id), ...(direct() ? {} : { featureDir: p.featureDir }), wrapper, checks, findings, ticket: p.ticket, history: await reviewHistory(ctx.job.id, p.cwd), previousFailures: previousFailures(d.db, ctx.job.id, "REMEDIATION") }),
     }, p.cwd, p.info.base);
     if (!r.ok) return r.stop;
     const byId = (id: string) => findings.find((f) => f.id === id) ?? { id, severity: "minor", issue: id };
@@ -458,7 +460,8 @@ export function createImplementationHandlers(d: ImplDeps) {
     try { results = await runChecks(ctx, p.cwd, project.commands, CHECK_ORDER, project.allowLoopback); } catch (e) { const s = sandboxStop(e); if (s) return s; throw e; }
     for (const r of failed(results)) gate(`check-${r.kind}`, `${r.kind} fails: ${r.tail.slice(-800)}`, r.command);
 
-    if ((await git(p.cwd, ["status", "--porcelain"])).length) gate("clean-tree", "the worktree has uncommitted changes");
+    // Untracked output the factory never commits (node_modules, Playwright's test-results/ and reports) is not uncommitted work.
+    if ((await git(p.cwd, ["status", "--porcelain", "-z"])).split("\0").some((l) => l && !NEVER_COMMIT.test(l.slice(3)))) gate("clean-tree", "the worktree has uncommitted changes");
     const touched = await findProtectedChanges(p.cwd, p.info.base, d.settings.protectedPaths, git);
     for (const f of touched) gate("protected-path", `protected path changed: ${f}`, f);
     const diff = await codeDiff(p.cwd, p.info.base, 1_000_000, git);
@@ -492,7 +495,7 @@ export function createImplementationHandlers(d: ImplDeps) {
         record(ctx.job.id, "final-review.reused", "no code change since the last final review; reusing its verdict");
       } else {
         const r = await agent(ctx, {
-          task: "final_review", role: "final-reviewer", cwd: p.cwd, timeoutMs: 25 * MIN, schema: FinalReview,
+          task: "final_review", role: "final-reviewer", cwd: p.cwd, timeoutMs: 25 * MIN, schema: FinalReview, lessons: "reviewer",
           prompt: finalReviewPrompt({ ticket: p.ticket, criteria, stat: diff.stat, results, base: p.info.base, decisions: rejected, history: await reviewHistory(ctx.job.id, p.cwd) }),
         });
         if (!r.ok) return r.stop;
@@ -521,10 +524,10 @@ export function createImplementationHandlers(d: ImplDeps) {
   const kit = createStageKit(d);
   const conflictResolution = createConflictHandler(
     { db: d.db, git, project: d.project, github: d.github, fetchEnv: d.fetchEnv, maxResolutions: d.maxConflictResolutions ?? (() => DEFAULT_MAX_CONFLICT_RESOLUTIONS) },
-    { ...kit, implementer, wrapperFor, secretStop, ...(d.agentAccess ? { agentAccess: d.agentAccess } : {}) },
+    { ...kit, implementer, wrapperFor, secretStop, ...(d.agentAccess ? { agentAccess: d.agentAccess } : {}), ...(d.agentBashAny ? { agentBashAny: d.agentBashAny } : {}) },
   );
 
-  return {
+  return withCommentary({
     CONFLICT_RESOLUTION: conflictResolution,
     IMPLEMENTATION_PREPARATION: implementationPreparation,
     IMPLEMENTATION: implementation,
@@ -533,7 +536,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     CLAUDE_REVIEW: claudeReview,
     REMEDIATION: remediation,
     FINAL_VALIDATION: finalValidation,
-  };
+  });
 }
 
 export interface ReportInput {

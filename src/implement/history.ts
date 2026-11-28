@@ -16,7 +16,7 @@ export interface Finding { id: string; severity: string; file?: string; line?: n
 export type Outcome = "accepted" | "rejected" | "deferred" | "unaddressed";
 export interface CycleFinding extends Finding { outcome: Outcome; reason?: string }
 /** One fix cycle: a stage raised blocking findings at `head`, and REMEDIATION answered them, leaving `headAfter`. */
-export interface Cycle { n: number; stage: string; head?: string; headAfter?: string; findings: CycleFinding[] }
+export interface Cycle { n: number; stage: string; head?: string; headAfter?: string; findings: CycleFinding[]; /** The stage execution that raised the findings (lessons cite it as their source). */ executionId?: number }
 
 /** Stages whose `remediate` output feeds the implementer's REMEDIATION stage. */
 export const REVIEW_STAGES = ["AUTOMATED_TESTING", "LOCAL_MODEL_REVIEW", "CLAUDE_REVIEW", "FINAL_VALIDATION", "CI_VALIDATION"];
@@ -47,7 +47,7 @@ export function fixCycles(db: FactoryDb, jobId: string): Cycle[] {
     const out = parse(r.outputJson);
     if (REVIEW_STAGES.includes(r.stage) && typeof out.remediate === "string") {
       const details = (out.details ?? {}) as { findings?: Finding[]; head?: string };
-      open = { stage: r.stage, head: details.head, findings: (details.findings ?? []).filter(blocking).map((f) => ({ ...f, outcome: "unaddressed" as Outcome })) };
+      open = { stage: r.stage, executionId: r.id, head: details.head, findings: (details.findings ?? []).filter(blocking).map((f) => ({ ...f, outcome: "unaddressed" as Outcome })) };
     } else if (r.stage === "REMEDIATION" && open) {
       const o = out as { accepted?: string[]; rejected?: { id: string; reason: string }[]; deferred?: { id: string; reason: string }[]; head?: string };
       for (const f of open.findings) {
