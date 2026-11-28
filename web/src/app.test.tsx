@@ -589,6 +589,36 @@ describe("settings and setup", () => {
     const sent = JSON.parse(calls.find((c) => c.method === "PUT")!.body!);
     expect(sent.overrides).toEqual({ maxRemediationAttempts: 1, models: { implementation: { provider: "anthropic", model: "opus" } } }); // concurrency + other models: follow global
   });
+  describe("a project's MCP servers", () => {
+    const mcp = { servers: [{ name: "github" }, { name: "docs" }], defaultServers: ["docs"] };
+    const open = async (overrides?: { mcpServers: string[] }) => {
+      routes = { "/api/overview": overview(), "/api/projects": { projects: [{ ...proj, overrides: overrides ?? null }] }, "/api/setup": setupInfo, "/api/setup/linear": { teams: [] }, "/api/settings/global": globalSettings, "/api/mcp/servers": mcp, "/api/settings/projects/my-app": { ok: true } };
+      app("/settings");
+      await screen.findByLabelText("follow the profile default MCP servers");
+    };
+    const saved = async () => {
+      await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(calls.find((c) => c.method === "PUT")).toBeTruthy());
+      return JSON.parse(calls.find((c) => c.method === "PUT")!.body!).overrides as Record<string, unknown>;
+    };
+    it("keeps an existing selection when another field is saved", async () => {
+      await open({ mcpServers: ["github"] });
+      expect(screen.getByLabelText("MCP server github")).toBeChecked();
+      await userEvent.type(screen.getByLabelText("Implementation passes"), "5");
+      expect(await saved()).toMatchObject({ maxImplementationPasses: 5, mcpServers: ["github"] });
+    });
+    it("sends [] when follow is unticked and nothing is chosen", async () => {
+      await open();
+      await userEvent.click(screen.getByLabelText("follow the profile default MCP servers"));
+      await userEvent.click(await screen.findByLabelText("MCP server docs")); // unticking starts from the default (docs): untick it
+      expect((await saved()).mcpServers).toEqual([]);
+    });
+    it("leaves the key out when follow is ticked", async () => {
+      await open({ mcpServers: ["github"] });
+      await userEvent.click(screen.getByLabelText("follow the profile default MCP servers"));
+      expect(await saved()).not.toHaveProperty("mcpServers");
+    });
+  });
   it("shows an agent run's conversation: prompt, messages, tool calls with their results, and the outcome", async () => {
     const run = { id: 7, stageExecutionId: null, agent: "anthropic/implementer", model: "claude-opus-5-5", exitCode: 0, durationMs: 5000, finished: true, usage: null, hasLog: true, at: 1 };
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job(), [], { invocations: [run] }), "/api/jobs/j1/invocations/7/conversation?after=0": { offset: 500, done: true, agent: "anthropic/implementer", model: "claude-opus-5-5", turns: [
