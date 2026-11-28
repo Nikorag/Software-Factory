@@ -43,9 +43,11 @@ export async function checkGitHubAuth(): Promise<CheckResult> {
  * Probe an OpenAI-compatible endpoint. Reports what the server actually says;
  * never assumes a model exists. Read-only GET.
  */
-export async function checkLocalModels(baseUrl: string, fetchImpl: typeof fetch = fetch): Promise<CheckResult[]> {
+export async function checkLocalModels(baseUrl: string, fetchImpl: typeof fetch = fetch, apiKeyEnv?: string, env: NodeJS.ProcessEnv = process.env): Promise<CheckResult[]> {
   try {
-    const res = await fetchImpl(`${baseUrl}/models`, { signal: AbortSignal.timeout(5000) });
+    const key = apiKeyEnv ? env[apiKeyEnv] : undefined;
+    if (apiKeyEnv && !key) return [{ name: "local models", status: "fail", detail: `the API key environment variable ${apiKeyEnv} is not set` }];
+    const res = await fetchImpl(`${baseUrl}/models`, { headers: key ? { Authorization: `Bearer ${key}` } : undefined, signal: AbortSignal.timeout(5000) });
     if (!res.ok) return [{ name: "local models", status: "fail", detail: `GET ${baseUrl}/models -> HTTP ${res.status}` }];
     const body = (await res.json()) as { data?: { id: string }[] };
     const ids = (body.data ?? []).map((m) => m.id);
@@ -96,7 +98,7 @@ export async function pluginChecks(config: LoadedConfig, fetchImpl: typeof fetch
   }
   const servers = uses.map((u) => ({ u, s: modelServer(u, registry) })).filter((x): x is { u: InstanceUse; s: { baseUrl: string; apiKeyEnv?: string } } => !!x.s && !("error" in x.s));
   if (!uses.some((u) => u.instance && registry.capabilities(u.instance.plugin)?.listsModels)) out.push({ name: "local models", status: "ok", detail: "no route uses a model server (Claude Code only)" });
-  for (const { s } of servers) out.push(...(await checkLocalModels(s.baseUrl, fetchImpl)));
+  for (const { s } of servers) out.push(...(await checkLocalModels(s.baseUrl, fetchImpl, s.apiKeyEnv)));
   return [...out, ...(await checkLocalRoutes(config, fetchImpl, registry))];
 }
 

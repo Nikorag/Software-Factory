@@ -377,6 +377,27 @@ describe("doctor", () => {
   });
 });
 
+describe("review fixes", () => {
+  it("doctor sends the instance's key when listing models, and fails clearly when the variable is unset", async () => {
+    const seen: (string | undefined)[] = [];
+    const keyed = (async (_u: string, init?: RequestInit) => { const a = (init?.headers as Record<string, string> | undefined)?.Authorization; seen.push(a); return a ? new Response(JSON.stringify({ data: [{ id: "m1" }] })) : new Response("no", { status: 401 }); }) as unknown as typeof fetch;
+    const { checkLocalModels } = await import("../src/doctor/checks.js");
+    expect((await checkLocalModels("http://x/v1", keyed, "DOC_KEY", { DOC_KEY: SECRET }))[0]).toMatchObject({ status: "ok" });
+    expect(seen).toEqual([`Bearer ${SECRET}`]);
+    expect((await checkLocalModels("http://x/v1", keyed, "DOC_KEY", {}))[0]).toMatchObject({ status: "fail", detail: expect.stringContaining("DOC_KEY") });
+  });
+  it("rejects a secret held in plugin instance settings", () => {
+    expect(() => models({ p: { plugin: "echo", settings: { apiKey: SECRET } } })).toThrow(/must not hold a secret/);
+    expect(models({ p: { plugin: "echo", settings: { apiKeyEnv: "K" } } }).plugins.p).toBeTruthy();
+  });
+  it("blocks a remote settings save that sets a route endpoint or key variable", async () => {
+    const { blockedRemoteBody } = await import("../src/hub/remote-policy.js");
+    const put = (routes: unknown) => blockedRemoteBody("PUT", "/api/settings/global", Buffer.from(JSON.stringify({ routes })));
+    expect(put({ independent_review: { provider: "local", model: "m", baseUrl: "https://evil.test/v1", apiKeyEnv: "AWS_SECRET" } })).toMatch(/decide on the machine/);
+    expect(put({ classification: { plugin: "local", model: "m" } })).toBeNull();
+  });
+});
+
 describe("plugin API", () => {
   const HOST = { host: "127.0.0.1:4780" }, UI = { ...HOST, origin: "http://127.0.0.1:4780", "x-factory-ui": "1", "content-type": "application/json" };
   function app(registry = createRegistry({ env: { env: { SOME_KEY: SECRET } } })) {

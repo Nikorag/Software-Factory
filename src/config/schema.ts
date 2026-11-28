@@ -97,7 +97,8 @@ export const InstanceId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "an inst
 export const PluginInstanceConfig = z.object({
   plugin: z.string().min(1).max(64),
   /** The plugin's own settings, validated by the plugin. Secrets are only ever named by environment variable (`apiKeyEnv`). */
-  settings: z.record(z.string(), z.unknown()).default({}),
+  settings: z.record(z.string(), z.unknown()).default({})
+    .refine((s) => !Object.entries(s).some(([k, v]) => /(api[_-]?key|token|secret|password)$/i.test(k) && typeof v === "string" && v.length > 0), { message: "settings must not hold a secret: name an environment variable (apiKeyEnv) instead" }),
 });
 const ModelRouteBase = z.object({
   plugin: InstanceId.optional(),
