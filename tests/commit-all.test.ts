@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { commitAll } from "../src/speckit/tools.js";
+import { commitAll, NEVER_COMMIT } from "../src/speckit/tools.js";
 import { git } from "../src/repo/git.js";
 import { makeRepo, sh } from "./helpers/git-fixture.js";
 
@@ -30,5 +30,9 @@ describe("commitAll (found live: it failed every implementation attempt once nod
     const { repo } = makeRepo();
     put(repo, "node_modules/dep/index.js");
     expect(await commitAll(repo, "impl", git)).toBe(false);
+  });
+  it("NEVER_COMMIT (which the clean-tree gate also uses) exempts dependency and Playwright output, not real files", () => {
+    for (const f of ["node_modules/x.js", "a/node_modules/x.js", "test-results/t.txt", "web/playwright-report/index.html", "docs/.DS_Store"]) expect(NEVER_COMMIT.test(f), f).toBe(true);
+    for (const f of ["src/x.ts", "src/test-results.ts", "playwright/tests/a.spec.ts"]) expect(NEVER_COMMIT.test(f), f).toBe(false);
   });
 });

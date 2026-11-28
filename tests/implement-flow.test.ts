@@ -206,6 +206,11 @@ describe.skipIf(!sandboxAvailable())("final validation gates (deterministic, ind
     await h.engine.tick();
     expect(gateFinding(h, "tasks-open")).toBe(true);
   });
+  it("still fails the clean-tree gate for a real untracked file, while Playwright output next to it is exempt", async () => {
+    const h = await harness({ commands: { test: "node --test", lint: "node --check src/todos.js", visual: "mkdir -p test-results && echo x > test-results/t.txt && echo $$ > src/leftover.ts" } }); // new content each run, so it is never already committed
+    await h.engine.tick();
+    expect(gateFinding(h, "clean-tree")).toBe(true);
+  });
   it("a remediation that breaks the build is caught by the factory's own re-run (never by trusting the agent) and fixed", async () => {
     const h = await harness();
     let finals = 0, fixes = 0;
