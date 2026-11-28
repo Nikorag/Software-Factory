@@ -7,6 +7,7 @@ import { ModelRouter } from "../agents/router.js";
 import { AgentRunner } from "../agents/runner.js";
 import { readLimits, usageFile } from "../agents/usage.js";
 import { ConfigError } from "../config/load.js";
+import { effectiveSkills } from "../config/skills.js";
 import { effectiveProtectedPaths, planningModeOf, type LoadedConfig, type ProjectConfig } from "../config/schema.js";
 import { openDb, type DbHandle } from "../db/client.js";
 import { Engine, type HandlerRegistry } from "../core/engine.js";
@@ -64,6 +65,7 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
   const runner = new AgentRunner({ db: handle.db, router, logDir: join(dataDir, "logs", "agents"), protectedPaths: protectedPathsOf(config), usageFile: usageFile(dataDir),
     access: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess,
     projectBashAllow: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAllow ?? [],
+    skills: (id) => effectiveSkills(config.factory.skills, config.projects.projects.find((p) => p.id === id)?.skills),
     readGrants: (jobId) => readGrants(handle.db, jobId),
   });
   const worktrees = new WorktreeManager({

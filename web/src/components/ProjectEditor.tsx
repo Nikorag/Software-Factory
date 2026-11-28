@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { api, send } from "@/lib/api";
 import { usePoll } from "@/hooks/usePoll";
 import { BUILTIN_ENTRIES, WORDS, withTracker } from "@/lib/trackers";
-import type { GhAccounts } from "@/lib/types";
+import { skillsFromText, skillsToText, type GhAccounts } from "@/lib/types";
 import type { BitbucketCredential, Project, TeamAudit, TrackerEntry } from "@/lib/types";
 import { DEFAULT_PROMPT_ROUTE, TASKS, type GlobalSettings, type Routes, type RouteCfg, type TaskId } from "@/lib/tasks";
 import { ModelPicker, ReviewerPicker } from "./ModelPicker";
@@ -22,12 +22,12 @@ const CMDS = ["install", "build", "typecheck", "lint", "test", "visual"] as cons
 /** Repos, paths, branches and commands: no capital letter or "correction" from a phone keyboard. */
 const CODE = { autoCapitalize: "off", autoCorrect: "off", spellCheck: false } as const;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-export interface Form { passes: string; host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; access: string; loopback: boolean; gatePrompt: boolean; specKit: boolean; bashAllow: string; lprojectId: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; tracker: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
-const blank = (): Form => ({ passes: "", host: "github", bbRepo: "", bbCred: "default", pickup: "", access: "", loopback: false, gatePrompt: false, specKit: true, bashAllow: "", lprojectId: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", tracker: "", team: "", lproject: "", enabled: true, commands: {} });
+export interface Form { passes: string; host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; access: string; loopback: boolean; gatePrompt: boolean; specKit: boolean; bashAllow: string; skills: string; lprojectId: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; tracker: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
+const blank = (): Form => ({ passes: "", host: "github", bbRepo: "", bbCred: "default", pickup: "", access: "", loopback: false, gatePrompt: false, specKit: true, bashAllow: "", skills: "", lprojectId: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", tracker: "", team: "", lproject: "", enabled: true, commands: {} });
 const fromProject = (p: Project): Form => ({
   host: p.host ?? "github", bbRepo: p.bitbucketRepo ?? "", bbCred: p.bitbucketCredential ?? "default",
   passes: p.overrides?.maxImplementationPasses?.toString() ?? "",
-  pickup: p.overrides?.pickupMode ?? "", access: p.overrides?.agentAccess ?? "", loopback: p.allowLoopback ?? false, gatePrompt: (p.gates ?? []).includes("REQUIREMENTS_ANALYSIS"), specKit: p.specKit ?? true, bashAllow: (p.agentBashAllow ?? []).join("\n"), lprojectId: p.linear?.projectId ?? "", conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
+  pickup: p.overrides?.pickupMode ?? "", access: p.overrides?.agentAccess ?? "", loopback: p.allowLoopback ?? false, gatePrompt: (p.gates ?? []).includes("REQUIREMENTS_ANALYSIS"), specKit: p.specKit ?? true, bashAllow: (p.agentBashAllow ?? []).join("\n"), skills: skillsToText(p.skills), lprojectId: p.linear?.projectId ?? "", conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
   id: p.id, name: p.name, source: p.managed ? "github" : "path", repo: p.githubRepo ?? "", path: p.managed ? "" : p.repository, account: p.githubAccount ?? "", branch: p.defaultBranch, autonomy: p.autonomy,
   tracker: p.tracker ?? "", team: p.linear?.teamKey ?? "", lproject: p.linear?.projectName ?? "", enabled: p.enabled, commands: Object.fromEntries(CMDS.map((k) => [k, p.commands[k] ?? ""])),
 });
@@ -74,7 +74,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
       ...(f.host === "bitbucket"
         ? { bitbucket: { repo: f.bbRepo.trim() || undefined, credential: f.bbCred }, ...(f.source === "path" ? { repository: f.path.trim() } : {}) }
         : f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
-      allowLoopback: f.loopback, gates: f.gatePrompt ? ["REQUIREMENTS_ANALYSIS"] : [], specKit: f.specKit, agentBashAllow: f.bashAllow.split("\n").map((l) => l.trim()).filter(Boolean),
+      allowLoopback: f.loopback, gates: f.gatePrompt ? ["REQUIREMENTS_ANALYSIS"] : [], specKit: f.specKit, agentBashAllow: f.bashAllow.split("\n").map((l) => l.trim()).filter(Boolean), skills: skillsFromText(f.skills),
       overrides: { maxImplementationPasses: f.passes ? Number(f.passes) : undefined, pickupMode: f.pickup || undefined, agentAccess: (f.access || undefined) as "restricted" | "unrestricted" | undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models },
       ...(f.team ? { linear: { teamKey: f.team, projectName: f.lproject || undefined, projectId: f.lprojectId.trim() || undefined } } : {}),
     });
@@ -198,6 +198,9 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         <div className="grid gap-1.5"><Label htmlFor="pe-bash">Extra commands the agent may run</Label>
           <textarea id="pe-bash" {...CODE} rows={3} className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs" placeholder={"GOLDEN_OUT=/tmp/golden godot --headless"} value={f.bashAllow} onChange={(e) => set("bashAllow", e.target.value)} />
           <span className="text-xs text-muted-foreground">One command prefix per line. Only applies while agent access is restricted.</span></div>
+        <div className="grid gap-1.5"><Label htmlFor="pe-skills">Skills</Label>
+          <textarea id="pe-skills" {...CODE} rows={3} className="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs" placeholder={"my-skill=~/skills/my-skill/SKILL.md"} value={f.skills} onChange={(e) => set("skills", e.target.value)} />
+          <span className="text-xs text-muted-foreground">One <code>name=path</code> per line; the path is a SKILL.md file or a folder containing one. Given to every agent run for this project; replaces a profile skill of the same name.</span></div>
         <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={f.specKit} onChange={(e) => set("specKit", e.target.checked)} />
           <span>Use the SpecKit specification workflow<span className="block text-xs text-muted-foreground">On by default. Off skips spec generation for this project.</span></span></label>
         {noTest ? <p className="text-sm text-loop">No test command: the factory will not implement changes here yet.</p> : null}

@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { Logger } from "pino";
 import { HubClient, HubError, type FetchLike, type TunnelRequest, type TunnelResponse } from "./client.js";
 import { backoffMs } from "./reporter.js";
-import { classifyRemote, REMOTE_BLOCKED, validateRemotePath } from "./remote-policy.js";
+import { blockedRemoteBody, classifyRemote, REMOTE_BLOCKED, validateRemotePath } from "./remote-policy.js";
 import type { HubSettings } from "./settings.js";
 
 export const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
@@ -131,6 +131,11 @@ export class HubTunnel {
     if (req.bodyBase64) {
       if (typeof req.bodyBase64 !== "string" || req.bodyBase64.length > Math.ceil(MAX_REQUEST_BYTES * 4 / 3) + 4) return json(413, { error: "request too large" });
       payload = Buffer.from(req.bodyBase64, "base64");
+    }
+    const bodyReason = blockedRemoteBody(method, path.pathname, payload);
+    if (bodyReason) {
+      this.o.logger.debug({ method, route: decision.route, reason: bodyReason }, "hub tunnel: refused");
+      return json(403, { error: REMOTE_BLOCKED });
     }
     // Only these two headers cross over. Everything that makes the request trusted locally is set here, not by the hub.
     const headers: Record<string, string> = {
