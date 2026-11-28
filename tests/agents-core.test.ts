@@ -3,12 +3,18 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { agentEnv } from "../src/agents/env.js";
 import { findProtectedChanges } from "../src/agents/guard.js";
-import { pathRoots, toolPolicy } from "../src/agents/permissions.js";
+import { ALWAYS_DENY_BASH, pathRoots, toolPolicy } from "../src/agents/permissions.js";
 import { runProcess } from "../src/agents/process.js";
 import { buildClaudeArgs, parseClaudeOutput, ClaudeCodeAgent } from "../src/agents/claude.js";
 import { ROLE_PROFILE, rolePrompt } from "../src/agents/roles.js";
 import type { AgentRequest, AgentRole } from "../src/agents/types.js";
-import { FactoryConfig } from "../src/config/schema.js";
+import { AgentRunner } from "../src/agents/runner.js";
+import { ModelRouter } from "../src/agents/router.js";
+import type { Agent, AgentResult } from "../src/agents/types.js";
+import { effectiveSkills } from "../src/config/skills.js";
+import { FactoryConfig, ModelsConfig, type SkillRef } from "../src/config/schema.js";
+import { openDb } from "../src/db/client.js";
+import { agentInvocations, decisions, jobs, projects } from "../src/db/schema.js";
 import { makeRepo, sh, tmp } from "./helpers/git-fixture.js";
 
 const NODE = process.execPath;
@@ -27,6 +33,26 @@ describe("permission profiles", () => {
     const p = toolPolicy("implementer", { protectedPaths: prot, bashAllow: ["pnpm test"], roots: ["/w"] });
     expect(p.allow).toEqual(expect.arrayContaining(["Edit(//w/**)", "Bash(git commit:*)", "Bash(git add:*)", "Bash(pnpm test:*)"]));
     for (const d of ["git push", "git fetch", "git checkout", "git config", "git remote", "gh", "curl", "ssh", "sudo", "rm -rf"]) expect(p.deny).toContain(`Bash(${d}:*)`);
+  });
+  it("bashAny gives the implementer a bare Bash allow and keeps every deny", () => {
+    const p = toolPolicy("implementer", { protectedPaths: prot, roots: ["/w"], bashAny: true });
+    expect(p.allow).toContain("Bash");
+    for (const d of ALWAYS_DENY_BASH) expect(p.deny).toContain(`Bash(${d}:*)`);
+    expect(p.deny).toEqual(expect.arrayContaining(["Edit(.env)", "Edit(.git/**)", "Edit(.github/workflows/**)"]));
+    expect(p.allow).not.toContain("Write");
+    expect(p.allow).not.toContain("Edit");
+    expect(p.allow).not.toContain("Read");
+  });
+  it("without bashAny the implementer has no bare Bash and the args are unchanged", () => {
+    const cwd = tmp();
+    expect(toolPolicy("implementer", { protectedPaths: prot, roots: ["/w"] }).allow).not.toContain("Bash");
+    expect(toolPolicy("implementer", { protectedPaths: prot, roots: ["/w"], bashAny: false })).toEqual(toolPolicy("implementer", { protectedPaths: prot, roots: ["/w"] }));
+    const base = buildClaudeArgs(req({ cwd }));
+    expect(buildClaudeArgs(req({ cwd, bashAny: false }))).toEqual(base);
+    expect(buildClaudeArgs(req({ cwd, bashAny: true }))).not.toEqual(base);
+  });
+  it("reviewers and the spec-writer never get a bare Bash allow, even with bashAny", () => {
+    for (const prof of ["read-only", "spec-writer"] as const) expect(toolPolicy(prof, { protectedPaths: prot, bashAny: true }).allow).not.toContain("Bash");
   });
   it("denies edits to every protected path, including .env and the workflows directory", () => {
     const p = toolPolicy("implementer", { protectedPaths: prot });
@@ -253,6 +279,89 @@ describe("ClaudeCodeAgent with a fake claude binary", () => {
     const r = await new ClaudeCodeAgent({ bin: "/nonexistent/claude" }).run(req());
     expect(r).toMatchObject({ ok: false, failure: "error" });
     expect(r.error).toContain("could not start");
+  });
+});
+
+describe("skills in the system prompt", () => {
+  const route = { provider: "anthropic" as const, model: "default" };
+  const setup = (skills?: (id?: string) => (SkillRef & { body?: string; fromRepo?: boolean })[]) => {
+    const { db } = openDb(":memory:");
+    db.insert(projects).values({ id: "p", configJson: "{}" }).run();
+    db.insert(jobs).values({ id: "j", projectId: "p", externalId: "e", externalKey: "E-1" }).run();
+    const seen: AgentRequest[] = [];
+    const agent: Agent = { provider: "anthropic", async run(r): Promise<AgentResult> { seen.push(r); return { ok: true, text: "done", denials: [], exitCode: 0, durationMs: 1 }; } };
+    const router = new ModelRouter(ModelsConfig.parse({ routes: { classification: route, specification: route, implementation: route, independent_review: route, final_review: route } }), { anthropic: agent, local: agent });
+    const logDir = tmp();
+    return { db, seen, logDir, runner: new AgentRunner({ db, router, logDir, protectedPaths: [".env"], ...(skills ? { skills } : {}) }) };
+  };
+  const step = (cwd: string) => ({ jobId: "j", projectId: "p", task: "implementation" as const, role: "implementer" as const, prompt: "go", cwd, timeoutMs: 1000 });
+  const skillFile = (name: string, body: string) => { const p = join(tmp(), `${name}.md`); writeFileSync(p, body); return p; };
+
+  it("appends each skill's body, delimited, and records only the names", async () => {
+    const a = skillFile("a", "---\nname: a\n---\nALPHA BODY"), dir = tmp(); mkdirSync(join(dir, "b")); writeFileSync(join(dir, "b", "SKILL.md"), "BETA BODY");
+    const s = setup(() => [{ name: "a", path: a }, { name: "b", path: join(dir, "b") }]);
+    await s.runner.run(step(tmp()));
+    const sp = s.seen[0]!.systemPrompt!;
+    expect(sp.startsWith(rolePrompt("implementer"))).toBe(true);
+    expect(sp).toContain("## Skill: a\n\nALPHA BODY\n\n## End skill: a");
+    expect(sp).toContain("## Skill: b\n\nBETA BODY");
+    expect(sp).not.toContain("name: a"); // front matter is dropped
+    const rows = s.db.select().from(decisions).all().filter((d) => d.kind === "agent.skills");
+    expect(rows.map((r) => r.decision)).toEqual(["implementer runs with skills: a, b"]);
+    expect(JSON.stringify(s.db.select().from(decisions).all())).not.toContain("ALPHA BODY");
+    expect(readFileSync(s.db.select().from(agentInvocations).get()!.logPath!, "utf8")).not.toContain("ALPHA BODY");
+  });
+
+  it("leaves the system prompt exactly as before when there are no skills", async () => {
+    const none = setup(), empty = setup(() => []);
+    await none.runner.run(step(tmp())); await empty.runner.run(step(tmp()));
+    expect(none.seen[0]!.systemPrompt).toBe(rolePrompt("implementer"));
+    expect(empty.seen[0]!.systemPrompt).toBe(rolePrompt("implementer"));
+    expect(empty.db.select().from(decisions).all().filter((d) => d.kind === "agent.skills")).toEqual([]);
+  });
+
+  it("fails the run with a clear error when a skill file is missing", async () => {
+    const s = setup(() => [{ name: "gone", path: join(tmp(), "nope.md") }]);
+    await expect(s.runner.run(step(tmp()))).rejects.toThrow(/skill "gone".*does not exist/);
+    expect(s.seen).toEqual([]);
+  });
+
+  it("effectiveSkills: a project skill replaces a profile skill of the same name", () => {
+    const eff = effectiveSkills([{ name: "x", path: "/p/x" }, { name: "y", path: "/p/y" }], [{ name: "x", path: "/proj/x" }, { name: "z", path: "/proj/z" }]);
+    expect(eff).toEqual([{ name: "x", path: "/proj/x" }, { name: "y", path: "/p/y" }, { name: "z", path: "/proj/z" }]);
+    expect(effectiveSkills(undefined, undefined)).toEqual([]);
+  });
+
+  it("effectiveSkills merges profile < projects.yaml < repo file by name; the repo file wins a clash with projects.yaml", () => {
+    const eff = effectiveSkills([{ name: "x", path: "/p/x" }, { name: "y", path: "/p/y" }], [{ name: "x", path: "/proj/x" }, { name: "z", path: "/proj/z" }], [{ name: "z", path: "r/z", body: "REPO Z" }, { name: "w", path: "r/w", body: "W" }]);
+    expect(eff.map((s) => [s.name, s.path, s.fromRepo ?? false])).toEqual([["x", "/proj/x", false], ["y", "/p/y", false], ["z", "r/z", true], ["w", "r/w", true]]);
+    expect(effectiveSkills([{ name: "a", path: "/p/a" }], undefined, [{ name: "a", path: "r/a", body: "B" }])[0]).toMatchObject({ body: "B", fromRepo: true }); // also beats the profile
+  });
+
+  it("the runner gets a repo-file skill's body from the list and the decision names the repo file", async () => {
+    const a = skillFile("a", "ALPHA");
+    const s = setup(() => effectiveSkills([], [{ name: "a", path: a }], [{ name: "r", path: ".claude/skills/r", body: "REPO BODY" }]));
+    await s.runner.run(step(tmp()));
+    const sp = s.seen[0]!.systemPrompt!;
+    expect(sp).toContain("## Skill: a\n\nALPHA");
+    expect(sp).toContain("## Skill: r\n\nREPO BODY\n\n## End skill: r");
+    const row = s.db.select().from(decisions).all().find((d) => d.kind === "agent.skills")!;
+    expect(row.decision).toBe("implementer runs with skills: a, r");
+    expect(row.rationale).toContain(".software-factory.yml");
+    const plain = setup(() => [{ name: "a", path: a }]);
+    await plain.runner.run(step(tmp()));
+    expect(plain.db.select().from(decisions).all().find((d) => d.kind === "agent.skills")!.rationale).not.toContain(".software-factory.yml");
+  });
+
+  it("the schema accepts valid skills and rejects a bad name", () => {
+    expect(FactoryConfig.parse({ skills: [{ name: "ok-1", path: "/a" }] }).skills).toHaveLength(1);
+    expect(FactoryConfig.parse({}).skills).toEqual([]);
+    expect(FactoryConfig.safeParse({ skills: [{ name: "Not Ok", path: "/a" }] }).success).toBe(false);
+  });
+
+  it("the Claude arguments are unchanged: skills never touch --setting-sources", () => {
+    const args = buildClaudeArgs(req({ systemPrompt: "x" }));
+    expect(args[args.indexOf("--setting-sources") + 1]).toBe("");
   });
 });
 

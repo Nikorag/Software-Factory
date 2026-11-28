@@ -2,7 +2,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { fixtureConfig } from "./helpers/config.js";
 import { openDb } from "../src/db/client.js";
-import { classifyRemote, RULES, validateRemotePath } from "../src/hub/remote-policy.js";
+import { blockedRemoteBody, classifyRemote, RULES, validateRemotePath } from "../src/hub/remote-policy.js";
 import { buildServer } from "../src/server/app.js";
 import { TaskManager } from "../src/service/tasks.js";
 
@@ -90,4 +90,17 @@ describe("remote path validation", () => {
   for (const p of good) it(`accepts ${p}`, () => expect(validateRemotePath(p)).not.toBeNull());
   for (const p of bad) it(`rejects ${JSON.stringify(p).slice(0, 50)}`, () => expect(validateRemotePath(p)).toBeNull());
   it("rejects non-strings", () => { for (const v of [undefined, null, 5, {}, ["/api/jobs"]]) expect(validateRemotePath(v)).toBeNull(); });
+});
+
+describe("skills are not settable remotely", () => {
+  const body = (o: unknown) => Buffer.from(JSON.stringify(o));
+  it("refuses a global settings body that carries skills, and allows one that does not", () => {
+    expect(blockedRemoteBody("PUT", "/api/settings/global", body({ maxConcurrentJobs: 1, skills: [] }))).toMatch(/skills/);
+    expect(blockedRemoteBody("PUT", "/api/settings/global", body({ maxConcurrentJobs: 1 }))).toBeNull();
+    expect(blockedRemoteBody("PUT", "/api/settings/tracker", body({ skills: [] }))).toBeNull();
+    expect(blockedRemoteBody("PUT", "/api/settings/global", undefined)).toBeNull();
+  });
+  it("project settings (which can carry skills) stay blocked remotely", () => {
+    expect(classifyRemote("PUT", "/api/settings/projects/x").allowed).toBe(false);
+  });
 });

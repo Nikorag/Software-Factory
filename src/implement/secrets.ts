@@ -14,6 +14,12 @@ const RULES: { rule: string; re: RegExp }[] = [
   { rule: "jwt", re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
   { rule: "credential-assignment", re: /\b(?:api[_-]?key|secret|passw(?:or)?d|token)\b["']?\s*[:=]\s*["'][A-Za-z0-9/+_\-=]{16,}["']/i },
 ];
+/**
+ * The access keys AWS itself publishes in its documentation. They are public and can never be live credentials, so a test
+ * fixture or doc snippet that uses one must not stop a job (seen live: JAM-66's lessons tests). Built from two halves so this
+ * file does not match its own rule. Exact matches only: any other AKIA/ASIA value, however "example"-like, still counts.
+ */
+const AWS_DOC_KEYS = new Set(["AKIAIOSFODNN7" + "EXAMPLE", "AKIAI44QH8DHB" + "EXAMPLE", "ASIAIOSFODNN7" + "EXAMPLE"]);
 const PLACEHOLDER = /(example|placeholder|changeme|your[_-]|xxxx|<[^>]+>|dummy|fake|test|redacted|\*{4})/i;
 
 /** Scans added lines. Values that look like documentation placeholders are ignored. */
@@ -24,6 +30,7 @@ export function scanForSecrets(lines: string[]): SecretHit[] {
       const m = re.exec(l);
       if (!m) continue;
       if (rule === "credential-assignment" && PLACEHOLDER.test(m[0])) continue;
+      if (rule === "aws-access-key" && AWS_DOC_KEYS.has(m[0])) continue;
       hits.push({ rule, line: i + 1, preview: `${l.trim().slice(0, 12)}…[${rule}]` }); // never echo the secret itself
       break;
     }

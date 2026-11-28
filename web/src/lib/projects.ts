@@ -38,3 +38,8 @@ export function projectMeta(jobs: Job[]): { text: string; color: string } {
 }
 
 export const stageName = (j: Job): string => stageLabel(j.status === "failed" && j.heldFromStage ? j.heldFromStage : j.stage);
+
+/** The Bash opt-in applies to the restricted implementer: an inherited access ("") is the factory default, restricted, so only an explicit "unrestricted" hides it. */
+export const showsBashAny = (access: string): boolean => access !== "unrestricted";
+/** What the form saves for agentBashAny: the box's value is kept (never silently cleared) whatever the access setting. */
+export const bashAnyPayload = (f: { bashAny: boolean }): boolean => f.bashAny;

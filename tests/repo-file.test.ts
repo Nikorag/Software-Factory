@@ -237,3 +237,82 @@ describe("checkProject with a file that moves the default branch", () => {
     expect(p.defaultBranch).toBe("trunk");
   });
 });
+
+describe("skills in .software-factory.yml", () => {
+  const SK = (extra = "") => `id: p\nskills:\n  - { name: alpha, path: .claude/skills/alpha/SKILL.md }\n  - { name: beta, path: docs/beta }\n${extra}`;
+  const files = (over: Record<string, string> = {}) => ({ "README.md": "hi\n", ".claude/skills/alpha/SKILL.md": "---\nname: alpha\n---\nALPHA COMMITTED", "docs/beta/SKILL.md": "BETA COMMITTED", ".software-factory.yml": SK(), ...over });
+
+  it("parses name/path, uses the SkillRef name rules and still rejects unknown keys", () => {
+    expect(parseRepoFile(SK(), "p").skills).toEqual([{ name: "alpha", path: ".claude/skills/alpha/SKILL.md" }, { name: "beta", path: "docs/beta" }]);
+    expect(() => parseRepoFile("id: p\nskills: [{ name: Bad Name, path: a }]\n", "p")).toThrow(/skills\.0\.name/);
+    expect(() => parseRepoFile("id: p\nskills: [{ name: a, path: x, extra: 1 }]\n", "p")).toThrow(ConfigError);
+    expect(() => parseRepoFile("id: p\nmcp: []\n", "p")).toThrow(/mcp|Unrecognized/);
+    expect(() => parseRepoFile("id: p\nskills: [{ name: a, path: x }, { name: a, path: y }]\n", "p")).toThrow(/twice/);
+    const many = Array.from({ length: 51 }, (_, i) => `{ name: s${i}, path: p${i} }`).join(", ");
+    expect(() => parseRepoFile(`id: p\nskills: [${many}]\n`, "p")).toThrow(/skills/);
+  });
+
+  it("rejects absolute, ~ and .. paths, naming the key", () => {
+    for (const bad of ["/etc/passwd", "~/x", "~", "../x", "a/../../x", "a/.."]) {
+      expect(() => parseRepoFile(`id: p\nskills: [{ name: a, path: '${bad}' }]\n`, "p"), bad).toThrow(/skills\.0\.path/);
+    }
+  });
+
+  it("reads the body from the committed default branch, not the working copy, with front matter stripped", async () => {
+    const { repo } = makeRepo(files());
+    writeFileSync(join(repo, ".claude/skills/alpha/SKILL.md"), "WORKING COPY EVIL"); // uncommitted
+    writeFileSync(join(repo, "docs/beta/SKILL.md"), "WORKING COPY EVIL");
+    const p = project({ repository: repo });
+    expect(await refreshRepoFile(p)).toEqual({ status: "applied" });
+    expect(p.repoSkills).toEqual([{ name: "alpha", path: ".claude/skills/alpha/SKILL.md", body: "ALPHA COMMITTED" }, { name: "beta", path: "docs/beta", body: "BETA COMMITTED" }]);
+    expect(p.skills).toEqual([]); // projects.yaml's list is untouched
+  });
+
+  it("enforces the 32 KB cap and a missing SKILL.md as an invalid file that applies nothing", async () => {
+    const big = makeRepo(files({ "docs/beta/SKILL.md": "x".repeat(32 * 1024 + 1) }));
+    const p = project({ repository: big.repo, commands: { test: "yaml test" } });
+    const r = await refreshRepoFile(p);
+    expect(r.status).toBe("error");
+    expect(r.error).toMatch(/skill "beta".*32 KB/);
+    expect(p.repoSkills).toBeUndefined();
+
+    const gone = makeRepo(files({ ".software-factory.yml": `id: p\ncommands: { test: repo test }\nskills: [{ name: nope, path: docs/missing }]\n` }));
+    const q = project({ repository: gone.repo, commands: { test: "yaml test" } });
+    expect((await refreshRepoFile(q)).error).toMatch(/skill "nope".*no committed SKILL.md/);
+    expect(q.commands.test).toBe("yaml test");
+  });
+
+  it("rejects a path to a committed file that is not a SKILL.md", async () => {
+    const { repo } = makeRepo(files({ ".software-factory.yml": "id: p\nskills: [{ name: readme, path: README.md }]\n" }));
+    const p = project({ repository: repo });
+    const r = await refreshRepoFile(p);
+    expect(r.status).toBe("error");
+    expect(r.error).toMatch(/skill "readme".*no committed SKILL.md/);
+    expect(p.repoSkills).toBeUndefined();
+  });
+
+  it("an invalid file keeps the previous skills and settings; the overlay survives a settings save", async () => {
+    const { repo } = makeRepo(files());
+    const p = project({ repository: repo, skills: [{ name: "own", path: "/x/own" }] });
+    await refreshRepoFile(p);
+    writeFileSync(join(repo, ".software-factory.yml"), "id: p\nskills: [{ name: alpha, path: ../escape }]\n");
+    sh(repo, "commit", "-qam", "bad"); sh(repo, "push", "-q");
+    expect((await refreshRepoFile(p)).status).toBe("error");
+    expect(p.repoSkills?.map((s) => s.name)).toEqual(["alpha", "beta"]);
+
+    const fresh = project({ repository: repo, skills: [{ name: "own", path: "/x/own" }] });
+    carryRepoFiles([p], [fresh]);
+    expect(fresh.repoSkills?.map((s) => s.name)).toEqual(["alpha", "beta"]);
+    expect(fresh.skills).toEqual([{ name: "own", path: "/x/own" }]);
+  });
+
+  it("a fixed file that drops skills clears them", async () => {
+    const { repo } = makeRepo(files());
+    const p = project({ repository: repo });
+    await refreshRepoFile(p);
+    writeFileSync(join(repo, ".software-factory.yml"), "id: p\ncommands: { test: t }\n");
+    sh(repo, "commit", "-qam", "drop"); sh(repo, "push", "-q");
+    await refreshRepoFile(p);
+    expect(p.repoSkills).toBeUndefined();
+  });
+});

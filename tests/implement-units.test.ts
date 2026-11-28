@@ -14,18 +14,27 @@ import { fixture } from "./helpers/scripted-agent.js";
 import { makeRepo, sh, tmp } from "./helpers/git-fixture.js";
 
 describe("scanForSecrets", () => {
+  // Built at runtime so this file's own lines never match the scanner (a literal key here would stop any job that edits it).
+  const AWS_KEY = "AKIA" + "Q".repeat(16);
+  const AWS_DOC_KEY = "AKIAIOSFODNN7" + "EXAMPLE";
   const hit = (s: string) => scanForSecrets([s]).map((h) => h.rule);
   it.each([
-    ["-----BEGIN RSA PRIVATE KEY-----", "private-key"], ["const k = 'AKIAIOSFODNN7EXAMPLE'", "aws-access-key"],
+    ["-----BEGIN RSA PRIVATE KEY-----", "private-key"], [`const k = '${AWS_KEY}'`, "aws-access-key"],
     ["token: ghp_" + "a".repeat(36), "github-token"], ["x = 'lin_api_" + "A".repeat(30) + "'", "linear-api-key"], ["k='sk-ant-api03-" + "z".repeat(40) + "'", "anthropic-key"],
     ["password = \"hunter2hunter2hunter2\"", "credential-assignment"], ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop", "jwt"],
   ])("flags %j", (line, rule) => expect(hit(line)).toEqual([rule]));
   it("ignores placeholders, docs and ordinary code", () => {
     for (const l of ["const apiKey = process.env.API_KEY;", "password = \"<your-password-here>\"", "token: 'changeme-changeme-123456'", "// set LINEAR_API_KEY in your environment", "const total = a + b;"]) expect(hit(l)).toEqual([]);
   });
+  it("ignores the access keys AWS publishes in its documentation, but nothing else that looks like one", () => {
+    for (const k of [AWS_DOC_KEY, "AKIAI44QH8DHB" + "EXAMPLE", "ASIAIOSFODNN7" + "EXAMPLE"]) expect(hit(`const KEY = "${k}";`)).toEqual([]);
+    expect(hit(`const KEY = "${AWS_KEY}";`)).toEqual(["aws-access-key"]);
+    expect(hit("const KEY = 'AKIAIOSFODNN7" + "EXAMPLF';")).toEqual(["aws-access-key"]); // one character off the documented key
+    expect(hit("const KEY = 'ASIAI44QH8DHB" + "EXAMPLE';")).toEqual(["aws-access-key"]); // not a documented pairing
+  });
   it("never echoes the secret itself", () => {
-    const [h] = scanForSecrets(["AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'"]);
-    expect(JSON.stringify(h)).not.toContain("IOSFODNN7");
+    const [h] = scanForSecrets([`AWS_KEY = '${AWS_KEY}'`]);
+    expect(JSON.stringify(h)).not.toContain(AWS_KEY.slice(6));
   });
 });
 
@@ -183,6 +192,17 @@ describe("human deferral and fix-cycle memory (pure helpers)", () => {
 
 describe("prompts follow the project's agent access", () => {
   const r = { featureDir: "specs/x", wrapper: "/w/exec", checks: ["test"], findings: [{ id: "check:test" }] };
+  it("bashAny drops the 'other code-running commands are refused' limit; off keeps it", () => {
+    const o = { featureDir: "specs/x", wrapper: "/w/exec", checks: ["test"], pass: 1 };
+    expect(implRemediationPrompt(r)).toMatch(/other code-running commands are refused/);
+    expect(implRemediationPrompt({ ...r, bashAny: false })).toMatch(/other code-running commands are refused/);
+    const a = implRemediationPrompt({ ...r, bashAny: true });
+    expect(a).not.toMatch(/other code-running commands are refused/);
+    expect(a).not.toMatch(/unrestricted access/);
+    expect(a).toMatch(/still refused/);
+    expect(implementPrompt(o)).toMatch(/they are refused/);
+    expect(implementPrompt({ ...o, bashAny: true })).not.toMatch(/they are refused/);
+  });
   it("restricted: only the check tool; unrestricted: free to run tools, and told old 'cannot run' conclusions no longer hold", () => {
     expect(implRemediationPrompt(r)).toMatch(/check tool only/);
     expect(implRemediationPrompt(r)).not.toMatch(/unrestricted access/);

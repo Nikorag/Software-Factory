@@ -236,11 +236,11 @@ describe.skipIf(!sandboxAvailable())("final validation gates (deterministic, ind
 describe.skipIf(!sandboxAvailable())("secrets, protected paths and security: these stop for a human", () => {
   it("a committed secret stops the job immediately, even though a later commit could delete it (history is what ships)", async () => {
     const h = await harness();
-    h.claude.b.implement = (cwd, dir) => { write(cwd, "src/due.js", GOOD_SRC); write(cwd, "test/due.test.js", GOOD_TEST); write(cwd, "src/cfg.js", "export const KEY = 'AKIAIOSFODNN7EXAMPLE';\n"); tickTasks(cwd, dir); };
+    h.claude.b.implement = (cwd, dir) => { write(cwd, "src/due.js", GOOD_SRC); write(cwd, "test/due.test.js", GOOD_TEST); write(cwd, "src/cfg.js", "export const KEY = 'AKIA" + "QQQQQQQQQQQQQQQQ';\n"); tickTasks(cwd, dir); };
     await h.engine.tick();
     expect(job(h)).toMatchObject({ stage: "NEEDS_ATTENTION" });
     expect(job(h).lastError).toMatch(/possible secret was committed.*aws-access-key.*history/s);
-    expect(job(h).lastError).not.toContain("AKIAIOSFODNN7");
+    expect(job(h).lastError).not.toContain("AKIAQQQQ");
     expect(h.stages()).not.toContain("AUTOMATED_TESTING"); // failed fast
     expect(exists(h.wt, "src/cfg.js")).toBe(true); // left for inspection
   });
@@ -552,7 +552,7 @@ describe.skipIf(!sandboxAvailable())("retries keep their context", () => {
   });
   it("a secret already in the branch history stops IMPLEMENTATION before any agent run is spent (job df39)", async () => {
     const h = await harness();
-    write(h.wt, "src/cfg.js", "export const KEY = 'AKIAIOSFODNN7EXAMPLE';\n");
+    write(h.wt, "src/cfg.js", "export const KEY = 'AKIA" + "QQQQQQQQQQQQQQQQ';\n");
     sh(h.wt, "add", "-A"); sh(h.wt, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "earlier attempt");
     await h.engine.tick();
     expect(job(h)).toMatchObject({ stage: "NEEDS_ATTENTION" });
