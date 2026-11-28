@@ -42,6 +42,26 @@ describe.skipIf(!sandboxAvailable())("implementation pipeline (real engine, git,
     expect(report).toContain("PASS `test`"); expect(report).toContain("MET FR-001"); expect(report).toContain("factory/JAM-1");
     expect(fin.report).toBe(art.path);
   });
+  it("runs a configured visual check after test in the baseline, AUTOMATED_TESTING and the agent's tool list, and its untracked output does not trip the clean-tree gate", async () => {
+    const v = await harness({ commands: { test: "node --test", lint: "node --check src/todos.js", visual: "mkdir -p test-results playwright-report && echo x > test-results/t.txt && echo x > playwright-report/index.html" } });
+    await v.engine.tick();
+    const prep = JSON.parse(v.ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.stage, "IMPLEMENTATION_PREPARATION")).get()!.outputJson!);
+    expect(prep.baseline.map((r: { kind: string }) => r.kind)).toEqual(["lint", "test", "visual"]);
+    expect(impl(v)[0]!.prompt).toContain(`${impl(v)[0]!.bashAllow![0]} visual`);
+    expect(impl(v)[0]!.prompt).not.toContain("manual or visual testing");
+    const testing = v.ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.stage, "AUTOMATED_TESTING")).get()!;
+    expect(testing.outputJson).toContain('"kind":"visual"');
+    expect(v.hist()).toContain("FINAL_VALIDATION:succeeded"); // test-results/ is untracked in the worktree but is not uncommitted work
+    expect(existsSync(join(v.wt, "test-results/t.txt"))).toBe(true);
+    expect(sh(v.wt, "ls-files", "test-results", "playwright-report")).toBe("");
+  });
+  it("does not list or run a visual check when none is configured", async () => {
+    await h.engine.tick();
+    const prep = JSON.parse(h.ctx.handle.db.select().from(stageExecutions).where(eq(stageExecutions.stage, "IMPLEMENTATION_PREPARATION")).get()!.outputJson!);
+    expect(prep.baseline.map((r: { kind: string }) => r.kind)).not.toContain("visual");
+    expect(impl(h)[0]!.prompt).not.toContain("factory-exec visual");
+    expect(impl(h)[0]!.prompt).toContain("manual or visual testing");
+  });
   it("gives the implementer the sandboxed check tool and nothing that runs code directly", async () => {
     await h.engine.tick();
     const first = impl(h)[0]!;
