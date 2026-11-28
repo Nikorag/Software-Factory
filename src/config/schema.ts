@@ -39,6 +39,16 @@ export const McpServer = z.strictObject({
   url: z.string().url("a valid url").refine((u) => /^https?:\/\//.test(u), "http or https only").optional(),
   env: z.array(McpEnvName).default([]), // names only: the values are in the keychain
   headers: z.record(z.string(), z.string()).default({}),
+}).superRefine((s, ctx) => {
+  // A header may hold literal text and `${NAME}` references (NAME listed in `env`); a credential goes in the keychain, never in the config.
+  for (const [k, v] of Object.entries(s.headers)) {
+    const refs = [...v.matchAll(/\$\{([^}]*)\}/g)].map((m) => m[1]!);
+    const bad = refs.find((n) => !s.env.includes(n));
+    if (bad !== undefined) ctx.addIssue({ code: "custom", message: `header "${k}" references \${${bad}}, which is not listed in env`, path: ["headers", k] });
+    if (refs.length === 0 && v.trim() && (/key|token|secret|auth|cookie|password|credential/i.test(k) || /^(Bearer|Basic|Token)\s+\S/i.test(v))) {
+      ctx.addIssue({ code: "custom", message: `header "${k}" looks like an inline secret: reference a keychain variable as \${NAME} (listed in env) instead`, path: ["headers", k] });
+    }
+  }
 }).refine((s) => s.type !== "stdio" || Boolean(s.command), { message: "a stdio server needs a command", path: ["command"] })
   .refine((s) => s.type === "stdio" || Boolean(s.url), { message: "an http/sse server needs a url", path: ["url"] });
 export type McpServer = z.infer<typeof McpServer>;

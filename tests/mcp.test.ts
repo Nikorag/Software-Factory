@@ -88,6 +88,8 @@ describe("MCP configuration", () => {
     ["an empty url", "mcp:\n  servers:\n    - name: a\n      type: http\n      url: ''\n", /url/],
     ["an inline secret in env", "mcp:\n  servers:\n    - name: a\n      command: x\n      env: { API_TOKEN: abc }\n", /secret|env/],
     ["an inline secret header", "mcp:\n  servers:\n    - name: a\n      type: http\n      url: https://x.example\n      headers: { X-Api-Key: abc }\n", /secret/],
+    ["a bearer header with no reference", "mcp:\n  servers:\n    - name: a\n      type: http\n      url: https://x.example\n      headers: { Authorization: Bearer abcdefgh }\n", /secret/],
+    ["a header referencing a variable not in env", "mcp:\n  servers:\n    - name: a\n      type: http\n      url: https://x.example\n      headers: { Authorization: 'Bearer ${NOPE}' }\n", /not listed in env/],
     ["a name with underscores", "mcp:\n  servers:\n    - name: a__b\n      command: x\n", /name/],
     ["a default naming an unknown server", "mcp:\n  defaultServers: [ghost]\n", /unknown MCP server/],
   ])("rejects %s with a ConfigError", (_n, yaml, re) => {
