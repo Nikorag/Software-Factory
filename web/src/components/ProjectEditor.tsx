@@ -22,9 +22,10 @@ const CMDS = ["install", "build", "typecheck", "lint", "test"] as const;
 /** Repos, paths, branches and commands: no capital letter or "correction" from a phone keyboard. */
 const CODE = { autoCapitalize: "off", autoCorrect: "off", spellCheck: false } as const;
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-export interface Form { passes: string; host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; access: string; loopback: boolean; gatePrompt: boolean; specKit: boolean; bashAllow: string; lprojectId: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; tracker: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
-const blank = (): Form => ({ passes: "", host: "github", bbRepo: "", bbCred: "default", pickup: "", access: "", loopback: false, gatePrompt: false, specKit: true, bashAllow: "", lprojectId: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", tracker: "", team: "", lproject: "", enabled: true, commands: {} });
+export interface Form { mcp: string[] | null; passes: string; host: "github" | "bitbucket"; bbRepo: string; bbCred: string; pickup: string; access: string; loopback: boolean; gatePrompt: boolean; specKit: boolean; bashAllow: string; lprojectId: string; conc: string; fix: string; models: Partial<Routes>; id: string; name: string; source: "github" | "path"; repo: string; path: string; account: string; branch: string; autonomy: string; tracker: string; team: string; lproject: string; enabled: boolean; commands: Record<string, string> }
+const blank = (): Form => ({ mcp: null, passes: "", host: "github", bbRepo: "", bbCred: "default", pickup: "", access: "", loopback: false, gatePrompt: false, specKit: true, bashAllow: "", lprojectId: "", conc: "", fix: "", models: {}, id: "", name: "", source: "github", repo: "", path: "", account: "", branch: "main", autonomy: "supervised", tracker: "", team: "", lproject: "", enabled: true, commands: {} });
 const fromProject = (p: Project): Form => ({
+  mcp: p.overrides?.mcpServers ? [...p.overrides.mcpServers] : null, // null = follow the profile default
   host: p.host ?? "github", bbRepo: p.bitbucketRepo ?? "", bbCred: p.bitbucketCredential ?? "default",
   passes: p.overrides?.maxImplementationPasses?.toString() ?? "",
   pickup: p.overrides?.pickupMode ?? "", access: p.overrides?.agentAccess ?? "", loopback: p.allowLoopback ?? false, gatePrompt: (p.gates ?? []).includes("REQUIREMENTS_ANALYSIS"), specKit: p.specKit ?? true, bashAllow: (p.agentBashAllow ?? []).join("\n"), lprojectId: p.linear?.projectId ?? "", conc: p.overrides?.maxConcurrentJobs?.toString() ?? "", fix: p.overrides?.maxRemediationAttempts?.toString() ?? "", models: { ...(p.overrides?.models ?? {}) },
@@ -52,6 +53,8 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
   const { data: gh } = usePoll(() => api<GhAccounts>("/api/setup/github"), 120000);
   const { data: creds } = usePoll(() => api<{ credentials: BitbucketCredential[] }>("/api/bitbucket/credentials"), 60000);
   const [access, setAccess] = useState<string | null>(null);
+  const { data: mcpList } = usePoll(() => api<{ servers: { name: string }[]; defaultServers: string[] }>("/api/mcp/servers"), 60000);
+  const mcpNames = [...new Set([...(mcpList?.servers ?? []).map((s) => s.name), ...(f.mcp ?? [])])];
   // Which tracker connection this project's tickets live in: its own, else the profile's default. Teams come from that connection.
   const { data: trackerList } = usePoll(() => api<{ default: string; trackers: TrackerEntry[] }>("/api/trackers"), 60000);
   const connections = trackerList?.trackers ?? BUILTIN_ENTRIES(tracker ?? "linear");
@@ -75,7 +78,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         ? { bitbucket: { repo: f.bbRepo.trim() || undefined, credential: f.bbCred }, ...(f.source === "path" ? { repository: f.path.trim() } : {}) }
         : f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
       allowLoopback: f.loopback, gates: f.gatePrompt ? ["REQUIREMENTS_ANALYSIS"] : [], specKit: f.specKit, agentBashAllow: f.bashAllow.split("\n").map((l) => l.trim()).filter(Boolean),
-      overrides: { maxImplementationPasses: f.passes ? Number(f.passes) : undefined, pickupMode: f.pickup || undefined, agentAccess: (f.access || undefined) as "restricted" | "unrestricted" | undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models, mcpServers: project?.overrides?.mcpServers /* chosen in projects.yaml: a save here must not drop it */ },
+      overrides: { maxImplementationPasses: f.passes ? Number(f.passes) : undefined, pickupMode: f.pickup || undefined, agentAccess: (f.access || undefined) as "restricted" | "unrestricted" | undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models, mcpServers: f.mcp ?? undefined /* null = follow the profile: left out; [] = none */ },
       ...(f.team ? { linear: { teamKey: f.team, projectName: f.lproject || undefined, projectId: f.lprojectId.trim() || undefined } } : {}),
     });
     setBusy(false);
@@ -224,6 +227,14 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
           <div className="grid gap-1.5"><Label htmlFor="pe-fix">Fix cycle limit</Label>
             <div className="flex items-center gap-2"><Input id="pe-fix" type="number" inputMode="numeric" min={0} max={10} className="w-24" value={f.fix} placeholder={String(globals?.maxRemediationAttempts ?? 3)} onChange={(e) => set("fix", e.target.value)} />
               <span className="text-xs text-muted-foreground">{f.fix !== "" ? <button type="button" className="underline" onClick={() => set("fix", "")}>use global ({globals?.maxRemediationAttempts ?? 3})</button> : `global: ${globals?.maxRemediationAttempts ?? 3}`}</span></div></div>
+        </div>
+        <div className="grid gap-1.5"><Label>MCP servers for agents</Label>
+          <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" aria-label="follow the profile default MCP servers" checked={f.mcp === null} onChange={(e) => set("mcp", e.target.checked ? null : [...(mcpList?.defaultServers ?? [])])} />
+            <span>Follow the profile default{f.mcp === null ? <span className="block text-xs text-muted-foreground">{(mcpList?.defaultServers ?? []).length ? `Gets: ${mcpList!.defaultServers.join(", ")}` : "The profile has no default servers: agents get none."}</span> : null}</span></label>
+          {f.mcp !== null ? (mcpNames.length ? mcpNames.map((n) => (
+            <label key={n} className="ml-6 flex items-center gap-2 text-sm"><input type="checkbox" aria-label={`MCP server ${n}`} checked={f.mcp!.includes(n)} onChange={(e) => set("mcp", e.target.checked ? [...f.mcp!, n] : f.mcp!.filter((x) => x !== n))} />{n}</label>
+          )) : <span className="ml-6 text-xs text-muted-foreground">No servers are defined yet: add them in Settings → Integrations → MCP servers.</span>) : null}
+          {f.mcp !== null && f.mcp.length === 0 && mcpNames.length > 0 ? <span className="ml-6 text-xs text-muted-foreground">None selected: this project's agents get no MCP servers.</span> : null}
         </div>
         <div className="grid gap-3">
           {TASKS.map((t) => {

@@ -18,11 +18,13 @@ import { upsertProject } from "../src/config/store.js";
 import { openDb } from "../src/db/client.js";
 import { agentInvocations, decisions, jobs, projects } from "../src/db/schema.js";
 import { buildServer } from "../src/server/app.js";
+import type { ProjectActions } from "../src/service/actions.js";
+import { TaskManager } from "../src/service/tasks.js";
 import { fixtureConfigDir } from "./helpers/config.js";
 import { memoryStore } from "./helpers/fake-atlassian.js";
 import { tmp } from "./helpers/git-fixture.js";
 
-const SECRET = "s3cr3t-value-123";
+const SECRET = ["fixture", "value", "123"].join("-"); // a made-up marker, built so it never looks like a credential literal
 const req = (o: Partial<AgentRequest> = {}): AgentRequest => ({ role: "implementer", profile: "implementer", prompt: "p", cwd: tmp(), timeoutMs: 10_000, ...o });
 const grant = { names: ["github"], servers: { github: { type: "stdio", command: "mcp-github", args: [], env: { TOKEN: "${SF_MCP_GITHUB_TOKEN}" } } }, env: { SF_MCP_GITHUB_TOKEN: SECRET } };
 const SERVER_YAML = `mcp:\n  defaultServers: [github]\n  servers:\n    - name: github\n      command: mcp-github\n      env: [TOKEN]\n`;
@@ -162,7 +164,7 @@ describe("MCP API", () => {
     const dir = fixtureConfigDir();
     const config = loadConfig(dir);
     const store = memoryStore();
-    const app = buildServer({ db: openDb(":memory:").db, logger: pino({ level: "silent" }), config, port: 4780, controlToken: "t".repeat(64), mcp: { store, pathEnv: "" } });
+    const app = buildServer({ db: openDb(":memory:").db, logger: pino({ level: "silent" }), config, port: 4780, controlToken: "t".repeat(64), mcp: { store, pathEnv: "" }, settings: { tasks: new TaskManager(), actions: {} as unknown as ProjectActions, linear: () => { throw new Error("no linear in this test"); }, linearKeyPresent: () => false, saveLinearKey: async () => ({ name: "Me" }) } });
     const call = (method: "GET" | "PUT" | "POST" | "DELETE", url: string, headers: Record<string, string>, body?: unknown) =>
       app.inject({ method, url, headers: body === undefined ? headers : { ...headers, "content-type": "application/json" }, remoteAddress: "127.0.0.1", payload: body === undefined ? undefined : JSON.stringify(body) });
     return { dir, config, store, call };
@@ -212,5 +214,29 @@ describe("MCP API", () => {
     const r = await s.call("DELETE", "/api/mcp/servers/github", UI);
     expect(r.statusCode).toBe(409);
     expect(r.json().error).toMatch(/still select/);
+  });
+  const proj = { name: "W", github: { repo: "me/w" } };
+  it("refuses a project save that selects an unknown server, naming it, and writes nothing", async () => {
+    const s = setup();
+    await s.call("PUT", "/api/mcp/servers/github", UI, def);
+    const r = await s.call("PUT", "/api/settings/projects/w", UI, { ...proj, overrides: { mcpServers: ["github", "ghost"] } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toContain('"ghost"');
+    expect(s.config.projects.projects.find((p) => p.id === "w")).toBeUndefined();
+  });
+  it("a project save keeps a selection that is sent back, keeps [] as none, and a save without one follows the profile", async () => {
+    const s = setup();
+    await s.call("PUT", "/api/mcp/servers/github", UI, def);
+    await s.call("PUT", "/api/mcp/default", UI, { servers: ["github"] });
+    const saved = () => s.config.projects.projects.find((p) => p.id === "w");
+    expect((await s.call("PUT", "/api/settings/projects/w", UI, { ...proj, overrides: { mcpServers: ["github"] } })).statusCode).toBe(200);
+    // the editor sends the existing selection back along with other changes
+    expect((await s.call("PUT", "/api/settings/projects/w", UI, { ...proj, name: "Renamed", overrides: { maxImplementationPasses: 2, mcpServers: ["github"] } })).statusCode).toBe(200);
+    expect(saved()?.overrides?.mcpServers).toEqual(["github"]);
+    expect((await s.call("PUT", "/api/settings/projects/w", UI, { ...proj, overrides: { mcpServers: [] } })).statusCode).toBe(200);
+    expect(saved()?.overrides?.mcpServers).toEqual([]);
+    expect(mcpServersOf(s.config, saved())).toEqual([]);
+    expect((await s.call("PUT", "/api/settings/projects/w", UI, { ...proj })).statusCode).toBe(200);
+    expect(mcpServersOf(s.config, saved())).toEqual(["github"]);
   });
 });
