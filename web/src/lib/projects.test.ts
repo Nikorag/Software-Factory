@@ -34,3 +34,17 @@ describe("jobs awaiting a human merge", () => {
     expect(bucketOf(openJobs(o)[0]!)).toBe("done");
   });
 });
+
+describe("the Bash opt-in in the project form", () => {
+  it("is offered for inherited and restricted access, not unrestricted", async () => {
+    const { showsBashAny } = await import("./projects");
+    expect(showsBashAny("")).toBe(true);
+    expect(showsBashAny("restricted")).toBe(true);
+    expect(showsBashAny("unrestricted")).toBe(false);
+  });
+  it("is saved as the form holds it, so an inherited-access project keeps true", async () => {
+    const { bashAnyPayload } = await import("./projects");
+    expect(bashAnyPayload({ bashAny: true })).toBe(true);
+    expect(bashAnyPayload({ bashAny: false })).toBe(false);
+  });
+});

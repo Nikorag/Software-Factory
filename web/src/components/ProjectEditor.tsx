@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { bashAnyPayload, showsBashAny } from "@/lib/projects";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { api, send } from "@/lib/api";
@@ -74,7 +75,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
       ...(f.host === "bitbucket"
         ? { bitbucket: { repo: f.bbRepo.trim() || undefined, credential: f.bbCred }, ...(f.source === "path" ? { repository: f.path.trim() } : {}) }
         : f.source === "github" ? { github: { repo: f.repo.trim(), account: f.account.trim() || undefined } } : { repository: f.path.trim(), github: { account: f.account.trim() || undefined, repo: f.repo.trim() || undefined } }),
-      allowLoopback: f.loopback, gates: f.gatePrompt ? ["REQUIREMENTS_ANALYSIS"] : [], specKit: f.specKit, agentBashAny: f.access === "restricted" && f.bashAny, agentBashAllow: f.bashAllow.split("\n").map((l) => l.trim()).filter(Boolean),
+      allowLoopback: f.loopback, gates: f.gatePrompt ? ["REQUIREMENTS_ANALYSIS"] : [], specKit: f.specKit, agentBashAny: bashAnyPayload(f), agentBashAllow: f.bashAllow.split("\n").map((l) => l.trim()).filter(Boolean),
       overrides: { maxImplementationPasses: f.passes ? Number(f.passes) : undefined, pickupMode: f.pickup || undefined, agentAccess: (f.access || undefined) as "restricted" | "unrestricted" | undefined, maxConcurrentJobs: f.conc ? Number(f.conc) : undefined, maxRemediationAttempts: f.fix !== "" ? Number(f.fix) : undefined, models: f.models },
       ...(f.team ? { linear: { teamKey: f.team, projectName: f.lproject || undefined, projectId: f.lprojectId.trim() || undefined } } : {}),
     });
@@ -213,7 +214,7 @@ export function ProjectEditor({ project, teams, globals, tracker, onSaved, onRem
         <div className="grid gap-1.5"><Label>Agent access</Label>
           <Select value={f.access || "__global"} onValueChange={(v) => set("access", v === "__global" ? "" : v)}><SelectTrigger aria-label="agent access" className="w-72"><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value="__global">global default (restricted)</SelectItem><SelectItem value="restricted">restricted: git and the project checks only</SelectItem><SelectItem value="unrestricted">unrestricted: Claude Code auto mode, any command</SelectItem></SelectContent></Select>
-          {f.access === "restricted" && <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" aria-label="allow any bash command" checked={f.bashAny} onChange={(e) => set("bashAny", e.target.checked)} />
+          {showsBashAny(f.access) && <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" aria-label="allow any bash command" checked={f.bashAny} onChange={(e) => set("bashAny", e.target.checked)} />
             <span>Allow any command except the denied list<span className="block text-xs text-muted-foreground">Warning: the implementer may run any command your user can, except the denied list (git push/remote/config, gh, curl, ssh, sudo, rm -rf, docker, ...). Shell commands can read any file your user can. Off by default.</span></span></label>}
           {f.access === "unrestricted" && <span className="text-xs text-muted-foreground">The implementer can run any command your user can. Reviewers stay read-only and the factory still checks the diff for protected paths and secrets.</span>}</div>
         <div className="grid gap-3 sm:grid-cols-2">
