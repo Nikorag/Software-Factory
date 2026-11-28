@@ -1,27 +1,36 @@
-# Model routing.
+# Model routing. See docs/model-routing.md and docs/plugins.md.
 #
-# provider `anthropic` = Claude Code CLI using your logged-in subscription (no API key).
-#   model `default` = let Claude Code choose; an alias (`haiku`, `sonnet`, `opus`) tracks that family's latest;
+# A route names a plugin INSTANCE and a model: { plugin: <instance>, model: <model> }.
+# Two instances always exist: `claude-code` (the Claude Code CLI on your logged-in subscription, no API key) and
+# `local` (an OpenAI-compatible server at local.baseUrl). Define more under `plugins:` and reuse them in any route:
+#   plugins:
+#     lm-studio: { plugin: openai-compatible, settings: { baseUrl: "http://127.0.0.1:1234/v1" } }
+#     gpt:       { plugin: openai }                        # https://api.openai.com/v1, key from OPENAI_API_KEY
+# Plugins: claude-code (tools), openai-compatible (LM Studio, llama.cpp, Ollama...), openai. A key is only ever the NAME of an
+# environment variable (`apiKeyEnv`); the key itself is never stored here.
+#
+# claude-code model `default` = let Claude Code choose; an alias (`haiku`, `sonnet`, `opus`) tracks that family's latest;
 #   a full id (e.g. claude-haiku-5-5) pins it.
-# provider `local` = any OpenAI-compatible server (LM Studio, llama.cpp, Ollama...). Optional and off by default: Claude Haiku does classification and review.
+# An OpenAI-style instance is optional and off by default: Claude Haiku does classification and review.
 #   If you route to it, the model id must match what `pnpm factory doctor` reports.
-# specification and implementation must stay `anthropic` (they need file and shell tools).
+# specification, implementation and prompt_generation need file and shell tools: they must use a plugin that has them (claude-code).
 #
 # independent_review is OPTIONAL and unset by default: with no independent reviewer the spec review and the independent code review
-# are skipped (a Claude-only setup does not need them; the Claude review and security review still run). To use one, set any
-# OpenAI-compatible endpoint, a different model from `specification` so the reviewer is not marking its own work:
-#   independent_review: { provider: local, model: gpt-4o-mini, baseUrl: https://api.openai.com/v1, apiKeyEnv: OPENAI_API_KEY }
-# apiKeyEnv is the NAME of an environment variable holding the key; the key itself is never stored here. Omit it for no auth header.
-# Older setups that route it to Claude (`{ provider: anthropic, model: haiku }`) keep working.
+# are skipped (a Claude-only setup does not need them; the Claude review and security review still run). To use one, point it at
+# any plugin instance, a different model from `specification` so the reviewer is not marking its own work:
+#   independent_review: { plugin: gpt, model: gpt-4o-mini }
 # `pnpm factory doctor` warns if the reviewer matches `specification`.
+#
+# Older files still load unchanged: `{ provider: anthropic, model }` means the claude-code instance, `{ provider: local, model }` the
+# `local` instance, and `{ provider: local, model, baseUrl, apiKeyEnv }` an OpenAI-compatible endpoint with that key variable.
 local:
   baseUrl: http://127.0.0.1:1234/v1
   requestTimeoutSeconds: 300
-independentReviewFallback: claude   # only applies if the independent_review endpoint is unavailable
+independentReviewFallback: claude   # only applies if an API-kind independent_review is unavailable
 routes:
-  classification:     { provider: anthropic, model: haiku }
-  specification:      { provider: anthropic, model: default }
-  implementation:     { provider: anthropic, model: default }
+  classification:     { plugin: claude-code, model: haiku }
+  specification:      { plugin: claude-code, model: default }
+  implementation:     { plugin: claude-code, model: default }
   # independent_review: unset = skipped (see above)
-  final_review:       { provider: anthropic, model: default }
-  prompt_generation:  { provider: anthropic, model: haiku }   # haiku_prompt mode: writes the implementer's prompt (must be anthropic)
+  final_review:       { plugin: claude-code, model: default }
+  prompt_generation:  { plugin: claude-code, model: haiku }   # haiku_prompt mode: writes the implementer's prompt (needs a tool-capable plugin)

@@ -1,8 +1,9 @@
 import { readGrants } from "../core/approvals.js";
 import { join } from "node:path";
 import type { Logger } from "pino";
-import { ClaudeCodeAgent } from "../agents/claude.js";
-import { LocalModelClient } from "../agents/local.js";
+import { createRegistry } from "../plugins/builtin/index.js";
+import type { PluginRegistry } from "../plugins/registry.js";
+import type { ProviderPlugin } from "../plugins/types.js";
 import { ModelRouter } from "../agents/router.js";
 import { AgentRunner } from "../agents/runner.js";
 import { readLimits, usageFile } from "../agents/usage.js";
@@ -32,6 +33,8 @@ export interface Context {
   handle: DbHandle;
   logger: Logger;
   router: ModelRouter;
+  /** Every provider plugin (built-in and registered), for listing and validating in the dashboard. */
+  registry: PluginRegistry;
   runner: AgentRunner;
   worktrees: WorktreeManager;
   linear: (projectId?: string) => LinearClient;
@@ -47,7 +50,7 @@ export interface Context {
 export const protectedPathsOf = (config: LoadedConfig): string[] => effectiveProtectedPaths(config.factory.protectedPaths);
 
 /** Wires every real component together. Tests substitute `agents`, `linear` and `db`; nothing here is a mock. */
-export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logger?: Logger; linear?: LinearClient; claudeBin?: string; agents?: ConstructorParameters<typeof ModelRouter>[1]; runCommand?: ImplDeps["runCommand"]; github?: GitHubClient; hosts?: Hosts; delivery?: DeliveryDeps["timing"]; deliveryNow?: DeliveryDeps["now"]; push?: DeliveryDeps["push"] } = {}): Context {
+export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logger?: Logger; linear?: LinearClient; claudeBin?: string; agents?: ConstructorParameters<typeof ModelRouter>[1]; plugins?: ProviderPlugin<unknown>[]; runCommand?: ImplDeps["runCommand"]; github?: GitHubClient; hosts?: Hosts; delivery?: DeliveryDeps["timing"]; deliveryNow?: DeliveryDeps["now"]; push?: DeliveryDeps["push"] } = {}): Context {
   const dataDir = config.factory.dataDir;
   const logger = opts.logger ?? createLogger({ level: config.factory.logLevel, file: join(dataDir, "logs", "factory.log") });
   const handle = opts.db ?? openDb(join(dataDir, "database", "factory.sqlite"));
@@ -60,10 +63,9 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
   };
 
   const hosts = opts.hosts ?? createHosts(config);
-  const router = new ModelRouter(config.models, opts.agents ?? {
-    anthropic: new ClaudeCodeAgent({ bin: opts.claudeBin }),
-    local: new LocalModelClient({ baseUrl: config.models.local.baseUrl }),
-  }, (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.models);
+  // Built-in plugins plus any passed in here. Adding a provider is one entry in `plugins`: nothing else in the engine changes.
+  const registry = createRegistry({ claudeBin: opts.claudeBin, extra: opts.plugins });
+  const router = new ModelRouter(config.models, opts.agents ?? {}, (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.models, registry);
   const runner = new AgentRunner({ db: handle.db, router, logDir: join(dataDir, "logs", "agents"), protectedPaths: protectedPathsOf(config), usageFile: usageFile(dataDir),
     access: (id) => config.projects.projects.find((p) => p.id === id)?.overrides?.agentAccess ?? config.factory.agentAccess,
     projectBashAllow: (id) => config.projects.projects.find((p) => p.id === id)?.agentBashAllow ?? [],
@@ -99,5 +101,5 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
     }),
   };
   const engine = new Engine({ db: handle.db, logger, config, handlers, onCompleted: async (job) => { await distillJob(handle.db, job.id); retireExpiredLessons(handle.db, job.projectId); }, claudeLimits: () => readLimits(usageFile(dataDir)), observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun, planningMode }) });
-  return { config, handle, logger, router, runner, worktrees, linear, trackers, project, handlers, engine, hosts };
+  return { config, handle, logger, router, registry, runner, worktrees, linear, trackers, project, handlers, engine, hosts };
 }

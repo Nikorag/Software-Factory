@@ -63,6 +63,11 @@ export const RULES: readonly Rule[] = [
   // ---- the hub connection itself: a key, and whether the hub may operate this factory. Only ever from the machine. ----
   block("GET", "/api/hub", LOCAL), block("POST", "/api/hub/connect", SECRET), block("POST", "/api/hub/disconnect", LOCAL), block("PUT", "/api/hub/remote-access", "a hub session must not grant itself control"),
 
+  // ---- provider plugins: reading shows names, capabilities and env-var NAMES only. Defining an instance chooses where a key is sent, and validating contacts that endpoint from this machine. ----
+  ...allow("GET", "/api/plugins"),
+  block("PUT", "/api/plugins/instances", "chooses the endpoint an API key is sent to: decide on the machine"),
+  block("POST", "/api/plugins/validate", "contacts a configured endpoint from this machine, with its key: do it on the machine"),
+
   // ---- safety settings (sandbox, protected paths, agent access): never from a hub session ----
   block("GET", "/api/settings/advanced", LOCAL), block("PUT", "/api/settings/advanced", "changes the sandbox, protected paths and agent access: decide on the machine"),
 
@@ -108,7 +113,11 @@ export function blockedRemoteBody(method: string, pathname: string, payload: Buf
   if (method.toUpperCase() !== "PUT" || pathname !== "/api/settings/global" || !payload) return null;
   let body: unknown;
   try { body = JSON.parse(payload.toString("utf8")); } catch { return null; } // not JSON: the route itself rejects it
-  return body && typeof body === "object" && "skills" in body ? "sets skills (instructions for every agent, read from paths on this machine): decide on the machine" : null;
+  if (body && typeof body === "object" && "skills" in body) return "sets skills (instructions for every agent, read from paths on this machine): decide on the machine";
+  // A route's own endpoint (legacy reviewer form) chooses where a key variable's value is sent: set on the machine, like plugin instances.
+  const routes = (body as { routes?: unknown } | null)?.routes;
+  if (routes && typeof routes === "object" && Object.values(routes).some((r) => r && typeof r === "object" && ("baseUrl" in r || "apiKeyEnv" in r))) return "sets an endpoint or API key variable on a route: decide on the machine";
+  return null;
 }
 
 export const MAX_PATH = 2048;

@@ -47,7 +47,8 @@ export interface AgentResult {
 }
 
 export interface Agent {
-  readonly provider: "anthropic" | "local";
+  /** Informational id of the plugin/backend behind this agent (e.g. "claude-code"). The engine never branches on it. */
+  readonly provider: string;
   run(req: AgentRequest): Promise<AgentResult>;
 }
 

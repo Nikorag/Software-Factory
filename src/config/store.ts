@@ -6,7 +6,7 @@ import { z } from "zod";
 import { BUNDLED_CONFIG_DIR, ConfigError, homeConfigDir, loadConfig } from "./load.js";
 import { carryRepoFiles } from "./repo-file.js";
 import { SkillRefInput, validateSkills } from "./skills.js";
-import { MAX_SKILLS, BUILTIN_TRACKER_IDS, GatePoint, GithubIssuesConfig, JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, KIND_NAME, ProjectInput, ReviewerRoute, TrackerId, TrackerKind, ProjectOverrides, type LoadedConfig } from "./schema.js";
+import { MAX_SKILLS, BUILTIN_TRACKER_IDS, GatePoint, GithubIssuesConfig, JIRA_LABEL_KEYS, JIRA_STATUS_KEYS, KIND_NAME, ProjectInput, ReviewerRoute, InstanceId, PluginInstanceConfig, TrackerId, TrackerKind, ProjectOverrides, type LoadedConfig } from "./schema.js";
 
 const FILES = ["factory.yaml", "linear.yaml", "models.yaml", "workflows.yaml", "projects.yaml"];
 /** Files that describe tracker connections: every validation copy needs them, or a project naming one would look unknown. */
@@ -114,7 +114,9 @@ export function applyProjects(live: LoadedConfig, fresh: LoadedConfig): void {
 }
 
 // ---- global workflow settings (concurrency, fix-cycle limit, models per task) ----
-const Route = z.object({ provider: z.enum(["anthropic", "local"]), model: z.string().min(1).max(100) });
+// Saved routes name a plugin instance. The legacy `provider` form is still accepted (older dashboards, saved profiles).
+const Route = z.object({ plugin: InstanceId.optional(), provider: z.enum(["anthropic", "local"]).optional(), model: z.string().min(1).max(100) })
+  .refine((r) => (r.plugin === undefined) !== (r.provider === undefined), { message: "a route names a plugin instance (or a legacy provider), exactly one" });
 export const GlobalSettings = z.object({
   githubAccount: z.string().regex(/^[A-Za-z0-9-]{1,39}$/).or(z.literal("")).optional(), // "" = none
   pickupMode: z.enum(["automatic", "manual"]).optional(),
@@ -169,6 +171,24 @@ export function applyGlobal(live: LoadedConfig, fresh: LoadedConfig): void {
   applyProjects(live, fresh); // projects that follow the profile's default GitHub account pick up the change
   Object.assign(live.models.routes, fresh.models.routes);
   live.models.routes.independent_review = fresh.models.routes.independent_review; // Object.assign keeps a stale value when the reviewer was cleared
+}
+
+// ---- plugin instances: named provider configurations that routes reference ----
+export const PluginInstances = z.record(InstanceId, PluginInstanceConfig);
+
+/** Replaces the `plugins:` block of models.yaml (comments elsewhere preserved). Refused when it would leave the config unloadable, e.g. a route still names a removed instance. */
+export function updatePluginInstances(input: unknown, dir = seedHomeConfig()): LoadedConfig {
+  const instances = PluginInstances.parse(input);
+  editYaml(dir, "models.yaml", (d) => {
+    if (Object.keys(instances).length) d.set("plugins", d.createNode(instances)); else d.delete("plugins");
+  });
+  return loadConfig(dir);
+}
+
+/** Apply new plugin instances to the config object the running service holds (the router reads it live). */
+export function applyPlugins(live: LoadedConfig, fresh: LoadedConfig): void {
+  for (const k of Object.keys(live.models.plugins)) delete live.models.plugins[k];
+  Object.assign(live.models.plugins, fresh.models.plugins);
 }
 
 // ---- tracker: which one this profile uses, and the Jira connection and mapping ----

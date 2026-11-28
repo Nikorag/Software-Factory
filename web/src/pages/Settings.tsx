@@ -17,6 +17,7 @@ import { BitbucketSetup } from "@/components/BitbucketSetup";
 import { ProjectEditor } from "@/components/ProjectEditor";
 import { api, inHubMode } from "@/lib/api";
 import { WorkflowSettings } from "@/pages/WorkflowSettings";
+import { PluginsSettings } from "@/pages/PluginsSettings";
 import { ProfilesSettings } from "@/pages/ProfilesSettings";
 import type { GlobalSettings } from "@/lib/tasks";
 import type { Project, SetupInfo, TeamAudit } from "@/lib/types";
@@ -99,9 +100,10 @@ export function Settings() {
   usePoll(async () => { if (!info?.linear.keyPresent) return null; const r = await api<{ teams: TeamAudit[] }>("/api/setup/linear"); setTeams(r.teams); return r; }, 300000, [info?.linear.keyPresent]);
   return (
     <Tabs value={tab} onValueChange={(v) => setParams((p) => { const n = new URLSearchParams(p); n.set("tab", v); return n; }, { replace: true })}>
-      <TabsList><TabsTrigger value="projects">Projects</TabsTrigger><TabsTrigger value="workflow">Workflow</TabsTrigger><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="profiles">Profiles</TabsTrigger><TabsTrigger value="system">System</TabsTrigger></TabsList>
+      <TabsList><TabsTrigger value="projects">Projects</TabsTrigger><TabsTrigger value="workflow">Workflow</TabsTrigger><TabsTrigger value="plugins">Plugins</TabsTrigger><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="profiles">Profiles</TabsTrigger><TabsTrigger value="system">System</TabsTrigger></TabsList>
       <TabsContent value="projects"><ProjectsPane projects={data?.projects ?? []} teams={teams} globals={globals} tracker={info?.tracker.kind} reload={() => { void reload(); void reloadInfo(); }} /></TabsContent>
       <TabsContent value="workflow" className="max-md:[&_.grid]:grid-cols-[minmax(0,1fr)]"><WorkflowSettings value={globals} onSaved={() => void reloadGlobals()} /></TabsContent>
+      <TabsContent value="plugins" className="max-md:[&_.grid]:grid-cols-[minmax(0,1fr)]"><PluginsSettings /></TabsContent>
       <TabsContent value="integrations" className="grid gap-4 max-md:grid-cols-[minmax(0,1fr)] max-md:[&_.grid]:grid-cols-[minmax(0,1fr)]">
         <Card><CardHeader><CardTitle className="text-sm">Status</CardTitle></CardHeader><CardContent><Checks /></CardContent></Card>
         <Card><CardHeader><CardTitle className="text-sm">Bitbucket</CardTitle></CardHeader><CardContent><BitbucketSetup /></CardContent></Card>

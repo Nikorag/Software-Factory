@@ -140,7 +140,7 @@ describe("ModelRouter + config", () => {
   it("dispatches by provider and injects the configured model", async () => {
     const [l, a] = [stub("local"), stub("anthropic")];
     const router = new ModelRouter(routes, { local: l, anthropic: a });
-    expect((await router.run("classification", rq())).route).toEqual({ provider: "local", model: "qwen-x" });
+    expect((await router.run("classification", rq())).route).toEqual({ instance: "local", plugin: "openai-compatible", model: "qwen-x" });
     await router.run("implementation", rq({ profile: "implementer" }));
     expect(l.calls[0]!.model).toBe("qwen-x");
     expect(a.calls[0]!.model).toBe("claude-x");
@@ -200,7 +200,7 @@ describe("ModelRouter + config", () => {
     expect(bad("specification")).toBe(false);
     expect(bad("classification")).toBe(true);
   });
-  it("ships a valid models.yaml", () => { expect(fixtureConfig().models.routes.implementation.provider).toBe("anthropic"); });
+  it("ships a valid models.yaml", () => { expect(fixtureConfig().models.routes.implementation).toEqual({ plugin: "claude-code", model: "default" }); });
 });
 
 describe("AgentRunner boundaries and recording", () => {
@@ -221,7 +221,7 @@ describe("AgentRunner boundaries and recording", () => {
     expect(seen).toMatchObject({ profile: "implementer", persistSession: true });
     expect(seen!.systemPrompt).toContain("worktree");
     const row = db.select().from(agentInvocations).get()!;
-    expect(row).toMatchObject({ jobId: "j", agent: "anthropic/implementer", cwd: repo, exitCode: 0, durationMs: 12 });
+    expect(row).toMatchObject({ jobId: "j", agent: "claude-code/implementer", cwd: repo, exitCode: 0, durationMs: 12 });
     expect(row.logPath).toContain("/j/");
     expect(JSON.parse(row.usageJson!)).toMatchObject({ estimatedListCostUsd: 0.2, sessionId: "s", denials: 1, denialDetails: [{ tool: "Bash", input: "git push" }] });
   });

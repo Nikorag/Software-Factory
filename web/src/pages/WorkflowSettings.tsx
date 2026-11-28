@@ -9,7 +9,8 @@ import { api, send } from "@/lib/api";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { skillsFromText, skillsToText, type GhAccounts } from "@/lib/types";
 import { usePoll } from "@/hooks/usePoll";
-import { DEFAULT_PROMPT_ROUTE, TASKS, type GlobalSettings, type RouteCfg } from "@/lib/tasks";
+import { usePlugins } from "@/hooks/usePlugins";
+import { DEFAULT_PROMPT_ROUTE, instanceOfRoute, TASKS, type GlobalSettings, type RouteCfg } from "@/lib/tasks";
 
 /** A number box you can clear and retype: it only commits a value once something valid is typed, clamps to the range, and restores on blur if left empty. */
 function NumberField({ id, value, min, max, onChange }: { id: string; value: number; min: number; max: number; onChange: (n: number) => void }) {
@@ -28,6 +29,7 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const { data: gh } = usePoll(() => api<GhAccounts>("/api/setup/github"), 60000);
+  const { plugins } = usePlugins();
   const [skillsText, setSkillsText] = useState(skillsToText(value?.skills));
   useEffect(() => { if (value) { setG(value); setSkillsText(skillsToText(value.skills)); } }, [value]);
   if (!g || !value) return null;
@@ -83,17 +85,17 @@ export function WorkflowSettings({ value, onSaved }: { value: GlobalSettings | n
             <NumberField id="wf-fix" min={0} max={10} value={g.maxRemediationAttempts} onChange={(n) => { setSaved(false); setG({ ...g, maxRemediationAttempts: n }); }} />
             <p className="text-xs text-muted-foreground">How many times reviews and failing checks may send work back for fixes before the job stops for you (0–10). Shared by spec fixes, review fixes and CI fixes.</p></div>
         </CardContent></Card>
-      <Card><CardHeader><CardTitle className="text-sm">Models</CardTitle><CardDescription>Which model does each part of the workflow. <b>default</b> lets Claude Code choose; an alias tracks that family's latest; a full id pins one. Keep Independent review different from the model that wrote the work.</CardDescription></CardHeader>
+      <Card><CardHeader><CardTitle className="text-sm">Models</CardTitle><CardDescription>Which plugin and model does each part of the workflow. Configure plugins (endpoints, key variables) once on the Plugins tab. With Claude Code, <b>default</b> lets it choose; an alias tracks that family's latest; a full id pins one. Keep Independent review different from the model that wrote the work.</CardDescription></CardHeader>
         <CardContent className="grid gap-4">
           {TASKS.map((t) => (
             <div key={t.id} className="grid gap-1.5 border-b pb-4 last:border-0 last:pb-0">
               <div className="flex flex-wrap items-baseline gap-x-3"><b className="text-sm">{t.label}</b><span className="text-xs text-muted-foreground">{t.steps}</span></div>
               {t.id === "independent_review"
-                ? <ReviewerPicker label={t.label} value={g.routes.independent_review} onChange={(v) => { setSaved(false); setG({ ...g, routes: { ...g.routes, independent_review: v } }); }} />
-                : <ModelPicker label={t.label} allowLocal={t.local} value={(g.routes[t.id] ?? DEFAULT_PROMPT_ROUTE) as RouteCfg} onChange={(v) => { setSaved(false); setG({ ...g, routes: { ...g.routes, [t.id]: v } }); }} />}
+                ? <ReviewerPicker label={t.label} plugins={plugins} value={g.routes.independent_review} onChange={(v) => { setSaved(false); setG({ ...g, routes: { ...g.routes, independent_review: v } }); }} />
+                : <ModelPicker label={t.label} plugins={plugins} needsTools={t.tools} value={(g.routes[t.id] ?? DEFAULT_PROMPT_ROUTE) as RouteCfg} onChange={(v) => { setSaved(false); setG({ ...g, routes: { ...g.routes, [t.id]: v } }); }} />}
             </div>
           ))}
-          {g.routes.independent_review && g.routes.independent_review.model === g.routes.specification.model && g.routes.independent_review.provider === g.routes.specification.provider
+          {g.routes.independent_review && g.routes.independent_review.model === g.routes.specification.model && instanceOfRoute(g.routes.independent_review) === instanceOfRoute(g.routes.specification)
             ? <Alert><AlertDescription>Independent review uses the same model as Specification, so it is partly marking its own work. Pick a different one for a genuinely independent review.</AlertDescription></Alert> : null}
         </CardContent></Card>
       <div className="flex flex-wrap items-center gap-3 max-md:sticky max-md:bottom-0 max-md:z-10 max-md:-mx-4 max-md:gap-2 max-md:border-t max-md:border-line max-md:bg-background/95 max-md:px-4 max-md:pb-[calc(env(safe-area-inset-bottom)+0.75rem)] max-md:pt-3 max-md:backdrop-blur">
