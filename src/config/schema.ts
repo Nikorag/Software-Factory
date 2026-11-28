@@ -147,6 +147,11 @@ export const ProjectGithub = z.object({
   repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional(),
 });
 
+/** Where a project can stop for a human to confirm or send the stage back. Closed list; only the generated implementer prompt (haiku_prompt mode) so far. */
+export const GATE_POINTS = ["REQUIREMENTS_ANALYSIS"] as const;
+export const GatePoint = z.enum(GATE_POINTS);
+export type GatePoint = z.infer<typeof GatePoint>;
+
 export const ProjectConfig = z.object({
   id: ProjectId,
   name: z.string(),
@@ -171,6 +176,8 @@ export const ProjectConfig = z.object({
   agentBashAllow: z.array(z.string()).default([]),
   // Let this project's test/lint/build commands use TCP on this machine only (e.g. tests that start PGlite or a mock server). Off by default.
   allowLoopback: z.boolean().default(false),
+  // Human gates: after these stages succeed the job waits for a person to confirm or ask for changes. projects.yaml only: a repository file cannot set them.
+  gates: z.array(GatePoint).default([]),
   commands: ProjectCommands.default({}),
   // Runtime only (never written to projects.yaml): why this project's `.software-factory.yml` was not applied. See src/config/repo-file.ts.
   repoFileError: z.string().optional(),
@@ -190,7 +197,7 @@ export const STAGES = [
   "CLAUDE_REVIEW", "REMEDIATION", "CONFLICT_RESOLUTION", "FINAL_VALIDATION", "PULL_REQUEST_CREATION", "CI_VALIDATION",
   "MERGE_VALIDATION", "MERGING", "LINEAR_COMPLETION", "COMPLETED",
 ] as const;
-export const TERMINAL_OR_HELD = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION"] as const;
+export const TERMINAL_OR_HELD = ["BLOCKED", "FAILED", "CANCELLED", "PAUSED", "NEEDS_ATTENTION", "AWAITING_CONFIRMATION"] as const;
 export const StageName = z.enum([...STAGES, ...TERMINAL_OR_HELD]);
 export type StageName = z.infer<typeof StageName>;
 

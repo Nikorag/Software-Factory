@@ -97,7 +97,7 @@ export function requestChanges(db: FactoryDb, id: string, text: string, actor: s
   if (CLOSED.has(job.status)) throw new JobError(`the job is ${job.status === "done" ? "finished (its PR was merged)" : "cancelled"}: start a new ticket for further changes`);
   const feedback = addFeedback(db, id, { source: "dashboard", author: actor, body })!;
   db.insert(decisions).values({ jobId: id, kind: "feedback.requested", decision: `change requested on the job page (#${feedback.id})`, rationale: body.slice(0, 1500), actor }).run();
-  const held = ["BLOCKED", "FAILED", "NEEDS_ATTENTION", "PAUSED"].includes(job.stage);
+  const held = ["BLOCKED", "FAILED", "NEEDS_ATTENTION", "AWAITING_CONFIRMATION", "PAUSED"].includes(job.stage);
   if (held && job.stage !== "PAUSED") {
     const from = job.heldFromStage ?? "";
     const resumeAt = (FEEDBACK_STAGES as readonly string[]).includes(from) ? undefined : "CI_VALIDATION";

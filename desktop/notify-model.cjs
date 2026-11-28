@@ -1,6 +1,6 @@
 // Which interruptions deserve a system notification, as plain data (no Electron, so it can be tested).
 // An interruption is a job that has stopped and needs a person: it asked a question, hit its fix-cycle limit, or failed.
-const HOLD = { BLOCKED: "needs your answer", NEEDS_ATTENTION: "needs your attention" };
+const HOLD = { BLOCKED: "needs your answer", NEEDS_ATTENTION: "needs your attention", AWAITING_CONFIRMATION: "needs your confirmation" };
 
 /** @param {{id: string, key: string, stage: string, status: string, lastError?: string|null}} j */
 function interruptionOf(j) {

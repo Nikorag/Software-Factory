@@ -37,7 +37,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const app = (path: string) => render(
-  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="board" element={<Board />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
+  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="p/:projectId" element={<div data-testid="project-overview" />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="board" element={<Board />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
 );
 
 describe("flow derivation (from the stage history the factory already stores)", () => {
@@ -77,6 +77,18 @@ describe("job title and unconfigured projects", () => {
     expect(row(/Half Done/)).toHaveAttribute("title", expect.stringMatching(/still to do: test command configured/));
     expect(row(/My App/)).toHaveAttribute("data-configured", "true");
     expect(row(/My App/)).not.toHaveClass("opacity-50");
+  });
+  it("opens the project's overview from the left rail, even if a job was the last page open for it", async () => {
+    localStorage.clear();
+    localStorage.setItem("sf.tab.my-app", "/jobs/j1");
+    const done = { ...proj, onboarding: { status: "ready" as const, steps: [] } };
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [done] }, "/api/jobs/j1": detail(job(), []) };
+    app("/");
+    const rail = await screen.findByRole("navigation", { name: "Project list" });
+    await userEvent.click(await within(rail).findByRole("button", { name: /My App/ }));
+    expect(await screen.findByTestId("project-overview")).toBeInTheDocument();
+    expect(screen.queryByTestId("job-title")).toBeNull();
+    localStorage.clear();
   });
 });
 
@@ -365,6 +377,31 @@ describe("dashboard", () => {
     expect(screen.queryByRole("button", { name: /Answer & resume/ })).toBeNull(); // it waits for decisions, not an answer
     await userEvent.click(within(list).getByRole("button", { name: /^Approve: read \/Users\/me\/projects/ }));
     await waitFor(() => expect(calls.find((c) => c.url === "/api/jobs/j1/permissions/1")?.body).toBe(JSON.stringify({ decision: "approve" })));
+  });
+  it("shows the gate panel while waiting: Confirm calls the confirm endpoint; Ask for changes needs a note first", async () => {
+    const j = job({ stage: "AWAITING_CONFIRMATION", status: "waiting", heldFromStage: "REQUIREMENTS_ANALYSIS", lastError: "Waiting for your confirmation: the generated prompt gate." });
+    const plan = { prompt: "Add isOverdue to src/due.js", criteria: [{ id: "AC-01", text: "true for a past date" }] };
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j, [], { plan }), "/api/jobs/j1/gate/confirm": { ok: true }, "/api/jobs/j1/gate/return": { ok: true } };
+    app("/jobs/j1");
+    expect(await screen.findByRole("heading", { name: /Review before continuing/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("Generated prompt")).toHaveTextContent("Add isOverdue to src/due.js");
+    expect(screen.getByText("true for a past date")).toBeInTheDocument();
+    const ask = screen.getByRole("button", { name: /Ask for changes/ });
+    expect(ask).toBeDisabled(); // a note is required
+    await userEvent.type(screen.getByLabelText("What should change"), "also cover leap years");
+    expect(ask).toBeEnabled();
+    await userEvent.click(ask);
+    await waitFor(() => expect(calls.find((c) => c.url === "/api/jobs/j1/gate/return")?.body).toBe(JSON.stringify({ note: "also cover leap years" })));
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/jobs/j1/gate/confirm" && c.method === "POST")).toBe(true));
+  });
+  it("a job waiting at a gate can still be retried", async () => {
+    const j = job({ stage: "AWAITING_CONFIRMATION", status: "waiting", heldFromStage: "REQUIREMENTS_ANALYSIS", lastError: "Waiting for your confirmation: the generated prompt gate." });
+    routes = { "/api/overview": overview(), "/api/jobs/j1": detail(j), "/api/jobs/j1/retry": { ok: true } };
+    app("/jobs/j1");
+    await screen.findByRole("heading", { name: /Review before continuing/ });
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/jobs/j1/retry" && c.method === "POST")).toBe(true));
   });
   it("offers no change requests before a PR exists", async () => {
     routes = { "/api/overview": overview(), "/api/jobs/j1": detail(job({ stage: "IMPLEMENTATION" })) };
@@ -886,6 +923,44 @@ describe("settings and setup", () => {
     expect(await screen.findByText(/Your Atlassian OAuth app/)).toBeInTheDocument();
     await waitFor(() => expect(calls.some((c) => c.url === "/api/jira/status?tracker=work-jira")).toBe(true));
     expect(calls.some((c) => c.url === "/api/jira/status")).toBe(false);                           // the built-in Jira was not asked
+  });
+  const builtinList = { default: "linear", trackers: [entry("linear", "linear", "Linear", { connected: true }), entry("jira", "jira", "Jira"), entry("github", "github", "GitHub Issues")] };
+  const ghMap = { statusPrefix: "status: ", statuses: { readyForSpecification: "status: Ready for specification", done: "status: Done" }, labels: { enabled: "factory" }, account: null };
+  const ghRoutes = () => ({ ...jiraRoutes(), "/api/setup": setupInfo, "/api/trackers": builtinList, "/api/github-issues/whoami": { name: "octo" }, "/api/github-issues/mapping": ghMap, "/api/setup/github": { accounts: [], defaultAccount: null }, "/api/setup/linear?tracker=github": { teams: [] } });
+  it("with only the built-in connections, a non-default GitHub Issues can be chosen for setup, and its mapping loads and saves against the built-in connection", async () => {
+    routes = ghRoutes();
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    const pick = await screen.findByRole("combobox", { name: "Tracker connection to set up" });
+    expect(within(pick).getByRole("option", { name: "GitHub Issues" })).toBeInTheDocument();
+    expect(within(pick).getByRole("option", { name: "Linear (default)" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Status label prefix")).toBeNull();                              // the default (Linear) panel shows first
+    await userEvent.selectOptions(pick, "github");
+    expect(await screen.findByLabelText("Status label prefix")).toHaveValue("status: ");
+    expect(screen.getByRole("group", { name: "Status names" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Label names" })).toBeInTheDocument();
+    expect(calls.some((c) => c.url === "/api/github-issues/mapping")).toBe(true);                   // built-in id: no tracker param
+    expect(calls.some((c) => c.url.startsWith("/api/github-issues/mapping?"))).toBe(false);
+    await userEvent.type(screen.getByLabelText("Status label prefix"), "x");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PUT" && c.url === "/api/github-issues/mapping")).toBeTruthy());
+    expect(JSON.parse(calls.find((c) => c.method === "PUT" && c.url === "/api/github-issues/mapping")!.body!)).toMatchObject({ statusPrefix: "status: x" });
+  });
+  it("choosing another built-in connection to set up leaves the default alone and asks for no confirmation; a built-in Jira is reachable the same way", async () => {
+    routes = ghRoutes();
+    app("/settings");
+    await userEvent.click(await screen.findByRole("tab", { name: "Integrations" }));
+    const pick = await screen.findByRole("combobox", { name: "Tracker connection to set up" });
+    await userEvent.selectOptions(pick, "github");
+    expect(await screen.findByLabelText("Status label prefix")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Linear" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "GitHub Issues" })).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByText(/^Switch this profile to/)).toBeNull();
+    expect(calls.some((c) => c.url === "/api/settings/tracker")).toBe(false);
+    await userEvent.selectOptions(pick, "jira");
+    expect(await screen.findByText(/Your Atlassian OAuth app/)).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Linear" })).toHaveAttribute("aria-checked", "true");
+    expect(calls.some((c) => c.url === "/api/settings/tracker")).toBe(false);
   });
   it("adds a tracker connection: a named second Jira (or Linear, or GitHub) with its own id", async () => {
     routes = { ...jiraRoutes(), "/api/setup": setupInfo, "/api/trackers": trackerList };

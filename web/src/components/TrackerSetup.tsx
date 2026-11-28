@@ -35,7 +35,7 @@ export function TrackerSetup({ info, onChanged, onKey, onTeams }: { info: SetupI
   const defId = list?.default ?? defaultId;
   const active = entries.find((e) => e.id === sel) ?? entries.find((e) => e.id === defId) ?? entries[0]!;
   const changed = () => { void reload(); onChanged?.(); };
-  const manyOrAdding = adding || entries.some((e) => !e.builtin);
+  const manyOrAdding = adding || entries.length > 1;   // any connection, built-in or not, can be chosen for setup once there is more than one
 
   const choose = async (id: string) => {
     setPending(null);
