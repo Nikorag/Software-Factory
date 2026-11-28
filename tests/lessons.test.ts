@@ -23,7 +23,7 @@ import { HealthChecker } from "../src/service/metrics.js";
 import { fixtureConfig } from "./helpers/config.js";
 import { tmp } from "./helpers/git-fixture.js";
 
-const KEY = "AKIAIOSFODNN7EXAMPLE"; // the AWS documentation example key: matches the scanner's aws-access-key rule
+const KEY = "AKIA" + "QZ7WXV3K9TRM2PLB"; // not an AWS documentation key (those are exempt), so it matches the scanner's aws-access-key rule
 
 function setup() {
   const h = openDb(":memory:");
