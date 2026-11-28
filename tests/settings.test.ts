@@ -39,6 +39,12 @@ describe("config store (what the settings UI writes)", () => {
     expect(removeProject("my-app", dir).projects.projects).toEqual([]);
     expect(() => removeProject("my-app", dir)).toThrow(/no such project/);
   });
+  it("persists the optional visual command through the store", () => {
+    const dir = seedHomeConfig(join(tmpDir(), "config"));
+    const c = upsertProject({ ...app1, commands: { test: "npm test", visual: "pnpm exec playwright test" } }, dir);
+    expect(c.projects.projects[0]!.commands.visual).toBe("pnpm exec playwright test");
+    expect(loadConfig(dir).projects.projects[0]!.commands).toEqual({ test: "npm test", visual: "pnpm exec playwright test" });
+  });
   it("writes a readable block list, not one long flow line", () => {
     const dir = seedHomeConfig(join(tmpDir(), "config"));
     upsertProject(app1, dir);
