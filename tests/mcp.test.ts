@@ -190,6 +190,16 @@ describe("MCP API", () => {
     expect(r.body).not.toContain(SECRET);
     expect(r.json().servers.map((x: { name: string; secrets: unknown }) => [x.name, x.secrets])).toEqual([["github", [{ name: "TOKEN", set: true }]], ["other", [{ name: "KEY", set: false }]]]);
   });
+  it("GET returns headers as stored (references, not values), and a GET-then-PUT round trip leaves them unchanged", async () => {
+    const s = setup();
+    const http = { type: "http", url: "https://mcp.example.com", env: ["TOKEN"], headers: { Authorization: "Bearer ${TOKEN}", "X-Trace": "on" }, secrets: { TOKEN: SECRET } };
+    expect((await s.call("PUT", "/api/mcp/servers/docs", UI, http)).statusCode).toBe(200);
+    const got = (await s.call("GET", "/api/mcp/servers", HOST)).json().servers[0];
+    expect(got.headers).toEqual({ Authorization: "Bearer ${TOKEN}", "X-Trace": "on" });
+    const { name, type, url, env, headers } = got;
+    expect((await s.call("PUT", `/api/mcp/servers/${name}`, UI, { type, url, env, headers })).statusCode).toBe(200);
+    expect(s.config.factory.mcp.servers[0]!.headers).toEqual({ Authorization: "Bearer ${TOKEN}", "X-Trace": "on" });
+  });
   it("rejects invalid servers and secrets for unlisted variables", async () => {
     const s = setup();
     expect((await s.call("PUT", "/api/mcp/servers/a", UI, { command: "" })).statusCode).toBe(400);

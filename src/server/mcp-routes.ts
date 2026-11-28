@@ -23,7 +23,7 @@ const onPath = (cmd: string, pathEnv: string): boolean => {
 export function registerMcpRoutes(app: FastifyInstance, d: McpRouteDeps, requireToken: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>): void {
   const fail = (reply: FastifyReply, e: unknown, code = 400) => reply.code(e instanceof z.ZodError ? 400 : code).send({ error: e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : (e as Error).message });
   const usedBy = (name: string) => d.config.projects.projects.filter((p) => p.overrides?.mcpServers?.includes(name)).map((p) => p.id);
-  const view = (s: McpServer) => ({ ...s, headers: Object.fromEntries(Object.keys(s.headers).map((k) => [k, "…"])), secrets: secretStatus(s, d.store), usedBy: usedBy(s.name), isDefault: d.config.factory.mcp.defaultServers.includes(s.name) });
+  const view = (s: McpServer) => ({ ...s, secrets: secretStatus(s, d.store), usedBy: usedBy(s.name), isDefault: d.config.factory.mcp.defaultServers.includes(s.name) });
 
   app.get("/api/mcp/servers", async () => ({ servers: d.config.factory.mcp.servers.map(view), defaultServers: d.config.factory.mcp.defaultServers }));
 
