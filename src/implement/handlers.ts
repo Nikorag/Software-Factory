@@ -19,7 +19,7 @@ import type { PlanningMode, ProjectConfig } from "../config/schema.js";
 import { createConflictHandler, DEFAULT_MAX_CONFLICT_RESOLUTIONS } from "./conflicts.js";
 import type { GitHubClient } from "../github/client.js";
 import { ClaudeReview, CodeReview, Converge, DirectResult, FailureSummary, FinalReview, ImplRemediation, ImplementResult, SecurityReview } from "./schemas.js";
-import { scanForSecrets } from "./secrets.js";
+import { scanHistoryForSecrets } from "./secrets.js";
 import { findProtectedChanges } from "../agents/guard.js";
 import { deferrals, fixCycles, historyText, HUMAN_ONLY_REASON, isDeferrable, openTasks, previousFailures, recordDeferral, sameCodeRun, triage, type Finding } from "./history.js";
 import type { AgentCall, AgentOutcome } from "../app/stage-kit.js";
@@ -116,7 +116,7 @@ export function createImplementationHandlers(d: ImplDeps) {
 
   /** A secret anywhere in the branch's history cannot be fixed by another commit: it needs a human (and a history rewrite). */
   async function secretStop(wt: string, base: string): Promise<StageResult | undefined> {
-    const hits = scanForSecrets(await historyAddedLines(wt, base, git));
+    const hits = scanHistoryForSecrets(await historyAddedLines(wt, base, git));
     if (hits.length === 0) return undefined;
     return { kind: "needs_attention", reason: `A possible secret was committed on this branch (${[...new Set(hits.map((h) => h.rule))].join(", ")}). Removing it in a new commit would still leave it in history, so the branch must be rewritten or discarded by a human before anything is pushed. The worktree was left for inspection.` };
   }
