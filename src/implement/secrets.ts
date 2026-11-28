@@ -22,11 +22,15 @@ const RULES: { rule: string; re: RegExp }[] = [
 const AWS_DOC_KEYS = new Set(["AKIAIOSFODNN7" + "EXAMPLE", "AKIAI44QH8DHB" + "EXAMPLE", "ASIAIOSFODNN7" + "EXAMPLE"]);
 const PLACEHOLDER = /(example|placeholder|changeme|your[_-]|xxxx|<[^>]+>|dummy|fake|test|redacted|\*{4})/i;
 
-/** Scans added lines. Values that look like documentation placeholders are ignored. */
-export function scanForSecrets(lines: string[]): SecretHit[] {
+/** Test files: where made-up credentials live as fixtures (`const SECRET = "s3cr3t-value-123"`). */
+export const isTestFile = (path: string): boolean => /(^|\/)(tests?|__tests__|__mocks__|spec)\//.test(path) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(path);
+
+/** Scans added lines. Values that look like documentation placeholders are ignored. `skip` turns rules off for these lines. */
+export function scanForSecrets(lines: string[], skip: ReadonlySet<string> = new Set()): SecretHit[] {
   const hits: SecretHit[] = [];
   lines.forEach((l, i) => {
     for (const { rule, re } of RULES) {
+      if (skip.has(rule)) continue;
       const m = re.exec(l);
       if (!m) continue;
       if (rule === "credential-assignment" && PLACEHOLDER.test(m[0])) continue;
@@ -36,6 +40,18 @@ export function scanForSecrets(lines: string[]): SecretHit[] {
     }
   });
   return hits;
+}
+
+/**
+ * The history scan: every rule everywhere, except that test files do not trip the generic `credential-assignment` heuristic
+ * (a fixture like `const SECRET = "s3cr3t-value-123"` is indistinguishable from a real one by shape, and stopped JAM-64).
+ * Rules for real token formats (AWS, GitHub, Anthropic, private keys...) still apply in tests, since a pasted live credential
+ * there is exactly as bad as anywhere else.
+ */
+export function scanHistoryForSecrets(added: { file: string; line: string }[]): SecretHit[] {
+  const code = added.filter((a) => !isTestFile(a.file)).map((a) => a.line);
+  const tests = added.filter((a) => isTestFile(a.file)).map((a) => a.line);
+  return [...scanForSecrets(code), ...scanForSecrets(tests, new Set(["credential-assignment"]))];
 }
 
 /** For display only (the dashboard's conversation view): replaces anything that looks like a credential. Conservative, like the scanner. */

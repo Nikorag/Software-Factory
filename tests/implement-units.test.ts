@@ -2,12 +2,12 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { addedLines, changedFiles, codeDiff } from "../src/implement/diff.js";
+import { addedLines, addedLinesByFile, changedFiles, codeDiff } from "../src/implement/diff.js";
 import { buildReport, isSecuritySensitive } from "../src/implement/handlers.js";
 import { extractCriteria, implementPrompt, implRemediationPrompt } from "../src/implement/prompts.js";
 import { historyText, HUMAN_ONLY_REASON, isDeferrable, openTasks, sameFinding } from "../src/implement/history.js";
 import { humanItems } from "../src/delivery/handlers.js";
-import { scanForSecrets } from "../src/implement/secrets.js";
+import { isTestFile, scanForSecrets, scanHistoryForSecrets } from "../src/implement/secrets.js";
 import { writeExecWrapper } from "../src/exec/factory-exec.js";
 import { sandboxAvailable } from "../src/exec/sandbox.js";
 import { fixture } from "./helpers/scripted-agent.js";
@@ -35,6 +35,28 @@ describe("scanForSecrets", () => {
   it("never echoes the secret itself", () => {
     const [h] = scanForSecrets([`AWS_KEY = '${AWS_KEY}'`]);
     expect(JSON.stringify(h)).not.toContain(AWS_KEY.slice(6));
+  });
+});
+
+describe("scanHistoryForSecrets: test files and the generic credential heuristic", () => {
+  const FIXTURE = 'const SECRET = "s3cr3t-value-' + '123";';
+  const added = (file: string, line: string) => [{ file, line }];
+  it("recognises test files", () => {
+    for (const f of ["tests/mcp.test.ts", "src/a/b.spec.js", "web/src/lib/x.test.tsx", "test/due.test.js", "pkg/__tests__/x.ts", "tests/helpers/fixture.ts"]) expect(isTestFile(f), f).toBe(true);
+    for (const f of ["src/config.ts", "src/latest/config.ts", "docs/testing.md", "src/contest.ts", ""]) expect(isTestFile(f), f).toBe(false);
+  });
+  it("lets a made-up credential in a test file through, but flags the same line anywhere else", () => {
+    expect(scanHistoryForSecrets(added("tests/mcp.test.ts", FIXTURE))).toEqual([]);
+    expect(scanHistoryForSecrets(added("src/config.ts", FIXTURE)).map((h) => h.rule)).toEqual(["credential-assignment"]);
+    expect(scanHistoryForSecrets(added("", FIXTURE)).map((h) => h.rule)).toEqual(["credential-assignment"]); // unknown file: not exempt
+  });
+  it("still flags real token formats in test files", () => {
+    for (const [line, rule] of [["const k = 'AKIA" + "Q".repeat(16) + "'", "aws-access-key"], ["t = 'ghp_" + "a".repeat(36) + "'", "github-token"], ["-----BEGIN RSA PRIVATE KEY-----", "private-key"]] as const)
+      expect(scanHistoryForSecrets(added("tests/x.test.ts", line)).map((h) => h.rule)).toEqual([rule]);
+  });
+  it("attributes added lines to their files", () => {
+    const diff = "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@\n+one\n-gone\n+two\ndiff --git a/t/x.test.ts b/t/x.test.ts\n--- /dev/null\n+++ b/t/x.test.ts\n@@\n+three\n";
+    expect(addedLinesByFile(diff)).toEqual([{ file: "a.ts", line: "one" }, { file: "a.ts", line: "two" }, { file: "t/x.test.ts", line: "three" }]);
   });
 });
 
