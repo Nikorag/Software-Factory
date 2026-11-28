@@ -15,4 +15,4 @@ The installer checks all of this for you and says how to fix anything missing (`
 
 ## Optional: a local model
 
-Off by default: Claude Haiku does classification and review. Only if you route a task to `provider: local` (Settings → Workflow): start any OpenAI-compatible server (LM Studio, llama.cpp, Ollama), load a model, set the route's model id, and run `software-factory doctor` to verify it.
+Off by default: Claude Haiku does classification and review. Only if you route a task to an `openai-compatible` plugin instance (the default `local` instance points at `local.baseUrl`; add your own in Settings → Plugins): start any OpenAI-compatible server (LM Studio, llama.cpp, Ollama), load a model, pick the instance and model id in Settings → Workflow, use Validate on the Plugins tab, and run `software-factory doctor` to verify it. See [plugins.md](plugins.md).

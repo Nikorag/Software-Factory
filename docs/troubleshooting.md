@@ -1,5 +1,7 @@
 # Troubleshooting
-- `doctor` reports "no server reachable" for local models: only happens if a route uses `provider: local`. Either start your local model server (and set the route's model id) or route that task to `anthropic`/`haiku`.
+- `doctor` reports "no server reachable" for local models: only happens if a route uses a plugin instance that serves models (`openai-compatible` or `openai`; legacy `provider: local`). Either start your model server (and set the route's model id) or route that task to the `claude-code` instance (`haiku`).
+- `doctor` reports `plugin <name>` as failed: the route names an instance that is not defined under `plugins:`, a plugin that is not installed or is incompatible with this version, or an instance with invalid settings (the message says which). Settings → Plugins shows the same and has a Validate button that checks settings and reachability without calling a model.
+- "the API key environment variable X is not set": set `X` where the service runs (the key is only ever named in config, never stored) and restart the service.
 - `typescript-eslint does not support TS 7`: TypeScript is pinned to 5.9.x on purpose.
 - `pnpm doctor` is a pnpm builtin; use `software-factory doctor`.
 - **`npm ci` fails with EPERM on `~/.npm`** (or a tool says "operation not permitted"): the sandbox denied a write. Installs may write package caches; other commands may write only the worktree and temp dirs. Run `pnpm factory project:check <id>` and read `<dataDir>/logs/check/<id>/<step>.log`. If a legitimate tool needs another directory, add it to `factory.sandbox.writeAllow`/`readAllow`.

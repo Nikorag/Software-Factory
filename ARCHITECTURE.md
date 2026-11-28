@@ -1,7 +1,7 @@
 # Architecture
 
 ## Shape
-One Node.js process (`factory serve`) owns orchestration. Claude Code, `git`, `gh`, Spec Kit and (optionally) a local model server are external processes it launches and supervises. A single SQLite file (WAL) is the durable source of truth for execution state; Linear remains the source of truth for tickets and GitHub for code.
+One Node.js process (`factory serve`) owns orchestration. Claude Code, `git`, `gh`, Spec Kit and (optionally) a model server behind an OpenAI-style plugin are external processes it launches and supervises. A single SQLite file (WAL) is the durable source of truth for execution state; Linear remains the source of truth for tickets and GitHub for code.
 
 ```
  Linear ─poll─▶ discovery ─▶ jobs (SQLite) ◀─ worker loop ◀─ scheduler ◀─ LaunchAgent / CLI
@@ -11,7 +11,8 @@ One Node.js process (`factory serve`) owns orchestration. Claude Code, `git`, `g
                                   │ stage handlers
         intake · planning (Haiku prompt, or Spec Kit per profile) · implementation · delivery (PR-only, auto-resolves conflicts)
                                   │
-   agents: ClaudeCodeAgent (per-role permission profiles) · LocalModelClient (optional)
+   agents: router/runner ─▶ provider plugin (src/plugins; contract + registry; ADR 0018) ─▶ backend
+           built in: claude-code (ClaudeCodeAgent, per-role permission profiles) · openai · openai-compatible (LocalModelClient)
    project code: sandbox-exec (no network, worktree-only writes, no credential reads) via factory-exec
                  (by default the restricted implementer runs nothing else; a project may opt in to general Bash with
                  agentBashAny, which keeps the always-deny list but is not sandboxed: ADR 0017)
@@ -19,7 +20,7 @@ One Node.js process (`factory serve`) owns orchestration. Claude Code, `git`, `g
                                   │
  Dashboard/API (127.0.0.1, token-gated controls) ◀── reads the same SQLite ── metrics/health probes
 ```
-Layers: `src/core` (engine, jobs, control), `src/linear`, `src/repo`, `src/github`, `src/agents`, `src/planning` (Haiku prompt writer), `src/speckit` (optional Spec Kit mode), `src/implement` (incl. merge-conflict resolution), `src/delivery`, `src/exec` (sandbox), `src/service` (scheduler, lock, secrets, metrics, launchd), `src/server` (API) + `web/` (React + shadcn/ui dashboard, built to `web/dist`), `src/app` (composition root).
+Layers: `src/core` (engine, jobs, control), `src/linear`, `src/repo`, `src/github`, `src/agents` (router, runner, Claude Code adapter, OpenAI-style client), `src/plugins` (provider plugin contract, registry, built-ins), `src/planning` (Haiku prompt writer), `src/speckit` (optional Spec Kit mode), `src/implement` (incl. merge-conflict resolution), `src/delivery`, `src/exec` (sandbox), `src/service` (scheduler, lock, secrets, metrics, launchd), `src/server` (API) + `web/` (React + shadcn/ui dashboard, built to `web/dist`), `src/app` (composition root).
 
 ## Hub reporting (optional, off by default)
 `src/hub/` reports progress to a central hub only after `factory hub connect` (hub URL in `factory.hub`, API key in the keychain / `FACTORY_HUB_KEY`). A reporter pass inside the service (every 30s, errors never reach the engine) sends a heartbeat, a changed-only sync of projects/jobs/workflow names, and stage and decision events from a whitelist of metadata fields, with deterministic event ids (`stage_execution:<id>`, `decision:<id>`) and a durable cursor in `<dataDir>/hub-state.json`. Failures back off exponentially; a rejected key (401) stops reporting until a new one is connected. Separately, and only if `factory.hub.remoteAccess` is on, `src/hub/tunnel.ts` long-polls the hub for relayed dashboard requests and runs them in-process against this server (`inject()`), after `src/hub/remote-policy.ts`, a default-deny route allow-list covered by a test over every registered route, has approved them; changing requests are recorded as `hub-remote` decisions. See [Hub client](docs/hub-client.md).
