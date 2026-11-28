@@ -42,6 +42,11 @@ describe("parseRepoFile", () => {
     expect(() => parseRepoFile("id: p\nbogus: 1\n", "p")).toThrow(/bogus|Unrecognized/);
     expect(() => parseRepoFile("id: p\ngithub: { repo: nope }\n", "p")).toThrow(/github\.repo/);
   });
+  it("cannot set or change human gates: only projects.yaml can", () => {
+    expect(() => parseRepoFile("id: p\ngates: []\n", "p")).toThrow(/gates|Unrecognized/);
+    expect(() => parseRepoFile("id: p\ngates: [REQUIREMENTS_ANALYSIS]\n", "p")).toThrow(ConfigError);
+    expect(mergeRepoFile(project({ gates: ["REQUIREMENTS_ANALYSIS"] }), parseRepoFile("id: p\ncommands: { test: x }\n", "p"))).not.toHaveProperty("gates"); // the merge only ever touches what the file may set
+  });
   it("rejects an id that differs from the project's", () => {
     expect(() => parseRepoFile("id: other\n", "p")).toThrow(/does not match/);
   });

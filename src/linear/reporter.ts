@@ -29,9 +29,9 @@ export function statusForStage(stage: StageName, mode: PlanningMode = "speckit")
   }
 }
 
-const HELD_HUMAN = new Set<StageName>(["BLOCKED", "NEEDS_ATTENTION", "FAILED"]);
+const HELD_HUMAN = new Set<StageName>(["BLOCKED", "NEEDS_ATTENTION", "FAILED"]); // not AWAITING_CONFIRMATION: a gate is a wait, not a block, so no "blocked" label
 const TITLES: Partial<Record<StageName, string>> = {
-  BLOCKED: "Blocked", NEEDS_ATTENTION: "Needs attention", FAILED: "Failed", CANCELLED: "Cancelled", COMPLETED: "Completed",
+  BLOCKED: "Blocked", NEEDS_ATTENTION: "Needs attention", AWAITING_CONFIRMATION: "Waiting for your confirmation", FAILED: "Failed", CANCELLED: "Cancelled", COMPLETED: "Completed",
 };
 
 /**

@@ -23,7 +23,7 @@ export const SPEC_FILES = ["spec.md", "plan.md", "tasks.md", "research.md", "dat
 
 export interface H { github: FakeGitHub; linear: FakeLinear; ctx: Context; claude: ImplAgent; haiku: ImplAgent; repo: string; jobId: string; engine: Engine; wt: string; hist: () => string[]; stages: () => string[] }
 
-export async function harness(o: { planning?: "speckit" | "haiku_prompt"; maxConflicts?: number; passes?: number; projectPasses?: number; commands?: Record<string, string>; baseTest?: string; noReviewer?: boolean; github?: FakeGitHub; timing?: Partial<DeliveryTiming>; clockStepMs?: number; now?: () => Date } = {}): Promise<H> {
+export async function harness(o: { planning?: "speckit" | "haiku_prompt"; maxConflicts?: number; passes?: number; projectPasses?: number; commands?: Record<string, string>; baseTest?: string; noReviewer?: boolean; gates?: ("REQUIREMENTS_ANALYSIS")[]; github?: FakeGitHub; timing?: Partial<DeliveryTiming>; clockStepMs?: number; now?: () => Date } = {}): Promise<H> {
   const { repo } = makeRepo({
     "package.json": JSON.stringify({ name: "todo", type: "module", scripts: { test: "node --test" } }),
     "src/todos.js": "export const list = () => [];\n",
@@ -33,7 +33,7 @@ export async function harness(o: { planning?: "speckit" | "haiku_prompt"; maxCon
   const planning = o.planning ?? "speckit";
   const base = fixtureConfig(planning);
   const commands = o.commands ?? { test: "node --test", lint: "node --check src/todos.js" };
-  const project = ProjectConfig.parse({ id: "p", name: "P", repository: repo, linear: { teamKey: "JAM" }, github: { repo: "Nikorag/todo" }, commands, overrides: o.projectPasses ? { maxImplementationPasses: o.projectPasses } : undefined });
+  const project = ProjectConfig.parse({ id: "p", name: "P", repository: repo, linear: { teamKey: "JAM" }, github: { repo: "Nikorag/todo" }, commands, gates: o.gates ?? [], overrides: o.projectPasses ? { maxImplementationPasses: o.projectPasses } : undefined });
   const r = (provider: string, model: string) => ({ provider, model });
   const config: LoadedConfig = {
     ...base, factory: { ...base.factory, dataDir: join(repo, "..", "data"), ...(o.passes ? { maxImplementationPasses: o.passes } : {}), workflow: { ...base.factory.workflow, ...(o.maxConflicts !== undefined ? { max_conflict_resolutions: o.maxConflicts } : {}) } }, projects: { projects: [project] },
