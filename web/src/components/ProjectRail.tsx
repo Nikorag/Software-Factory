@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { inHubMode } from "@/lib/api";
 import { electronMac } from "@/lib/platform";
-import { bucketOf, initialOf, lastTab, projectMeta, stageName, swatch, toneOf, TONE, type Bucket } from "@/lib/projects";
+import { bucketOf, initialOf,projectMeta, stageName, swatch, toneOf, TONE, type Bucket } from "@/lib/projects";
 import { ago } from "@/lib/format";
 import type { Job, Overview, Project, ProfileInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -31,7 +31,7 @@ export function ProjectRail({ open, onClose, overview: o, projects, jobs, projec
   const state = stop ? { t: "EMERGENCY STOP", c: TONE.fail } : paused ? { t: "PAUSED", c: TONE.wait } : { t: "RUNNING", c: TONE.ok };
   // A project that is not fully set up cannot run tickets yet, so it is greyed out and opens its settings (where the missing steps are listed).
   const ready = (p: Project) => !p.onboarding || p.onboarding.status === "ready";
-  const pick = (p: Project) => nav(ready(p) ? lastTab(p.id) ?? `/p/${encodeURIComponent(p.id)}` : `/settings?tab=projects&project=${encodeURIComponent(p.id)}`);
+  const pick = (p: Project) => nav(ready(p) ? `/p/${encodeURIComponent(p.id)}` : `/settings?tab=projects&project=${encodeURIComponent(p.id)}`);
   return (
     <aside aria-label="Projects and jobs" className={cn("fixed inset-y-0 left-0 z-30 flex h-dvh min-h-0 w-[min(300px,85vw)] max-md:pb-safe max-md:pt-safe max-md:shadow-2xl shrink-0 flex-col border-r border-line bg-rail transition-transform duration-200 md:static md:z-auto md:h-auto md:w-[264px] md:translate-x-0 md:transition-none", open ? "translate-x-0" : "-translate-x-full invisible md:visible")}>
       <div className={cn("app-drag flex h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3.5", electronMac ? "pl-[84px]" : "pl-4")}>

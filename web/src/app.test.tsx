@@ -37,7 +37,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const app = (path: string) => render(
-  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="board" element={<Board />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
+  <MemoryRouter initialEntries={[path]}><Routes><Route element={<Shell />}><Route index element={<Overview />} /><Route path="p/:projectId" element={<div data-testid="project-overview" />} /><Route path="jobs/:id" element={<JobDetail />} /><Route path="settings" element={<Settings />} /><Route path="board" element={<Board />} /><Route path="setup" element={<Setup />} /></Route></Routes></MemoryRouter>,
 );
 
 describe("flow derivation (from the stage history the factory already stores)", () => {
@@ -77,6 +77,18 @@ describe("job title and unconfigured projects", () => {
     expect(row(/Half Done/)).toHaveAttribute("title", expect.stringMatching(/still to do: test command configured/));
     expect(row(/My App/)).toHaveAttribute("data-configured", "true");
     expect(row(/My App/)).not.toHaveClass("opacity-50");
+  });
+  it("opens the project's overview from the left rail, even if a job was the last page open for it", async () => {
+    localStorage.clear();
+    localStorage.setItem("sf.tab.my-app", "/jobs/j1");
+    const done = { ...proj, onboarding: { status: "ready" as const, steps: [] } };
+    routes = { "/api/overview": overview(), "/api/projects": { projects: [done] }, "/api/jobs/j1": detail(job(), []) };
+    app("/");
+    const rail = await screen.findByRole("navigation", { name: "Project list" });
+    await userEvent.click(await within(rail).findByRole("button", { name: /My App/ }));
+    expect(await screen.findByTestId("project-overview")).toBeInTheDocument();
+    expect(screen.queryByTestId("job-title")).toBeNull();
+    localStorage.clear();
   });
 });
 
