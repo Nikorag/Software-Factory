@@ -54,6 +54,11 @@ export class AgentRunner {
     const git = this.d.git ?? realGit;
     const profile = ROLE_PROFILE[step.role];
     const route = router.route(step.task, step.projectId); // fail on bad config before recording anything
+    const caps = router.capabilities(route);
+    // A plugin that cannot write the worktree may only serve the read-only profile (reviewers, classification): decided from its declared capabilities.
+    if (profile !== "read-only" && !(caps.tools && caps.writesWorktree)) {
+      return { ok: false, text: "", denials: [], exitCode: null, durationMs: 0, failure: "error", error: `plugin ${route.plugin} cannot write the worktree and may only serve read-only requests (role ${step.role})`, route, violations: [] };
+    }
     const access = profile === "implementer" ? (this.d.access?.(step.projectId) ?? "restricted") : "restricted";
     if (access === "unrestricted" && step.jobId) {
       db.insert(decisions).values({ jobId: step.jobId, kind: "agent.unrestricted", decision: `${step.role} runs with unrestricted access (Claude Code auto mode)`, rationale: "agentAccess is `unrestricted`", actor: "factory" }).run();
@@ -68,14 +73,15 @@ export class AgentRunner {
     const grants = step.jobId ? (this.d.readGrants?.(step.jobId) ?? []) : [];
     const row = step.jobId
       ? db.insert(agentInvocations).values({
-          jobId: step.jobId, stageExecutionId: step.executionId ?? null, agent: `${route.provider}/${step.role}`, model: route.model, cwd: step.cwd, logPath: logFile,
+          jobId: step.jobId, stageExecutionId: step.executionId ?? null, agent: `${route.instance}/${step.role}`, model: route.model, cwd: step.cwd, logPath: logFile,
         }).returning({ id: agentInvocations.id }).get()
       : undefined;
 
     // The first line of the run's log is the prompt, so the dashboard's conversation view reads from the very start.
     try { mkdirSync(dirname(logFile), { recursive: true }); appendFileSync(logFile, `${JSON.stringify({ type: "factory_prompt", role: step.role, text: step.prompt })}\n`); } catch { /* the log is a convenience, never a reason to fail the run */ }
 
-    const before = profile === "read-only" && route.provider === "anthropic" ? await git(step.cwd, ["status", "--porcelain", "--untracked-files=all"]).catch(() => null) : null;
+    // A tool-using plugin could change files even when asked to only read: verify the worktree is untouched afterwards.
+    const before = profile === "read-only" && caps.tools ? await git(step.cwd, ["status", "--porcelain", "--untracked-files=all"]).catch(() => null) : null;
     const result = await router.run(step.task, {
       role: step.role, profile, prompt: step.prompt, cwd: step.cwd, timeoutMs: step.timeoutMs, signal: step.signal,
       systemPrompt: readNote(rolePrompt(step.role), grants) + skillBlock, readPaths: grants, protectedPaths: this.d.protectedPaths, access, bashAllow: [...(step.bashAllow ?? []), ...(this.d.projectBashAllow?.(step.projectId) ?? [])],

@@ -16,7 +16,7 @@ import { findBinary } from "../speckit/tools.js";
 import { acquireLock } from "./lock.js";
 import { HealthChecker } from "./metrics.js";
 import { Scheduler } from "./scheduler.js";
-import { LocalModelClient } from "../agents/local.js";
+import { instancesInUse } from "../plugins/usage.js";
 import { createLinearClient } from "../linear/client.js";
 import { createProjectActions } from "./actions.js";
 import { saveSecret } from "./secrets.js";
@@ -56,13 +56,14 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
   const port = opts.port ?? config.factory.server.port;
   const token = loadOrCreateToken(config.factory.dataDir);
 
-  const usesLocal = Object.values(config.models.routes).some((r) => r?.provider === "local" && !("baseUrl" in r && r.baseUrl));
+  // Every plugin instance a route uses that can list its models (an OpenAI-style server) is probed; others need no probe.
+  const modelListers = () => instancesInUse(config.models).filter((u) => u.instance && ctx.registry.capabilities(u.instance.plugin)?.listsModels);
   const health = new HealthChecker({
     claudeAuth: async () => (await run("claude", ["auth", "status"], { timeout: 10_000 })).stdout,
     trackers: () => trackerIdsInUse(config).map((id) => ({ name: id === "github" ? "github-issues" : id /* "github" is already the gh sign-in probe */, viewer: async () => ctx.trackers.client(id).viewer() })),
     ghAuth: async () => { const r = await run("gh", ["auth", "status"], { timeout: 10_000 }).catch((e) => e as { stdout?: string; stderr?: string }); return `${r.stdout ?? ""}${r.stderr ?? ""}`; },
     sandboxAvailable, specifyInstalled: () => findBinary("specify") !== null,
-    localModels: usesLocal ? () => new LocalModelClient({ baseUrl: config.models.local.baseUrl }).listModels() : undefined,
+    localModels: modelListers().length ? async () => (await Promise.all(modelListers().map((u) => ctx.registry.runtime(u.id, u.instance!).listModels?.() ?? []))).flat() : undefined,
   });
 
   const scheduler = opts.scheduler === false ? undefined : new Scheduler({
@@ -92,7 +93,7 @@ export async function startService(config: LoadedConfig, opts: { scheduler?: boo
     const res = await ctx.runner.run({ projectId: r.projectId, task: "final_review", role: "assistant", prompt: r.prompt, cwd: r.cwd, timeoutMs: r.timeoutMs });
     return { ok: res.ok, text: res.text, error: res.error };
   } };
-  const app = buildServer({ chat, shutdown: opts.requestShutdown, db: ctx.handle.db, logger, config, engine: ctx.engine, worktrees: ctx.worktrees, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: jiraStoreFor(config, "jira"), storeFor: (id) => jiraStoreFor(config, id), port }, updates: new UpdateChecker(), profiles: {
+  const app = buildServer({ plugins: ctx.registry, chat, shutdown: opts.requestShutdown, db: ctx.handle.db, logger, config, engine: ctx.engine, worktrees: ctx.worktrees, scheduler, health, dataDir: config.factory.dataDir, port, controlToken: token, settings, bitbucket: { store: bbStore(config.bitbucket.keychainService) }, jira: { store: jiraStoreFor(config, "jira"), storeFor: (id) => jiraStoreFor(config, id), port }, updates: new UpdateChecker(), profiles: {
     current: process.env.FACTORY_PROFILE ?? DEFAULT_PROFILE, list: () => listProfiles(), add: (n) => addProfile(n), remove: (n) => removeProfile(n),
     start: (p) => launchService(p, factoryRoot()), isUp: (p) => isUp(p),
   } });

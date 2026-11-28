@@ -11,6 +11,8 @@ export interface LocalModelOptions {
   baseUrl: string; fetch?: typeof fetch;
   /** NAME of the environment variable holding a bearer token for a hosted endpoint. Read per request; the value is never logged or stored. */
   apiKeyEnv?: string; env?: NodeJS.ProcessEnv;
+  /** How errors name the backend (default "local model"; the OpenAI plugin says "OpenAI API"). */
+  label?: string;
 }
 
 /** `<think>…</think>` blocks (Qwen-style reasoning) are not part of the answer. */
@@ -53,7 +55,9 @@ export class LocalModelClient implements Agent {
   private active = false;
   private readonly doFetch: typeof fetch;
 
-  constructor(private readonly o: LocalModelOptions) { this.doFetch = o.fetch ?? fetch; }
+  private readonly label: string;
+
+  constructor(private readonly o: LocalModelOptions) { this.doFetch = o.fetch ?? fetch; this.label = o.label ?? "local model"; }
 
   /** Request headers; `undefined` when a key is configured but its variable is not set. */
   private headers(): Record<string, string> | undefined {
@@ -73,13 +77,13 @@ export class LocalModelClient implements Agent {
       return ((await res.json()) as { data?: { id: string }[] }).data?.map((m) => m.id) ?? [];
     } catch (e) {
       if (e instanceof LocalModelError) throw e;
-      throw new LocalModelError(`local model server unreachable at ${this.o.baseUrl}`, "unreachable");
+      throw new LocalModelError(`${this.label} server unreachable at ${this.o.baseUrl}`, "unreachable");
     }
   }
 
   run(req: AgentRequest): Promise<AgentResult> {
     if (req.profile !== "read-only") {
-      return Promise.resolve(this.fail("error", "the local model has no tools and may only serve read-only requests", 0));
+      return Promise.resolve(this.fail("error", `the ${this.label} has no tools and may only serve read-only requests`, 0));
     }
     this.waiting++;
     const job = this.tail.then(async () => {
@@ -131,7 +135,7 @@ export class LocalModelClient implements Agent {
         }
         if (!r.ok) {
           const transient = r.status >= 500 || r.status === 429;
-          return { ...this.fail(transient ? "transient" : "error", `local model HTTP ${r.status}: ${r.text.slice(0, 300)}`, Date.now() - started) };
+          return { ...this.fail(transient ? "transient" : "error", `${this.label} HTTP ${r.status}: ${r.text.slice(0, 300)}`, Date.now() - started) };
         }
         const data = JSON.parse(r.text) as { choices?: { message?: { content?: string } }[]; usage?: Record<string, unknown> };
         usage = data.usage;
@@ -141,7 +145,7 @@ export class LocalModelClient implements Agent {
         if (!req.jsonSchema) return { ...base, ok: true };
         try { return { ...base, ok: true, structured: extractJson(content) }; }
         catch {
-          if (attempt === 2) return { ...base, ok: false, failure: "invalid_output", error: "local model did not return valid JSON after retries" };
+          if (attempt === 2) return { ...base, ok: false, failure: "invalid_output", error: `${this.label} did not return valid JSON after retries` };
           messages.push({ role: "assistant", content: text }, { role: "user", content: "That was not valid JSON for the schema. Reply with ONLY the JSON object." });
         }
       }
@@ -150,7 +154,7 @@ export class LocalModelClient implements Agent {
       const d = Date.now() - started;
       if (req.signal?.aborted) return this.fail("cancelled", "cancelled", d);
       if (signal.aborted) return this.fail("timeout", `exceeded ${Math.round(req.timeoutMs / 1000)}s`, d);
-      return this.fail("transient", `local model server unreachable at ${this.o.baseUrl}: ${(e as Error).message}`, d);
+      return this.fail("transient", `${this.label} server unreachable at ${this.o.baseUrl}:${(e as Error).message}`, d);
     }
   }
 }

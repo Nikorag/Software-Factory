@@ -33,7 +33,7 @@ export interface SettingsDeps {
 }
 
 /** Edits go to the user's own config dir (seeded from the shipped defaults on first write), never to the shipped defaults. */
-const writableDir = (c: LoadedConfig): string => (!c.configDir || c.configDir === BUNDLED_CONFIG_DIR ? seedHomeConfig() : c.configDir);
+export const writableDir = (c: LoadedConfig): string => (!c.configDir || c.configDir === BUNDLED_CONFIG_DIR ? seedHomeConfig() : c.configDir);
 const fail = (reply: FastifyReply, e: unknown) => reply.code(e instanceof ConfigError || e instanceof z.ZodError ? 400 : 409).send({ error: e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : (e as Error).message });
 
 export function registerSettingsRoutes(app: FastifyInstance, d: SettingsDeps, requireToken: (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>): void {

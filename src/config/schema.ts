@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { TOOL_TASKS } from "../plugins/capabilities.js";
+import { instancesOf, routeHasTools, TOOL_TASK_MESSAGE } from "../plugins/routes.js";
 
 /** https only, except for a hub running on this machine (development). */
 export function validHubUrl(u: string): boolean {
@@ -87,23 +89,39 @@ export type FactoryConfig = z.infer<typeof FactoryConfig>;
 export const ALWAYS_PROTECTED_PATHS: readonly string[] = [".software-factory.yml"];
 export const effectiveProtectedPaths = (paths: readonly string[]): string[] => [...paths, ...ALWAYS_PROTECTED_PATHS.filter((p) => !paths.includes(p))];
 
+// A route names a plugin INSTANCE: `{ plugin: <instance id>, model }` (instances are defined once in `plugins:`).
+// The legacy form `{ provider: anthropic | local, model }` still loads: it is migrated on read to the instance it always meant
+// (anthropic -> `claude-code`, local -> `local` / an openai-compatible endpoint). See src/plugins/routes.ts.
 const Provider = z.enum(["local", "anthropic"]);
-const ModelRoute = z.object({
-  provider: Provider,
-  // Identifier is a free string: for `local` it must match what the runtime reports
-  // (see `factory doctor`); for `anthropic` it is passed to Claude Code via --model.
+export const InstanceId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "an instance id: lowercase letters, numbers and hyphens");
+export const PluginInstanceConfig = z.object({
+  plugin: z.string().min(1).max(64),
+  /** The plugin's own settings, validated by the plugin. Secrets are only ever named by environment variable (`apiKeyEnv`). */
+  settings: z.record(z.string(), z.unknown()).default({}),
+});
+const ModelRouteBase = z.object({
+  plugin: InstanceId.optional(),
+  provider: Provider.optional(),
+  // Identifier is a free string: for an OpenAI-style plugin it must match what the runtime reports
+  // (see `factory doctor`); for `claude-code` it is passed to Claude Code via --model.
   model: z.string().min(1),
 });
+const oneForm = (r: { plugin?: string; provider?: string }) => (r.plugin === undefined) !== (r.provider === undefined);
+const ONE_FORM = { message: "a route names a plugin instance (`plugin: <id>`) or, in older files, a `provider`: exactly one" };
+const ModelRoute = ModelRouteBase.refine(oneForm, ONE_FORM);
 // The independent reviewer: any OpenAI-compatible endpoint. `baseUrl` + `model` (+ optional `apiKeyEnv`, the NAME of an
 // environment variable holding the key: the key itself is never stored). Absent or null = no independent review (skipped).
 // provider `local` without a baseUrl uses `local.baseUrl`; provider `anthropic` runs a Claude reviewer (older setups).
-export const ReviewerRoute = ModelRoute.extend({
+// With `plugin:` the endpoint and key belong to the plugin instance, not the route.
+export const ReviewerRoute = ModelRouteBase.extend({
   baseUrl: z.string().url().optional(),
   apiKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "an environment variable name").max(100).optional(),
-}).refine((r) => !r.apiKeyEnv || !!r.baseUrl, { message: "apiKeyEnv needs a baseUrl: the shared local server is never sent an API key" })
+}).refine(oneForm, ONE_FORM)
+  .refine((r) => !r.apiKeyEnv || !!r.baseUrl, { message: "apiKeyEnv needs a baseUrl: the shared local server is never sent an API key" })
   .refine((r) => !(r.apiKeyEnv && r.baseUrl) || validHubUrl(r.baseUrl), { message: "baseUrl must be https (http only for localhost) when an API key is configured, so the key is never sent in cleartext" })
-  .refine((r) => r.provider === "local" || (!r.baseUrl && !r.apiKeyEnv), { message: "baseUrl and apiKeyEnv only apply to provider `local` (an OpenAI-compatible endpoint)" });
+  .refine((r) => r.provider === "local" || (!r.baseUrl && !r.apiKeyEnv), { message: "baseUrl and apiKeyEnv only apply to provider `local` (an OpenAI-compatible endpoint); with `plugin:` set them on the plugin instance" });
 export type ReviewerRoute = z.infer<typeof ReviewerRoute>;
+export type ModelRouteConfig = z.infer<typeof ModelRoute>;
 export const ModelsConfig = z
   .object({
   local: z
@@ -116,6 +134,8 @@ export const ModelsConfig = z
     .default({ baseUrl: "http://127.0.0.1:1234/v1", requestTimeoutSeconds: 300, maxConcurrentRequests: 1 }),
   // If the local model is unavailable for an independent review: use a fresh Claude reviewer, or block the job.
   independentReviewFallback: z.enum(["claude", "block"]).default("claude"),
+  // Named plugin instances (plugin id + settings), defined once and referenced by routes. `claude-code` and `local` exist without being listed.
+  plugins: z.record(InstanceId, PluginInstanceConfig).default({}),
   routes: z.object({
     classification: ModelRoute,
     specification: ModelRoute,
@@ -126,8 +146,13 @@ export const ModelsConfig = z
     prompt_generation: ModelRoute.default({ provider: "anthropic", model: "haiku" }),
   }),
   })
-  .refine((m) => m.routes.implementation.provider === "anthropic" && m.routes.specification.provider === "anthropic" && m.routes.prompt_generation.provider === "anthropic", {
-    message: "specification, implementation and prompt_generation need file and shell tools, so they must use provider `anthropic` (Claude Code)",
+  .superRefine((m, ctx) => {
+    const defined = instancesOf(m);
+    for (const [task, r] of Object.entries(m.routes)) {
+      if (r?.plugin && !defined[r.plugin]) ctx.addIssue({ code: "custom", path: ["routes", task, "plugin"], message: `unknown plugin instance "${r.plugin}" (defined: ${Object.keys(defined).join(", ")}); add it under \`plugins:\`` });
+    }
+    // Capability-driven: the plugin must declare tool access for the steps that read and write the repository.
+    if (!TOOL_TASKS.every((t) => routeHasTools(m, m.routes[t]))) ctx.addIssue({ code: "custom", message: TOOL_TASK_MESSAGE });
   });
 export type ModelsConfig = z.infer<typeof ModelsConfig>;
 
@@ -141,9 +166,8 @@ export const ProjectOverrides = z.object({
   agentAccess: z.enum(["restricted", "unrestricted"]).optional(), // this project's override of factory.agentAccess
   // independent_review: null = this project skips the independent review; left out = follow the global setting.
   models: z.object({ ...(Object.fromEntries(RouteName.map((r) => [r, ModelRoute.optional()])) as Record<Exclude<(typeof RouteName)[number], "independent_review">, z.ZodOptional<typeof ModelRoute>>), independent_review: ReviewerRoute.nullish() })
-    .refine((m) => (m.specification?.provider ?? "anthropic") === "anthropic" && (m.implementation?.provider ?? "anthropic") === "anthropic" && (m.prompt_generation?.provider ?? "anthropic") === "anthropic", {
-      message: "specification, implementation and prompt_generation need file and shell tools, so they must use provider `anthropic` (Claude Code)",
-    }).optional(),
+    // Instance ids are global, so only the built-in ids and legacy providers can be judged here; the router checks the rest when it routes.
+    .refine((m) => TOOL_TASKS.every((t) => { const r = m[t]; return !r || routeHasTools({ local: { baseUrl: "" } }, r); }), { message: TOOL_TASK_MESSAGE }).optional(),
 });
 export type ProjectOverrides = z.infer<typeof ProjectOverrides>;
 

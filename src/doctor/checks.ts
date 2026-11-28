@@ -2,6 +2,11 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { totalmem } from "node:os";
 import type { LoadedConfig } from "../config/schema.js";
+import { LocalModelClient } from "../agents/local.js";
+import { createRegistry } from "../plugins/builtin/index.js";
+import type { PluginRegistry } from "../plugins/registry.js";
+import { instanceOfRoute } from "../plugins/routes.js";
+import { instancesInUse, type InstanceUse } from "../plugins/usage.js";
 import { findBinary } from "../speckit/tools.js";
 import { resolveSecret } from "../service/secrets.js";
 import { createLinearClient, type LinearClient } from "../linear/client.js";
@@ -50,41 +55,59 @@ export async function checkLocalModels(baseUrl: string, fetchImpl: typeof fetch 
   }
 }
 
-const hasEndpoint = (r: object): boolean => "baseUrl" in r && Boolean(r.baseUrl);
-
-/** Each route that uses the local model must name a model the server really reports. */
-export async function checkLocalRoutes(config: LoadedConfig, fetchImpl: typeof fetch = fetch): Promise<CheckResult[]> {
-  // A route with its own endpoint (the independent reviewer) is not on the local server.
-  const local = Object.entries(config.models.routes).filter((e): e is [string, NonNullable<(typeof e)[1]>] => !!e[1] && e[1].provider === "local" && !hasEndpoint(e[1]));
-  if (local.length === 0) return [];
-  let ids: string[] = [];
-  try {
-    const res = await fetchImpl(`${config.models.local.baseUrl}/models`, { signal: AbortSignal.timeout(5000) });
-    ids = res.ok ? (((await res.json()) as { data?: { id: string }[] }).data ?? []).map((m) => m.id) : [];
-  } catch { /* reported by checkLocalModels */ }
-  return local.map(([task, r]) => {
-    if (/^UNCONFIGURED/i.test(r.model)) return { name: `route ${task}`, status: "warn" as const, detail: "local model id not configured in config/models.yaml" };
-    return ids.includes(r.model)
-      ? { name: `route ${task}`, status: "ok" as const, detail: `${r.model} is available` }
-      : { name: `route ${task}`, status: "fail" as const, detail: `${r.model} is not reported by the local server${ids.length ? ` (has: ${ids.join(", ")})` : ""}` };
-  });
+/** The settings of a plugin instance that lists models (an OpenAI-style endpoint), or why it cannot be used. */
+function modelServer(u: InstanceUse, registry: PluginRegistry): { baseUrl: string; apiKeyEnv?: string } | { error: string } | null {
+  if (!u.instance || !registry.capabilities(u.instance.plugin)?.listsModels) return null;
+  try { return registry.validate(u.id, u.instance) as { baseUrl: string; apiKeyEnv?: string }; } catch (e) { return { error: (e as Error).message }; }
 }
 
-const usesLocal = (c: LoadedConfig) => Object.values(c.models.routes).some((r) => r?.provider === "local" && !hasEndpoint(r));
+/** Each route on a plugin that lists models must name a model its server really reports. */
+export async function checkLocalRoutes(config: LoadedConfig, fetchImpl: typeof fetch = fetch, registry: PluginRegistry = createRegistry()): Promise<CheckResult[]> {
+  const out: CheckResult[] = [];
+  for (const u of instancesInUse(config.models)) {
+    const s = modelServer(u, registry);
+    if (!s) continue;
+    if ("error" in s) { out.push(...u.tasks.map((t) => ({ name: `route ${t.task}`, status: "fail" as const, detail: s.error }))); continue; }
+    let ids: string[] = [];
+    try { ids = await new LocalModelClient({ baseUrl: s.baseUrl, apiKeyEnv: s.apiKeyEnv, fetch: fetchImpl }).listModels(); } catch { /* reported by checkLocalModels */ }
+    for (const { task, model } of u.tasks) {
+      if (/^UNCONFIGURED/i.test(model)) out.push({ name: `route ${task}`, status: "warn", detail: "local model id not configured in config/models.yaml" });
+      else out.push(ids.includes(model)
+        ? { name: `route ${task}`, status: "ok", detail: `${model} is available` }
+        : { name: `route ${task}`, status: "fail", detail: `${model} is not reported by the server of plugin instance ${u.id}${ids.length ? ` (has: ${ids.join(", ")})` : ""}` });
+    }
+  }
+  return out;
+}
 
-/** The local model server is only checked (and only required) when a route actually uses it. */
-async function localChecks(config: LoadedConfig, fetchImpl: typeof fetch): Promise<CheckResult[]> {
-  if (!usesLocal(config)) return [{ name: "local models", status: "ok", detail: "no route uses a local model (Claude only)" }];
-  return [...(await checkLocalModels(config.models.local.baseUrl, fetchImpl)), ...(await checkLocalRoutes(config, fetchImpl))];
+/**
+ * Every plugin instance a route uses must exist, be installed and compatible, and have valid settings; those that serve models
+ * are probed (read-only GET /models) and only checked (and only required) when a route actually uses them.
+ */
+export async function pluginChecks(config: LoadedConfig, fetchImpl: typeof fetch, registry: PluginRegistry): Promise<CheckResult[]> {
+  const out: CheckResult[] = [];
+  const uses = instancesInUse(config.models);
+  for (const u of uses) {
+    const where = u.tasks.map((t) => t.task).join(", ");
+    if (!u.instance) { out.push({ name: `plugin ${u.id}`, status: "fail", detail: `used by ${where} but not defined under \`plugins:\` in config/models.yaml` }); continue; }
+    const bad = registry.unavailable(u.instance.plugin);
+    if (bad) { out.push({ name: `plugin ${u.id}`, status: "fail", detail: bad }); continue; }
+    try { registry.validate(u.id, u.instance); } catch (e) { out.push({ name: `plugin ${u.id}`, status: "fail", detail: (e as Error).message }); }
+  }
+  const servers = uses.map((u) => ({ u, s: modelServer(u, registry) })).filter((x): x is { u: InstanceUse; s: { baseUrl: string; apiKeyEnv?: string } } => !!x.s && !("error" in x.s));
+  if (!uses.some((u) => u.instance && registry.capabilities(u.instance.plugin)?.listsModels)) out.push({ name: "local models", status: "ok", detail: "no route uses a model server (Claude Code only)" });
+  for (const { s } of servers) out.push(...(await checkLocalModels(s.baseUrl, fetchImpl)));
+  return [...out, ...(await checkLocalRoutes(config, fetchImpl, registry))];
 }
 
 /** A reviewer that is the same model as the author is not independent. */
 export function reviewerIndependence(config: LoadedConfig): CheckResult[] {
   const { specification: a, independent_review: r } = config.models.routes;
   if (!r) return [{ name: "reviewer independence", status: "ok", detail: "no independent reviewer set: the independent review step is skipped" }];
-  return a.provider === r.provider && a.model === r.model
+  const [ai, ri] = [instanceOfRoute(config.models, a).id, instanceOfRoute(config.models, r).id];
+  return ai === ri && a.model === r.model
     ? [{ name: "reviewer independence", status: "warn", detail: `independent_review uses the same model as specification (${r.model}); pick a different one` }]
-    : [{ name: "reviewer independence", status: "ok", detail: `${r.provider}/${r.model} reviews ${a.provider}/${a.model}` }];
+    : [{ name: "reviewer independence", status: "ok", detail: `${ri}/${r.model} reviews ${ai}/${a.model}` }];
 }
 
 /** Read-only: asks Linear who the key belongs to. Reports the account name, never the key. */
@@ -110,7 +133,7 @@ export async function checkLinear(config: LoadedConfig, clientOverride?: LinearC
   }
 }
 
-export async function runDoctor(config: LoadedConfig, fetchImpl: typeof fetch = fetch): Promise<CheckResult[]> {
+export async function runDoctor(config: LoadedConfig, fetchImpl: typeof fetch = fetch, registry: PluginRegistry = createRegistry()): Promise<CheckResult[]> {
   const memGb = Math.round(totalmem() / 1024 ** 3);
   const results: CheckResult[] = [
     { name: "node", status: Number(process.versions.node.split(".")[0]) >= 22 ? "ok" : "fail", detail: process.version },
@@ -121,7 +144,7 @@ export async function runDoctor(config: LoadedConfig, fetchImpl: typeof fetch = 
     await checkGitHubAuth(),
     await tool("claude", "claude", ["--version"]),
     ...(config.factory.workflow.planning_mode === "speckit" ? [await tool("specify (SpecKit)", findBinary("specify") ?? "specify", ["--version"], false)] : []), // only the speckit planning mode needs it
-    ...(await localChecks(config, fetchImpl)),
+    ...(await pluginChecks(config, fetchImpl, registry)),
     ...reviewerIndependence(config),
   ];
   for (const id of trackerIdsInUse(config)) results.push(await checkLinear(config, undefined, id)); // every tracker connection a project uses

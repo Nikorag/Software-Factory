@@ -19,6 +19,7 @@ import { cachedSystemInfo, counts, type HealthChecker } from "../service/metrics
 import { readConversation } from "../agents/transcript.js";
 import { exhaustedLimit, readLimits, usageFile, windowIsCurrent } from "../agents/usage.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
+import { registerPluginRoutes } from "./plugins-routes.js";
 import { onboardingOf, type CheckRecord } from "../repo/readiness.js";
 import { latestPlan } from "../planning/plan.js";
 import type { RepoReport } from "../repo/inspect.js";
@@ -48,6 +49,8 @@ export interface ApiDeps {
   githubIssues?: { gh?: import("../github/client.js").GhExec };
   updates?: { status(): Promise<import("../service/versions.js").UpdateStatus>; refresh(): Promise<import("../service/versions.js").UpdateStatus> };
   settings?: Omit<import("./settings-routes.js").SettingsDeps, "db" | "config">;
+  /** The plugin registry: lists provider plugins and validates their instances. Absent in tests that do not exercise it. */
+  plugins?: import("../plugins/registry.js").PluginRegistry;
   /** Runs one read-only assistant turn for the job chat. Absent: the chat endpoint answers 503. */
   chat?: { run: ChatRun };
   /** Begins a graceful shutdown of this service (how `software-factory shutdown` stops it without signalling a pid). */
@@ -345,4 +348,5 @@ export function registerApiRoutes(app: FastifyInstance, d: ApiDeps, requireToken
   registerChatRoutes(app, { db, dataDir: d.dataDir, chat: d.chat }, requireToken);
   registerLessonsRoutes(app, { db }, requireToken);
   if (d.settings && d.config) registerSettingsRoutes(app, { ...d.settings, db, config: d.config }, requireToken);
+  if (d.plugins && d.config) registerPluginRoutes(app, { config: d.config, registry: d.plugins }, requireToken);
 }

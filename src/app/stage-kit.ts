@@ -63,7 +63,7 @@ export interface AgentCall<T extends z.ZodType> {
   lessons?: LessonStage;
 }
 export type AgentOutcome<T extends z.ZodType> =
-  | { ok: true; data: z.infer<T> | undefined; result: AgentResult & { route?: { provider: string; model: string } } }
+  | { ok: true; data: z.infer<T> | undefined; result: AgentResult & { route?: { plugin: string; instance: string; model: string } } }
   | { ok: false; stop: StageResult };
 
 /** Shared per-job setup and agent plumbing used by every stage handler set. */
@@ -116,8 +116,8 @@ export function createStageKit(d: StageKitDeps) {
   }
 
   /**
-   * Runs the independent reviewer (the `independent_review` route: Haiku by default). Only a *local* route has a
-   * fallback (a fresh Claude reviewer on `final_review`, or block, per config); a Claude route's failure is just a failure.
+   * Runs the independent reviewer (the `independent_review` route). Only a reviewer on an API-kind plugin has a fallback
+   * (a fresh reviewer on `final_review`, or block, per config); a CLI plugin's failure is just a failure.
    */
   async function independent<T extends z.ZodType>(
     ctx: { job: { id: string; projectId?: string } }, run: (task: TaskKind) => Promise<AgentOutcome<T>>,
@@ -127,22 +127,20 @@ export function createStageKit(d: StageKitDeps) {
       record(ctx.job.id, "review.skipped", "independent review skipped", "no independent reviewer is configured (Settings > Workflow > Models > Independent review)");
       return { ok: true, skipped: true };
     }
-    let provider: "local" | "anthropic" = "anthropic";
     let r: AgentOutcome<T>;
     try {
-      provider = d.router.route("independent_review", ctx.job.projectId).provider;
       r = await run("independent_review");
     } catch (e) {
       if (!(e instanceof ConfigError)) throw e;
-      provider = "local"; // an unconfigured local route
-      r = { ok: false, stop: { kind: "retry", reason: "local model not configured" } };
+      r = { ok: false, stop: { kind: "retry", reason: `independent reviewer not configured: ${e.message}` } };
     }
     let reviewer = r.ok ? (r.result.route?.model ?? "independent_review") : "";
     if (!r.ok) {
-      if (provider !== "local") return { ok: false, stop: r.stop };
+      // The router decides from the plugin's declared kind whether this reviewer has a fallback; the engine never names a provider.
+      if (!d.router.reviewerCanFallBack(ctx.job.projectId)) return { ok: false, stop: r.stop };
       const why = r.stop.kind === "retry" ? r.stop.reason : "unavailable";
-      if (d.fallback === "block") return { ok: false, stop: { kind: "blocked", reason: `The independent (local) reviewer is unavailable and the fallback is "block": ${why}` } };
-      record(ctx.job.id, "review.degraded", "independent local review unavailable; used a fresh Claude reviewer", why);
+      if (d.fallback === "block") return { ok: false, stop: { kind: "blocked", reason: `The independent reviewer is unavailable and the fallback is "block": ${why}` } };
+      record(ctx.job.id, "review.degraded", "independent review unavailable; used a fresh Claude reviewer", why);
       r = await run("final_review");
       if (!r.ok) return { ok: false, stop: r.stop };
       reviewer = `${r.result.route?.model ?? "claude"} (fallback)`;

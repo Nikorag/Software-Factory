@@ -83,9 +83,10 @@ describe("specification pipeline (real engine, handlers, git; scripted agents)",
     const kinds = new Set(h.ctx.handle.db.select().from(artifacts).all().map((a) => a.kind));
     for (const k of ["spec", "plan", "tasks", "checklist", "step:specify", "step:clarify", "step:plan", "step:tasks"]) expect(kinds).toContain(k);
     const agents = h.ctx.handle.db.select().from(agentInvocations).all().map((a) => a.agent);
-    expect(agents.filter((a) => a === "anthropic/classifier")).toHaveLength(1);
-    expect(agents.filter((a) => a === "anthropic/spec-writer")).toHaveLength(4);
-    expect(agents.filter((a) => a === "anthropic/spec-reviewer")).toHaveLength(2); // independent review + analyze
+    // the invocation records the plugin INSTANCE (claude-code) and the role
+    expect(agents.filter((a) => a === "claude-code/classifier")).toHaveLength(1);
+    expect(agents.filter((a) => a === "claude-code/spec-writer")).toHaveLength(4);
+    expect(agents.filter((a) => a === "claude-code/spec-reviewer")).toHaveLength(2); // independent review + analyze
     expect(decisionKinds(h)).toContain("review.result");
     expect(decisionKinds(h)).not.toContain("review.degraded");
   });
