@@ -107,6 +107,8 @@ export function editLesson(db: FactoryDb, id: number, change: { text?: string; k
     if (change.text !== undefined) {
       const p = prepareLessonText(change.text);
       if (!p.ok) throw new LessonError(p.reason);
+      const dupe = tx.select().from(lessons).where(eq(lessons.projectId, l.projectId)).all().find((o) => o.id !== id && o.text.toLowerCase() === p.text.toLowerCase());
+      if (dupe) throw new LessonError(`already ${dupe.status} (lesson #${dupe.id})`);
       set.text = p.text;
     }
     if (change.kind !== undefined) set.kind = lessonKind(change.kind);

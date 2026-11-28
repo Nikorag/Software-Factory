@@ -81,6 +81,19 @@ describe("lessons table and store", () => {
     const r = proposeLesson(s.db, { projectId: "p", text: "Set the config with password: \"abcdefghijklmnop1234\" first", kind: "command", source: "human", actor: "x" });
     expect(r).toHaveProperty("refused"); // credential-assignment is flagged, so it is refused rather than stored redacted
   });
+  it("refuses an edit that makes a lesson's text equal to another lesson in the project, but allows other edits", () => {
+    const s = setup();
+    const a = proposeLesson(s.db, { projectId: "p", text: "Use tabs", kind: "convention", source: "human", actor: "d" });
+    const b = proposeLesson(s.db, { projectId: "p", text: "Use spaces", kind: "convention", source: "human", actor: "d" });
+    const o = proposeLesson(s.db, { projectId: "q", text: "Use spaces too", kind: "convention", source: "human", actor: "d" });
+    if ("refused" in a || "refused" in b || "refused" in o) throw new Error("unexpected");
+    expect(() => editLesson(s.db, b.lesson.id, { text: "USE TABS" }, "d")).toThrow(/already proposed/);
+    expect(listLessons(s.db, "p").find((l) => l.id === b.lesson.id)?.text).toBe("Use spaces");
+    expect(editLesson(s.db, b.lesson.id, { text: "Use spaces" }, "d").text).toBe("Use spaces"); // itself is not a duplicate
+    expect(editLesson(s.db, o.lesson.id, { text: "Use tabs" }, "d").text).toBe("Use tabs"); // another project is fine
+    expect(editLesson(s.db, b.lesson.id, { text: "Use 4 spaces" }, "d").text).toBe("Use 4 spaces");
+  });
+
   it("only a human action activates: approve (proposed only), edit, reject, retire each write a decision", () => {
     const s = setup();
     const r = proposeLesson(s.db, { projectId: "p", text: "Use tabs", kind: "convention", source: "human", actor: "dashboard" });
