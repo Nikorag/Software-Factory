@@ -86,8 +86,8 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
       // Rerun that step once, in the same attempt, before failing the stage.
       let bundle = readSpecBundle(p.cwd, p.featureDir);
       for (let attempt = 1; ; attempt++) {
-        const r = await agent(ctx, { task: "specification", role: "spec-writer", prompt: skillPrompt(step, p.featureDir, extra), cwd: p.cwd, baseRef: p.info.base, timeoutMs: 15 * MIN });
-        if (!r.ok) return r.stop;
+        const r = await agent(ctx, { task: "specification", role: "spec-writer", prompt: skillPrompt(step, p.featureDir, extra), cwd: p.cwd, baseRef: p.info.base, timeoutMs: 15 * MIN, lessons: "spec-writer" });
+if (!r.ok) return r.stop;
         bundle = readSpecBundle(p.cwd, p.featureDir);
         if (bundle.files[file] && bundle.files[file]!.trim().length >= 100) break;
         const denied = r.result.denials.map((x) => `${x.tool}: ${x.input.slice(0, 120)}`).join("; ");
@@ -106,7 +106,7 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
     const prompt = reviewPrompt(p.ticket, readSpecBundle(p.cwd, p.featureDir));
-    const r = await independent(ctx, (task) => agent(ctx, { task, role: "spec-reviewer", prompt, cwd: p.cwd, schema: Review, timeoutMs: 15 * MIN }));
+    const r = await independent(ctx, (task) => agent(ctx, { task, role: "spec-reviewer", prompt, cwd: p.cwd, schema: Review, timeoutMs: 15 * MIN, lessons: "reviewer" }));
     if (!r.ok) return r.stop;
     if (r.skipped) return { kind: "ok", output: { findings: [], skipped: true } };
     const must = r.data.findings.filter((f) => blocking(f.severity));
@@ -183,7 +183,7 @@ export function createSpecKitHandlers(d: SpecKitDeps) {
     const answering = questions.length > 0 && resumedAfterQuestions(ctx.job.id);
     if (answering) findings.unshift(questionsFinding(ctx.job.id, questions));
     if (findings.length === 0) return { kind: "ok", output: { note: "no blocking findings to remediate" } };
-    const r = await agent(ctx, { task: "specification", role: "spec-writer", prompt: remediationPrompt(p.featureDir, p.ticket, findings), cwd: p.cwd, schema: Remediation, baseRef: p.info.base, timeoutMs: 20 * MIN });
+    const r = await agent(ctx, { task: "specification", role: "spec-writer", prompt: remediationPrompt(p.featureDir, p.ticket, findings), cwd: p.cwd, schema: Remediation, baseRef: p.info.base, timeoutMs: 20 * MIN, lessons: "spec-writer" });
     if (!r.ok) return r.stop;
     for (const rej of r.data!.rejected) record(ctx.job.id, "remediation.rejected", `${rej.id}`, rej.reason);
     await commitPaths(p.cwd, COMMIT_PATHS(p.featureDir), `spec(${p.issue.identifier}): ${answering && findings.length === 1 ? "apply answers to open questions" : "address review findings"}`, git);

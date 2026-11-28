@@ -31,8 +31,13 @@ export interface LimitWindow { utilization: number; resetsAt: number | null; sta
 export interface ClaudeUsage { limits: { fiveHour: LimitWindow | null; sevenDay: LimitWindow | null; status: string | null; capturedAt: number } | null; /** The plan window blocking new jobs, when exhausted. */ exhausted?: { window: "fiveHour" | "sevenDay"; resetsAt: number } | null; estimatedListCostUsd: { last24h: number; last7d: number } }
 export interface Execution { id: number; stage: string; attempt: number; outcome: string; error: string | null; output: string | null; startedAt: number | null; finishedAt: number | null }
 export interface Decision { id: number; kind: string; decision: string; rationale: string | null; actor: string; at: number | null }
-export interface Invocation { id: number; stageExecutionId: number | null; agent: string; model: string | null; exitCode: number | null; durationMs: number | null; /** the run is over (exit code, signal, local-model failure or service restart): never "live" */ finished: boolean; usage: { denials?: number } | null; hasLog: boolean; at: number | null }
+export interface Invocation { id: number; stageExecutionId: number | null; agent: string; model: string | null; exitCode: number | null; durationMs: number | null; /** the run is over (exit code, signal, local-model failure or service restart): never "live" */ finished: boolean; usage: { denials?: number; /** ids of the project lessons this run was given */ lessons?: number[] } | null; hasLog: boolean; at: number | null }
+export type LessonKind = "command" | "convention" | "pitfall" | "reviewer-pref";
+export type LessonStatus = "proposed" | "active" | "retired";
+export interface Lesson { id: number; projectId: string; text: string; kind: LessonKind; status: LessonStatus; source: string; sourceJobId: string | null; hits: number; createdAt: number; lastUsedAt: number | null }
 export interface JobDetail {
+  /** The lessons any run of this job was given (named once; runs list their ids). */
+  lessonsInjected?: { id: number; kind: LessonKind; text: string; status: LessonStatus }[];
   job: Job; remediationCap?: number; stageOrder: string[]; executions: Execution[]; decisions: Decision[]; invocations: Invocation[];
   artifacts: { kind: string; path: string; bytes: number | null; at: number | null }[];
   /** The Haiku-written implementer prompt and its acceptance criteria (haiku_prompt mode). */

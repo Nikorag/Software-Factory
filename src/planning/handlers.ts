@@ -28,7 +28,7 @@ export function createPromptHandlers(d: StageKitDeps) {
     const p = await prepare(ctx.job);
     if (!p.ok) return p.stop;
     const project = d.project(ctx.job.projectId);
-    const r = await agent(ctx, { task: "prompt_generation", role: "prompt-writer", prompt: promptWriterPrompt(p.ticket, project.commands, gateNotes(d.db, ctx.job.id, "REQUIREMENTS_ANALYSIS")), cwd: p.cwd, schema: ImplementationPlan, timeoutMs: 10 * MIN });
+    const r = await agent(ctx, { task: "prompt_generation", role: "prompt-writer", prompt: promptWriterPrompt(p.ticket, project.commands, gateNotes(d.db, ctx.job.id, "REQUIREMENTS_ANALYSIS")), cwd: p.cwd, schema: ImplementationPlan, timeoutMs: 10 * MIN, lessons: "spec-writer" });
     if (!r.ok) return r.stop;
     const plan = r.data!;
     if (plan.verdict === "needs_clarification") {

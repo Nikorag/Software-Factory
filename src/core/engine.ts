@@ -38,6 +38,8 @@ export interface EngineObserver {
 
 export interface EngineOptions {
   observer?: EngineObserver;
+  /** Called after a job reaches COMPLETED (per-project lesson distillation). A failure is logged and never affects the job. */
+  onCompleted?: (job: JobRow) => void | Promise<void>;
   db: FactoryDb;
   logger: Logger;
   config: Pick<LoadedConfig, "factory" | "workflows"> & Partial<Pick<LoadedConfig, "projects">>;
@@ -64,7 +66,7 @@ export class Engine {
   private readonly running = new Set<string>();
   /** Aborted handlers that had not stopped within abortSettleMs. Their jobs are not claimed again until they have: one agent per worktree. */
   private readonly unsettled = new Map<string, Promise<unknown>>();
-  private readonly o: Required<Omit<EngineOptions, "owner" | "observer">> & { observer?: EngineObserver };
+  private readonly o: Required<Omit<EngineOptions, "owner" | "observer" | "onCompleted">> & { observer?: EngineObserver; onCompleted?: (job: JobRow) => void | Promise<void> };
 
   constructor(opts: EngineOptions) {
     this.owner = opts.owner ?? `factory-${process.pid}-${randomUUID().slice(0, 8)}`;
@@ -399,6 +401,11 @@ export class Engine {
   private complete(job: JobRow): void {
     this.o.db.update(jobs).set({ stage: "COMPLETED", status: statusForStage("COMPLETED"), leaseOwner: null, leaseExpiresAt: null, updatedAt: this.o.now() }).where(eq(jobs.id, job.id)).run();
     this.notify(job, "COMPLETED");
+    try {
+      void Promise.resolve(this.o.onCompleted?.(getJob(this.o.db, job.id) ?? job)).catch((e) => this.o.logger.error({ jobId: job.id, err: String(e) }, "on-completed hook failed"));
+    } catch (e) {
+      this.o.logger.error({ jobId: job.id, err: String(e) }, "on-completed hook failed"); // never let learning break orchestration
+    }
   }
 
   /** Move a job into a held/terminal stage, remembering where it was so it can be resumed. */

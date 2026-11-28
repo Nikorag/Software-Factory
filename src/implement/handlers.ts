@@ -232,7 +232,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     const project = d.project(ctx.job.projectId);
     const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands, project.allowLoopback);
     const r = await implementer(ctx, {
-      task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: DirectResult, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id),
+      task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: DirectResult, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id), lessons: "implementer",
       prompt: implementPromptDirect({ plan, wrapper, checks, ticket: p.ticket, previousFailures: previousFailures(d.db, ctx.job.id, "IMPLEMENTATION"), unrestricted: d.agentAccess?.(project.id) === "unrestricted", bashAny: d.agentBashAny?.(project.id) }),
     }, p.cwd, p.info.base);
     if (!r.ok) return r.stop;
@@ -264,7 +264,7 @@ export function createImplementationHandlers(d: ImplDeps) {
     for (let pass = 1; pass <= maxPasses; pass++) {
       const before = await head(p.cwd);
       const r = await implementer(ctx, {
-        task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: ImplementResult, bashAllow: [wrapper], resumeSessionId: session,
+        task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 55 * MIN, schema: ImplementResult, bashAllow: [wrapper], resumeSessionId: session, lessons: "implementer",
         prompt: implementPrompt({ featureDir: p.featureDir, wrapper, checks, pass, gaps, ticket: p.ticket, previousFailures: pass === 1 ? failures : undefined, unrestricted: d.agentAccess?.(project.id) === "unrestricted", bashAny: d.agentBashAny?.(project.id) }),
       }, p.cwd, p.info.base);
       if (!r.ok) return r.stop;
@@ -352,7 +352,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       record(ctx.job.id, "code-review.reused", "no code change since the last independent review; reusing its findings");
     } else {
       const prompt = codeReviewPrompt({ ticket: p.ticket, spec: requirementsFor(ctx.job.id, p.cwd, p.featureDir), stat: diff.stat, diff: diff.text, results: latestResults(ctx.job.id), history: await reviewHistory(ctx.job.id, p.cwd) });
-      const r = await independent(ctx, (task) => agent(ctx, { task, role: "qa-reviewer", prompt, cwd: p.cwd, schema: CodeReview, timeoutMs: 15 * MIN }));
+      const r = await independent(ctx, (task) => agent(ctx, { task, role: "qa-reviewer", prompt, cwd: p.cwd, schema: CodeReview, timeoutMs: 15 * MIN, lessons: "reviewer" }));
       if (!r.ok) return r.stop;
       findings = r.skipped ? [] : [...r.data.findings];
       reviewer = r.skipped ? "skipped" : r.reviewer;
@@ -388,7 +388,7 @@ export function createImplementationHandlers(d: ImplDeps) {
       const prev = d.db.select().from(stageExecutions).where(and(eq(stageExecutions.jobId, ctx.job.id), eq(stageExecutions.stage, "LOCAL_MODEL_REVIEW"), eq(stageExecutions.outcome, "succeeded"))).orderBy(desc(stageExecutions.id)).limit(1).get();
       const earlier = ((prev?.outputJson ? JSON.parse(prev.outputJson) : {}) as { findings?: { id: string; severity: string; file: string; issue: string }[] }).findings ?? [];
       const r = await agent(ctx, {
-        task: "final_review", role: "qa-reviewer", cwd: p.cwd, timeoutMs: 20 * MIN, schema: ClaudeReview,
+        task: "final_review", role: "qa-reviewer", cwd: p.cwd, timeoutMs: 20 * MIN, schema: ClaudeReview, lessons: "reviewer",
         prompt: claudeReviewPrompt({ ticket: p.ticket, spec: requirementsFor(ctx.job.id, p.cwd, p.featureDir), stat: diff.stat, earlier, results: latestResults(ctx.job.id), base: p.info.base, history: await reviewHistory(ctx.job.id, p.cwd) }),
       });
       if (!r.ok) return r.stop;
@@ -412,8 +412,8 @@ export function createImplementationHandlers(d: ImplDeps) {
     const { path: wrapper, checks } = await wrapperFor(ctx.job.id, p.cwd, project.commands, project.allowLoopback);
     const before = await head(p.cwd);
     const r = await implementer(ctx, {
-      task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 40 * MIN, schema: ImplRemediation, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id),
-      prompt: implRemediationPrompt({ unrestricted: d.agentAccess?.(project.id) === "unrestricted", bashAny: d.agentBashAny?.(project.id),...(direct() ? {} : { featureDir: p.featureDir }), wrapper, checks, findings, ticket: p.ticket, history: await reviewHistory(ctx.job.id, p.cwd), previousFailures: previousFailures(d.db, ctx.job.id, "REMEDIATION") }),
+      task: "implementation", role: "implementer", cwd: p.cwd, baseRef: p.info.base, timeoutMs: 40 * MIN, schema: ImplRemediation, bashAllow: [wrapper], resumeSessionId: latestImplementerSession(ctx.job.id), lessons: "implementer",
+      prompt: implRemediationPrompt({ unrestricted: d.agentAccess?.(project.id) === "unrestricted", bashAny: d.agentBashAny?.(project.id), ...(direct() ? {} : { featureDir: p.featureDir }), wrapper, checks, findings, ticket: p.ticket, history: await reviewHistory(ctx.job.id, p.cwd), previousFailures: previousFailures(d.db, ctx.job.id, "REMEDIATION") }),
     }, p.cwd, p.info.base);
     if (!r.ok) return r.stop;
     const byId = (id: string) => findings.find((f) => f.id === id) ?? { id, severity: "minor", issue: id };
@@ -495,7 +495,7 @@ export function createImplementationHandlers(d: ImplDeps) {
         record(ctx.job.id, "final-review.reused", "no code change since the last final review; reusing its verdict");
       } else {
         const r = await agent(ctx, {
-          task: "final_review", role: "final-reviewer", cwd: p.cwd, timeoutMs: 25 * MIN, schema: FinalReview,
+          task: "final_review", role: "final-reviewer", cwd: p.cwd, timeoutMs: 25 * MIN, schema: FinalReview, lessons: "reviewer",
           prompt: finalReviewPrompt({ ticket: p.ticket, criteria, stat: diff.stat, results, base: p.info.base, decisions: rejected, history: await reviewHistory(ctx.job.id, p.cwd) }),
         });
         if (!r.ok) return r.stop;

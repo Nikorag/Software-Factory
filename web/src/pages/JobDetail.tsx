@@ -27,6 +27,7 @@ import { ago, dur, HELD, safeUrl, stageLabel, stageText } from "@/lib/format";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { deriveFlow, modeOfJob, nodesFor } from "@/lib/pipeline";
 import type { Invocation, Job, JobDetail as D } from "@/lib/types";
+import { RunLessons } from "@/components/job/RunLessons";
 import { usePoll } from "@/hooks/usePoll";
 import { ConnectionBanner, useOffline } from "@/components/ConnectionBanner";
 import { cn } from "@/lib/utils";
@@ -265,6 +266,7 @@ export function JobDetail() {
             <ul className="grid divide-y divide-[var(--z-line)]" aria-label="Agent runs">{agents.slice.map((a) => (
               <li key={a.id} className="grid gap-2 py-3 text-sm">
                 <span className="flex flex-wrap items-baseline gap-x-2"><b className="font-medium">{a.agent}</b><span className="text-xs text-muted-foreground">{a.model || ""}</span></span>
+                <span className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground"><span>lessons</span><RunLessons run={a} known={d.lessonsInjected} /></span>
                 <span className="flex flex-wrap gap-x-3 text-xs text-muted-foreground"><span>took {dur(a.durationMs)}</span><span>exit {a.exitCode ?? (a.finished ? "stopped" : "…")}</span>{a.usage?.denials ? <span className="text-loop">{a.usage.denials} denied</span> : null}</span>
                 {a.hasLog ? <span className="grid grid-cols-2 gap-2">
                   <Button variant="outline" size="sm" onClick={() => openPeek(runsOf(a), a.id)}>{a.finished ? "Conversation" : "Watch live"}</Button>
@@ -272,8 +274,9 @@ export function JobDetail() {
                 </span> : null}
               </li>))}
             </ul>
-          ) : <Table><TableHeader><TableRow>{["Agent", "Model", "Took", "Exit", "Denied", "", "Log"].map((c, i) => <TableHead key={i} className="z-label">{c}</TableHead>)}</TableRow></TableHeader>
+          ) : <Table><TableHeader><TableRow>{["Agent", "Model", "Took", "Exit", "Denied", "Lessons", "", "Log"].map((c, i) => <TableHead key={i} className="z-label">{c}</TableHead>)}</TableRow></TableHeader>
             <TableBody>{agents.slice.map((a) => <TableRow key={a.id}><TableCell className="font-mono text-[13px]">{a.agent}</TableCell><TableCell>{a.model || ""}</TableCell><TableCell className="tabular-nums">{dur(a.durationMs)}</TableCell><TableCell>{a.exitCode ?? (a.finished ? <span className="text-muted-foreground" title="The run ended without an exit code: it was stopped (timeout, cancel, emergency stop), failed to start, or the service restarted mid-run.">stopped</span> : "")}</TableCell><TableCell className={a.usage?.denials ? "text-loop" : "text-muted-foreground"}>{a.usage?.denials ?? ""}</TableCell>
+              <TableCell className="whitespace-normal"><RunLessons run={a} known={d.lessonsInjected} /></TableCell>
               <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={() => openPeek(runsOf(a), a.id)}>{a.finished ? "Conversation" : "Watch live"}</Button> : ""}</TableCell>
               <TableCell>{a.hasLog ? <Button variant="outline" size="sm" onClick={() => void viewLog(a)}>view</Button> : ""}</TableCell></TableRow>)}</TableBody></Table>}
           <Pager page={agents.page} pages={agents.pages} pageSize={agents.pageSize} total={agents.total} onPage={agents.setPage} onPageSize={agents.setPageSize} />

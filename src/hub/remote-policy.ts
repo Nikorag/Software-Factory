@@ -18,7 +18,7 @@ export const RULES: readonly Rule[] = [
   // ---- reads: overview, jobs, logs, board, settings, status ----
   ...allow("GET",
     "/api/overview", "/api/health", "/api/jobs", "/api/jobs/:id", "/api/jobs/:id/invocations/:iid/conversation", "/api/jobs/:id/invocations/:iid/log",
-    "/api/projects", "/api/tasks/:id", "/api/board",
+    "/api/projects", "/api/projects/:id/lessons", "/api/tasks/:id", "/api/board",
     "/api/settings/global", "/api/setup", "/api/setup/github", "/api/setup/linear", "/api/update",
     // Read-only views of integration state. They report names/flags (hasToken, secretSet, connected), never a secret value.
     "/api/profiles", "/api/bitbucket/credentials", "/api/jira/status", "/api/jira/whoami", "/api/jira/mapping", "/api/jira/mapping/check", "/api/jira/metadata",
@@ -46,6 +46,13 @@ export const RULES: readonly Rule[] = [
   // so writing them remotely means choosing what runs on this machine (sandboxed, but with network for installs).
   block("PUT", "/api/settings/projects/:id", "edits a project's repository path and shell commands: decide deliberately, on the machine"),
   block("DELETE", "/api/settings/projects/:id", "removes a project from this machine's configuration: decide deliberately, on the machine"),
+
+  // ---- project lessons: what agents are told on every later job. Approving or editing one is decided on the machine (ADR 0017). ----
+  block("POST", "/api/projects/:id/lessons", "changes what agents are told on later jobs: decide on the machine"),
+  block("PUT", "/api/lessons/:id", "changes what agents are told on later jobs: decide on the machine"),
+  block("POST", "/api/lessons/:id/approve", "changes what agents are told on later jobs: decide on the machine"),
+  block("POST", "/api/lessons/:id/reject", "changes what agents are told on later jobs: decide on the machine"),
+  block("POST", "/api/lessons/:id/retire", "changes what agents are told on later jobs: decide on the machine"),
 
   // ---- credentials: never remotely ----
   block("POST", "/api/setup/linear-key", SECRET),

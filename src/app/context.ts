@@ -16,6 +16,8 @@ import { trackerSet, type TrackerSet } from "../tracker/index.js";
 import { createIntakeHandlers } from "../linear/handlers.js";
 import { createLinearReporter } from "../linear/reporter.js";
 import { createLogger } from "../logging/logger.js";
+import { distillJob } from "../lessons/distill.js";
+import { retireExpiredLessons } from "../lessons/store.js";
 import { createHosts, type Hosts } from "../host/index.js";
 import { syncProjects } from "../repo/registry.js";
 import { WorktreeManager } from "../repo/worktrees.js";
@@ -96,6 +98,6 @@ export function createContext(config: LoadedConfig, opts: { db?: DbHandle; logge
       github: (p) => opts.github ?? hosts.pr(p), hosts, maxConflictResolutions: () => config.factory.workflow.max_conflict_resolutions, timing: opts.delivery, now: opts.deliveryNow, push: opts.push,
     }),
   };
-  const engine = new Engine({ db: handle.db, logger, config, handlers, claudeLimits: () => readLimits(usageFile(dataDir)), observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun, planningMode }) });
+  const engine = new Engine({ db: handle.db, logger, config, handlers, onCompleted: async (job) => { await distillJob(handle.db, job.id); retireExpiredLessons(handle.db, job.projectId); }, claudeLimits: () => readLimits(usageFile(dataDir)), observer: createLinearReporter(handle.db, { globalDryRun: () => config.factory.dryRun, planningMode }) });
   return { config, handle, logger, router, runner, worktrees, linear, trackers, project, handlers, engine, hosts };
 }
